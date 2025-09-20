@@ -1,0 +1,448 @@
+rel_queue_tree.h
+
+Index-based BSD queues & trees for shared memory.
+This single header provides relative (index-pointing) implementations of classic BSD data structures—SLIST, LIST, STAILQ, TAILQ, CIRCLEQ, and a Red-Black tree—so you can store them directly in shared memory or mmapped files without embedding raw pointers.
+
+Pointer-free storage: heads and nodes store unsigned indices only.
+
+1-origin indices: valid range 1..UINT_MAX-1; 0 is REL_NIL (end/sentinel).
+
+Per-call base pointer: APIs take base (your element array) to convert index⇄pointer on the fly.
+
+C11, single header, no deps: drop it in and go.
+
+Table of Contents
+
+Why indices?
+
+Design
+
+Getting Started
+
+API Overview
+
+REL_SLIST
+
+REL_LIST
+
+REL_STAILQ
+
+REL_TAILQ
+
+REL_CIRCLEQ
+
+REL_RB (Red-Black tree)
+
+Build
+
+Concurrency
+
+Testing
+
+License
+
+Acknowledgements
+
+Why indices?
+
+Raw pointers are process-local and not relocatable. By storing indices instead:
+
+Structures are relocatable across processes and after remapping.
+
+They fit naturally in shared memory and file-backed regions.
+
+Zero-initialization makes heads/nodes empty by construction.
+
+Mixed 32/64-bit processes mapping the same region avoid pointer-size issues.
+
+Design
+
+Index scheme: unsigned with REL_NIL = 0.
+
+1-origin mapping: REL_IDX_FROM_PTR(base,p) returns (p - base) + 1; REL_PTR_FROM_IDX(base,i) returns (i ? base + (i-1) : NULL).
+
+No pointers in storage: heads and link fields are indices only.
+
+Transient pointers: conversion requires passing base to the macros.
+
+C11: portable macros; debug helpers available.
+
+Common helpers included:
+
+REL_NIL, REL_IDX_FROM_PTR(base,p), REL_PTR_FROM_IDX(base,i),
+REL_IDX_IS_NIL(i), REL_IDX_IS_VALID(i,cap),
+REL_MIN, REL_MAX, REL_COUNT_OF, REL_OFFSET_OF, REL_CONTAINER_OF,
+REL_SWAP, REL_CLAMP, REL_ASSERT, REL_STATIC_ASSERT
+
+
+Max storable elements with unsigned is UINT_MAX - 1.
+
+Getting Started
+#include "rel_queue_tree.h"
+
+struct node {
+    int value;
+    REL_TAILQ_ENTRY(node) link;     /* choose one container field */
+};
+
+REL_TAILQ_HEAD(qhead);
+struct qhead h;
+
+struct node *base;  /* array in shared memory / mmap */
+
+void demo(void) {
+    REL_TAILQ_INIT(&h);
+
+    struct node *a = &base[0], *b = &base[1];
+    a->value = 10; b->value = 20;
+
+    REL_TAILQ_INSERT_HEAD(&h, base, a, link);
+    REL_TAILQ_INSERT_TAIL(&h, base, b, link);
+
+    for (struct node *it = REL_TAILQ_FIRST(&h, base); it;
+         it = REL_TAILQ_NEXT(&h, base, it, link)) {
+        /* use it->value */
+    }
+
+    REL_TAILQ_REMOVE(&h, base, a, link);
+}
+
+Red-Black tree quick start
+struct rbnode {
+    int key;
+    REL_RB_ENTRY(rbnode) rb;
+};
+
+static int rb_cmp(const struct rbnode *a, const struct rbnode *b) {
+    return (a->key > b->key) - (a->key < b->key);
+}
+
+REL_RB_HEAD(rhead);
+REL_RB_PROTOTYPE(rbt, rbnode, rb, rb_cmp)
+REL_RB_GENERATE (rbt, rbnode, rb, rb_cmp)
+
+void rbt_demo(struct rhead *rh, struct rbnode *base) {
+    REL_RB_INIT(rh);
+
+    base[0].key = 42;
+    REL_RB_INSERT(rbt, rh, base, &base[0]);
+
+    struct rbnode probe = {.key = 42};
+    struct rbnode *hit = REL_RB_FIND(rbt, rh, base, &probe);
+
+    for (struct rbnode *it = REL_RB_MIN(rbt, rh, base);
+         it; it = REL_RB_NEXT(rbt, base, it)) {
+        /* ascending traversal */
+    }
+}
+
+API Overview
+
+Below, type is your element struct, field is the embedded link field, base is type* array, and head is the container head.
+
+REL_SLIST
+
+Declarations
+
+REL_SLIST_ENTRY(type)
+
+REL_SLIST_HEAD(name)
+
+REL_SLIST_HEAD_INITIALIZER(var)
+
+Init & queries
+
+REL_SLIST_INIT(head)
+
+REL_SLIST_EMPTY(head)
+
+REL_SLIST_FIRST(head, base)
+
+REL_SLIST_NEXT(elm, base, field)
+
+Modifiers
+
+REL_SLIST_INSERT_HEAD(head, base, elm, field)
+
+REL_SLIST_INSERT_AFTER(base, slistelm, elm, field)
+
+REL_SLIST_REMOVE_HEAD(head, base, field)
+
+REL_SLIST_REMOVE_AFTER(base, elm, field)
+
+REL_SLIST_REMOVE(head, base, elm, type, field) (linear search)
+
+Iteration
+
+REL_SLIST_FOREACH(var, head, base, field)
+
+REL_SLIST_FOREACH_SAFE(var, head, base, field, tvar)
+
+REL_SLIST_FOREACH_PREVINDEX(var, varidxp, head, base, field) (prev index pointer idiom)
+
+REL_LIST
+
+Declarations
+
+REL_LIST_ENTRY(type)
+
+REL_LIST_HEAD(name)
+
+REL_LIST_HEAD_INITIALIZER(var)
+
+Init & queries
+
+REL_LIST_INIT(head)
+
+REL_LIST_EMPTY(head)
+
+REL_LIST_FIRST(head, base)
+
+REL_LIST_NEXT(elm, base, field)
+
+Modifiers
+
+REL_LIST_INSERT_HEAD(head, base, elm, field)
+
+REL_LIST_INSERT_AFTER(head, base, listelm, elm, field)
+
+REL_LIST_INSERT_BEFORE(head, base, listelm, elm, field)
+
+REL_LIST_REMOVE(head, base, elm, field)
+
+REL_LIST_SWAP(head1, head2, base, type, field)
+
+Iteration
+
+REL_LIST_FOREACH(var, head, base, field)
+
+REL_LIST_FOREACH_SAFE(var, head, base, field, tvar)
+
+REL_STAILQ
+
+Declarations
+
+REL_STAILQ_ENTRY(type)
+
+REL_STAILQ_HEAD(name)
+
+REL_STAILQ_HEAD_INITIALIZER(var)
+
+Init & queries
+
+REL_STAILQ_INIT(head)
+
+REL_STAILQ_EMPTY(head)
+
+REL_STAILQ_FIRST(head, base)
+
+REL_STAILQ_LAST(head, base)
+
+REL_STAILQ_NEXT(head, base, elm, field)
+
+Modifiers
+
+REL_STAILQ_INSERT_HEAD(head, base, elm, field)
+
+REL_STAILQ_INSERT_TAIL(head, base, elm, field)
+
+REL_STAILQ_INSERT_AFTER(head, base, tqelm, elm, field)
+
+REL_STAILQ_REMOVE_HEAD(head, base, field)
+
+REL_STAILQ_REMOVE_AFTER(head, base, elm, field)
+
+REL_STAILQ_REMOVE(head, base, elm, type, field) (linear search)
+
+REL_STAILQ_REMOVE_HEAD_UNTIL(head, base, elm, field)
+
+REL_STAILQ_CONCAT(head1, head2, base, field)
+
+REL_STAILQ_SWAP(head1, head2, base)
+
+Iteration
+
+REL_STAILQ_FOREACH(var, head, base, field)
+
+REL_STAILQ_FOREACH_SAFE(var, head, base, field, tvar)
+
+REL_TAILQ
+
+Declarations
+
+REL_TAILQ_ENTRY(type)
+
+REL_TAILQ_HEAD(name)
+
+REL_TAILQ_HEAD_INITIALIZER(var)
+
+Init & queries
+
+REL_TAILQ_INIT(head) / REL_TAILQ_RESET(head)
+
+REL_TAILQ_EMPTY(head)
+
+REL_TAILQ_FIRST(head, base)
+
+REL_TAILQ_LAST(head, base)
+
+REL_TAILQ_NEXT(head, base, elm, field)
+
+REL_TAILQ_PREV(head, base, elm, field)
+
+Modifiers
+
+REL_TAILQ_INSERT_HEAD(head, base, elm, field)
+
+REL_TAILQ_INSERT_TAIL(head, base, elm, field)
+
+REL_TAILQ_INSERT_AFTER(head, base, listelm, elm, field)
+
+REL_TAILQ_INSERT_BEFORE(head, base, listelm, elm, field)
+
+REL_TAILQ_REMOVE(head, base, elm, field)
+
+REL_TAILQ_CONCAT(head1, head2, base, field)
+
+REL_TAILQ_SWAP(head1, head2, base)
+
+Iteration
+
+REL_TAILQ_FOREACH(var, head, base, field)
+
+REL_TAILQ_FOREACH_SAFE(var, head, base, field, tvar)
+
+REL_TAILQ_FOREACH_REVERSE(var, head, base, field)
+
+REL_CIRCLEQ
+
+Declarations
+
+REL_CIRCLEQ_ENTRY(type)
+
+REL_CIRCLEQ_HEAD(name)
+
+REL_CIRCLEQ_HEAD_INITIALIZER(var)
+
+Init & queries
+
+REL_CIRCLEQ_INIT(head)
+
+REL_CIRCLEQ_EMPTY(head)
+
+REL_CIRCLEQ_FIRST(head, base)
+
+REL_CIRCLEQ_LAST(head, base, field)
+
+REL_CIRCLEQ_NEXT(elm, base, field)
+
+REL_CIRCLEQ_PREV(elm, base, field)
+
+Modifiers
+
+REL_CIRCLEQ_INSERT_HEAD(head, base, elm, field)
+
+REL_CIRCLEQ_INSERT_TAIL(head, base, elm, field)
+
+REL_CIRCLEQ_INSERT_AFTER(head, base, listelm, elm, field)
+
+REL_CIRCLEQ_INSERT_BEFORE(head, base, listelm, elm, field)
+
+REL_CIRCLEQ_REMOVE(head, base, elm, field)
+
+Iteration (one full lap)
+
+REL_CIRCLEQ_FOREACH(var, head, base, field)
+
+REL_CIRCLEQ_FOREACH_REVERSE(var, head, base, field)
+
+REL_CIRCLEQ_FOREACH_SAFE(var, head, base, field, tvar)
+
+REL_CIRCLEQ_FOREACH_REVERSE_SAFE(var, head, base, field, tvar)
+
+REL_RB (Red-Black Tree)
+
+Declarations & codegen
+
+REL_RB_ENTRY(type)
+
+REL_RB_HEAD(name)
+
+REL_RB_HEAD_INITIALIZER(var)
+
+REL_RB_INIT(head)
+
+REL_RB_PROTOTYPE(name, type, field, cmp)
+
+REL_RB_GENERATE (name, type, field, cmp) → emits full RB implementation using indices
+
+Operations
+
+REL_RB_INSERT(name, head, base, elm) → returns existing node on duplicate, else NULL
+
+REL_RB_REMOVE(name, head, base, elm) → returns removed elm
+
+REL_RB_FIND(name, head, base, key)
+
+REL_RB_NFIND(name, head, base, key) (lower bound)
+
+REL_RB_MIN(name, head, base), REL_RB_MAX(name, head, base)
+
+REL_RB_NEXT(name, base, elm), REL_RB_PREV(name, base, elm)
+
+Iteration
+
+REL_RB_FOREACH(x, name, head, base)
+
+REL_RB_FOREACH_REVERSE(x, name, head, base)
+
+Comparator
+
+int cmp(const type *a, const type *b);  /* strict weak ordering */
+
+Build
+
+Standard: C11 (also builds with -std=gnu11).
+
+Suggested flags:
+
+-O3 -std=gnu11 -Wall -Wextra -Werror -pedantic
+# Optional during testing:
+-fsanitize=address,undefined -fno-omit-frame-pointer
+
+
+Force-inline helper (optional):
+
+#if defined(_MSC_VER)
+  #define REL_FORCE_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+  #define REL_FORCE_INLINE __attribute__((always_inline)) inline
+#else
+  #define REL_FORCE_INLINE inline
+#endif
+
+Concurrency
+
+No internal synchronization. For multi-process or multi-thread writers, place operations under your own locks (e.g., futex, pthread mutex, or process-shared primitives). Readers/writers without locks are out of scope (RCU/lock-free would need additional design).
+
+Testing
+
+The project includes unit tests and fuzz tests (for each container and the RB tree) covering:
+
+empty/singleton/multi transitions,
+
+all insert/remove variants,
+
+safe iteration while removing elements,
+
+RB invariants (root black, no red-red, equal black height).
+
+Integrate your own allocator/free-list to model persistent shared-memory scenarios.
+
+License
+
+BSD 3-Clause License
+
+Acknowledgements
+
+APIs mirror the BSD queue/tree interfaces while replacing raw pointers with indices to enable robust shared-memory deployments.
