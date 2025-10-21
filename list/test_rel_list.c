@@ -67,7 +67,7 @@ static int vec_remove_val(vec_t *v, unsigned int x){
     return 1;
 }
 
-REL_LIST_HEAD(qhead);
+REL_LIST_HEAD(qhead, node);
 
 static void dump_vec(const vec_t *v, const char *name){
     fprintf(stderr, "%s:", name);

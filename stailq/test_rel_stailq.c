@@ -91,7 +91,7 @@ static void dump_vec(const vec_t *v, const char *name){
     fputc('\n', stderr);
 }
 
-REL_STAILQ_HEAD(qhead);
+REL_STAILQ_HEAD(qhead, node);
 
 static void extract_forward(struct qhead *h, vec_t *out){
     vec_clear(out);

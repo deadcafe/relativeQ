@@ -147,9 +147,9 @@ extern "C"
         unsigned rsle_next;     \
     }
 
-#define REL_SLIST_HEAD(name)   \
-    struct name {              \
-        unsigned rslh_first;   \
+#define REL_SLIST_HEAD(name, type)              \
+    struct name {                               \
+        unsigned rslh_first;                    \
     }
 
 #define REL_SLIST_HEAD_INITIALIZER(headvar) { REL_NIL }
@@ -233,9 +233,9 @@ extern "C"
         unsigned rle_prev;    \
     }
 
-#define REL_LIST_HEAD(name)  \
-    struct name {            \
-        unsigned rlh_first;  \
+#define REL_LIST_HEAD(name, type)               \
+    struct name {                               \
+        unsigned rlh_first;                     \
     }
 
 #define REL_LIST_HEAD_INITIALIZER(headvar) { REL_NIL }
@@ -339,10 +339,10 @@ extern "C"
         unsigned rsqe_next;      \
     }
 
-#define REL_STAILQ_HEAD(name)	\
-    struct name {               \
-        unsigned rsqh_first;    \
-        unsigned rsqh_last;     \
+#define REL_STAILQ_HEAD(name, type)             \
+    struct name {                               \
+        unsigned rsqh_first;                    \
+        unsigned rsqh_last;                     \
     }
 
 #define REL_STAILQ_HEAD_INITIALIZER(headvar) { REL_NIL, REL_NIL }
@@ -485,10 +485,10 @@ extern "C"
         unsigned rqe_prev;     \
     }
 
-#define REL_TAILQ_HEAD(name)  \
-    struct name {             \
-        unsigned rqh_first;   \
-        unsigned rqh_last;    \
+#define REL_TAILQ_HEAD(name, type)              \
+    struct name {                               \
+        unsigned rqh_first;                     \
+        unsigned rqh_last;                      \
     }
 
 #define REL_TAILQ_HEAD_INITIALIZER(headvar) { REL_NIL, REL_NIL }
@@ -647,7 +647,7 @@ extern "C"
         unsigned rce_prev;                              \
     }
     
-#define REL_CIRCLEQ_HEAD(name)			\
+#define REL_CIRCLEQ_HEAD(name, type)            \
     struct name {                               \
         unsigned rch_first;                     \
     }
