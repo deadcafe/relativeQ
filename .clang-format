@@ -1,0 +1,13 @@
+BasedOnStyle: LLVM
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+
+IndentPPDirectives: None
+
+AlignEscapedNewlines: Right
+ContinuationIndentWidth: 4
+
+# マクロを勝手に折り返して \ の位置を壊さない
+ColumnLimit: 0
