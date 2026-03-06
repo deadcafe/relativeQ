@@ -145,6 +145,9 @@ REL_STATIC_ASSERT(sizeof(ptrdiff_t) >= sizeof(void *), "ptrdiff_t must be >= poi
 
 #include <rel/rel_queue.h>
 #include <rel/rel_tree.h>
+#include <rel/rel_hash.h>
+#include <rel/rel_hash32.h>
+#include <rel/rel_hash64.h>
 
 #ifdef __cplusplus
 }

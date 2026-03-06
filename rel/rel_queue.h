@@ -49,13 +49,13 @@
         (slistelm)->field.rsle_next = REL_IDX_FROM_PTR((base), (elm)); \
     } while (0)
 
-#define REL_SLIST_REMOVE_HEAD(head, base, field)                                  \
-    do {                                                                          \
-        unsigned __first = (head)->rslh_first;                                    \
-        if (__first != REL_NIL) {                                                 \
+#define REL_SLIST_REMOVE_HEAD(head, base, field)                              \
+    do {                                                                      \
+        unsigned __first = (head)->rslh_first;                                \
+        if (__first != REL_NIL) {                                             \
             unsigned __next = REL_PTR_FROM_IDX((base), __first)->field.rsle_next; \
-            (head)->rslh_first = __next;                                          \
-        }                                                                         \
+            (head)->rslh_first = __next;                                      \
+        }                                                                     \
     } while (0)
 
 #define REL_SLIST_REMOVE_AFTER(base, elm, field)                  \
@@ -67,17 +67,17 @@
         }                                                         \
     } while (0)
 
-#define REL_SLIST_REMOVE(head, base, elm, type, field)                           \
-    do {                                                                         \
-        if (REL_SLIST_FIRST((head), (base)) == (elm)) {                          \
-            REL_SLIST_REMOVE_HEAD((head), (base), field);                        \
-        } else {                                                                 \
-            struct type *__curelm = REL_SLIST_FIRST((head), (base));             \
+#define REL_SLIST_REMOVE(head, base, elm, type, field)                        \
+    do {                                                                      \
+        if (REL_SLIST_FIRST((head), (base)) == (elm)) {                       \
+            REL_SLIST_REMOVE_HEAD((head), (base), field);                     \
+        } else {                                                              \
+            struct type *__curelm = REL_SLIST_FIRST((head), (base));          \
             while (__curelm && REL_SLIST_NEXT(__curelm, (base), field) != (elm)) \
-                __curelm = REL_SLIST_NEXT(__curelm, (base), field);              \
-            if (__curelm)                                                        \
-                REL_SLIST_REMOVE_AFTER((base), __curelm, field);                 \
-        }                                                                        \
+                __curelm = REL_SLIST_NEXT(__curelm, (base), field);           \
+            if (__curelm)                                                     \
+                REL_SLIST_REMOVE_AFTER((base), __curelm, field);              \
+        }                                                                     \
     } while (0)
 
 #define REL_SLIST_FOREACH(var, head, base, field)                \
@@ -245,16 +245,16 @@
         }                                                 \
     } while (0)
 
-#define REL_STAILQ_INSERT_TAIL(head, base, elm, field)                            \
-    do {                                                                          \
-        unsigned __idx = REL_IDX_FROM_PTR((base), (elm));                         \
-        (elm)->field.rsqe_next = REL_NIL;                                         \
-        if ((head)->rsqh_last != REL_NIL) {                                       \
+#define REL_STAILQ_INSERT_TAIL(head, base, elm, field)                        \
+    do {                                                                      \
+        unsigned __idx = REL_IDX_FROM_PTR((base), (elm));                     \
+        (elm)->field.rsqe_next = REL_NIL;                                     \
+        if ((head)->rsqh_last != REL_NIL) {                                   \
             REL_PTR_FROM_IDX((base), (head)->rsqh_last)->field.rsqe_next = __idx; \
-        } else {                                                                  \
-            (head)->rsqh_first = __idx;                                           \
-        }                                                                         \
-        (head)->rsqh_last = __idx;                                                \
+        } else {                                                              \
+            (head)->rsqh_first = __idx;                                       \
+        }                                                                     \
+        (head)->rsqh_last = __idx;                                            \
     } while (0)
 
 #define REL_STAILQ_INSERT_AFTER(head, base, tqelm, elm, field) \
@@ -268,15 +268,15 @@
         }                                                      \
     } while (0)
 
-#define REL_STAILQ_REMOVE_HEAD(head, base, field)                                 \
-    do {                                                                          \
-        unsigned __first = (head)->rsqh_first;                                    \
-        if (__first != REL_NIL) {                                                 \
+#define REL_STAILQ_REMOVE_HEAD(head, base, field)                             \
+    do {                                                                      \
+        unsigned __first = (head)->rsqh_first;                                \
+        if (__first != REL_NIL) {                                             \
             unsigned __next = REL_PTR_FROM_IDX((base), __first)->field.rsqe_next; \
-            (head)->rsqh_first = __next;                                          \
-            if (__next == REL_NIL)                                                \
-                (head)->rsqh_last = REL_NIL;                                      \
-        }                                                                         \
+            (head)->rsqh_first = __next;                                      \
+            if (__next == REL_NIL)                                            \
+                (head)->rsqh_last = REL_NIL;                                  \
+        }                                                                     \
     } while (0)
 
 #define REL_STAILQ_REMOVE_AFTER(head, base, elm, field)                       \
@@ -290,20 +290,20 @@
         }                                                                     \
     } while (0)
 
-#define REL_STAILQ_REMOVE(head, base, elm, type, field)                            \
-    do {                                                                           \
-        if (REL_STAILQ_FIRST((head), (base)) == (elm)) {                           \
-            REL_STAILQ_REMOVE_HEAD((head), (base), field);                         \
-        } else {                                                                   \
-            struct type *__curelm = REL_STAILQ_FIRST((head), (base));              \
-            while (__curelm &&                                                     \
+#define REL_STAILQ_REMOVE(head, base, elm, type, field)                       \
+    do {                                                                      \
+        if (REL_STAILQ_FIRST((head), (base)) == (elm)) {                      \
+            REL_STAILQ_REMOVE_HEAD((head), (base), field);                    \
+        } else {                                                              \
+            struct type *__curelm = REL_STAILQ_FIRST((head), (base));         \
+            while (__curelm &&                                                \
                    REL_PTR_FROM_IDX((base), __curelm->field.rsqe_next) != (elm)) { \
-                __curelm = REL_STAILQ_NEXT((head), (base), __curelm, field);       \
-            }                                                                      \
-            if (__curelm) {                                                        \
-                REL_STAILQ_REMOVE_AFTER((head), (base), __curelm, field);          \
-            }                                                                      \
-        }                                                                          \
+                __curelm = REL_STAILQ_NEXT((head), (base), __curelm, field);  \
+            }                                                                 \
+            if (__curelm) {                                                   \
+                REL_STAILQ_REMOVE_AFTER((head), (base), __curelm, field);     \
+            }                                                                 \
+        }                                                                     \
     } while (0)
 
 #define REL_STAILQ_REMOVE_HEAD_UNTIL(head, base, elm, field)        \
@@ -314,19 +314,19 @@
             (head)->rsqh_last = REL_NIL;                            \
     } while (0)
 
-#define REL_STAILQ_CONCAT(head1, head2, base, field)                            \
-    do {                                                                        \
-        if (!REL_STAILQ_EMPTY((head2))) {                                       \
-            if (!REL_STAILQ_EMPTY((head1))) {                                   \
+#define REL_STAILQ_CONCAT(head1, head2, base, field)                          \
+    do {                                                                      \
+        if (!REL_STAILQ_EMPTY((head2))) {                                     \
+            if (!REL_STAILQ_EMPTY((head1))) {                                 \
                 REL_PTR_FROM_IDX((base), (head1)->rsqh_last)->field.rsqe_next = \
-                    (head2)->rsqh_first;                                        \
-            } else {                                                            \
-                (head1)->rsqh_first = (head2)->rsqh_first;                      \
-            }                                                                   \
-            (head1)->rsqh_last = (head2)->rsqh_last;                            \
-            (head2)->rsqh_first = REL_NIL;                                      \
-            (head2)->rsqh_last = REL_NIL;                                       \
-        }                                                                       \
+                    (head2)->rsqh_first;                                      \
+            } else {                                                          \
+                (head1)->rsqh_first = (head2)->rsqh_first;                    \
+            }                                                                 \
+            (head1)->rsqh_last = (head2)->rsqh_last;                          \
+            (head2)->rsqh_first = REL_NIL;                                    \
+            (head2)->rsqh_last = REL_NIL;                                     \
+        }                                                                     \
     } while (0)
 
 #define REL_STAILQ_SWAP(head1, head2, base)        \
@@ -344,10 +344,10 @@
     for ((var) = REL_STAILQ_FIRST((head), (base)); (var) != NULL; \
          (var) = REL_STAILQ_NEXT((head), (base), (var), field))
 
-#define REL_STAILQ_FOREACH_SAFE(var, head, base, field, tvar)                    \
-    for ((var) = REL_STAILQ_FIRST((head), (base)),                               \
+#define REL_STAILQ_FOREACH_SAFE(var, head, base, field, tvar)                 \
+    for ((var) = REL_STAILQ_FIRST((head), (base)),                            \
         (tvar) = ((var) ? REL_STAILQ_NEXT((head), (base), (var), field) : NULL); \
-         (var) != NULL; (var) = (tvar),                                          \
+         (var) != NULL; (var) = (tvar),                                       \
         (tvar) = ((var) ? REL_STAILQ_NEXT((head), (base), (var), field) : NULL))
 
 /*
@@ -393,10 +393,10 @@
     for ((var) = REL_TAILQ_FIRST((head), (base)); (var) != NULL; \
          (var) = REL_TAILQ_NEXT((head), (base), (var), field))
 
-#define REL_TAILQ_FOREACH_SAFE(var, head, base, field, tvar)                    \
-    for ((var) = REL_TAILQ_FIRST((head), (base)),                               \
+#define REL_TAILQ_FOREACH_SAFE(var, head, base, field, tvar)                  \
+    for ((var) = REL_TAILQ_FIRST((head), (base)),                             \
         (tvar) = ((var) ? REL_TAILQ_NEXT((head), (base), (var), field) : NULL); \
-         (var) != NULL; (var) = (tvar),                                         \
+         (var) != NULL; (var) = (tvar),                                       \
         (tvar) = ((var) ? REL_TAILQ_NEXT((head), (base), (var), field) : NULL))
 
 #define REL_TAILQ_FOREACH_REVERSE(var, head, base, field)       \

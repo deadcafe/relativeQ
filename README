@@ -400,13 +400,146 @@ Comparator
 
 int cmp(const type *a, const type *b);  /* strict weak ordering */
 
+REL_HASH (Cuckoo Hash Table)
+
+A high-performance, index-based cuckoo hash table in hashtbl/rel_hash.h.
+Stores fingerprints and 1-origin node indices in bucket arrays; no raw pointers.
+Suitable for shared memory and file-backed regions.
+
+Key lengths supported: 64, 128, 256, 512 bits.
+
+Runtime SIMD dispatch: Generic / AVX2 / AVX-512 selected at startup via cpuid.
+
+Design
+
+Bucket layout (128 bytes = 2 cache lines, 64-byte aligned):
+
+  uint32_t hash[16]   /* fingerprints                    */
+  uint32_t idx[16]    /* 1-origin node indices (0=empty) */
+
+Two candidate buckets per key:
+
+  fp     = hash.val32[0] ^ hash.val32[1]
+  fp_bk  = fp & mask  (non-zero; used for XOR bucket selection)
+  bk0    = hash.val32[0] & mask
+  bk1    = (bk0 ^ fp_bk) & mask   /* guaranteed bk0 != bk1 */
+
+Kickout uses the XOR symmetry: alt(bk) = (bk ^ fp_bk) & mask.
+
+Getting Started
+
+  #include "hashtbl/rel_hash.h"
+
+  /* 1. Typedef the element struct (bare identifier required by macros) */
+  typedef struct mynode mynode;
+  struct mynode {
+      uint8_t  key[16];   /* 128-bit key */
+      uint32_t value;
+  };
+
+  /* 2. Declare head – use the SAME name for HEAD and GENERATE */
+  REL_HASH_HEAD(myht);
+
+  /* 3. Provide a hash function */
+  static union rel_hash_hash_u my_hash(const void *key) { ... }
+
+  /* 4. Generate the full API */
+  REL_HASH_GENERATE(myht, mynode, key, 128, my_hash)
+
+  /* 5. Initialise once at program startup */
+  rel_hash_arch_init();
+
+  /* 6. Allocate 64-byte-aligned bucket array and node array */
+  struct rel_hash_bucket_s *buckets = aligned_alloc(64, NB_BK * sizeof(*buckets));
+  memset(buckets, 0, NB_BK * sizeof(*buckets));   /* zero = all slots empty */
+  mynode *nodes = calloc(N, sizeof(*nodes));       /* 1-origin: nodes[0] = index 1 */
+
+  struct myht head;
+  REL_HASH_INIT(&head, NB_BK);                    /* NB_BK must be a power of 2 */
+
+  /* Single-shot operations */
+  mynode *dup = myht_insert(&head, buckets, nodes, &nodes[i]);
+  /* NULL → inserted; non-NULL → duplicate node; elm itself → table full */
+
+  mynode *hit = myht_find(&head, buckets, nodes, key_ptr);
+
+  mynode *rem = myht_remove(&head, buckets, nodes, key_ptr);
+
+  myht_walk(&head, buckets, nodes, cb, arg);
+
+  /* Staged (pipelined) find – hide memory latency across N requests */
+  struct rel_hash_find_ctx_s ctx[4];
+  const void *keys[4] = { ... };
+  mynode *results[4];
+
+  myht_hash_key4(ctx, &head, buckets, keys);   /* hash + bucket prefetch */
+  myht_scan_bk4 (ctx, &head, buckets);         /* fingerprint scan       */
+  myht_cmp_key4 (ctx, nodes, results);         /* full key compare       */
+
+Important Notes
+
+(a) typedef required: REL_HASH_GENERATE uses type as a bare C identifier.
+    Always declare typedef struct foo foo; before using foo as the type argument.
+
+(b) Name consistency: the tag given to REL_HASH_HEAD(name) and the first
+    argument of REL_HASH_GENERATE(name,...) must be identical.
+
+(c) rel_hash_arch_init() must be called once before any hash table operation.
+    It detects CPU features (AVX-512F, AVX2) and sets the dispatch table.
+
+(d) Bucket array alignment: use aligned_alloc(64, ...) or posix_memalign
+    to guarantee 64-byte alignment for best SIMD performance.
+
+(e) Bucket count (nb_buckets) must be a power of 2 and at least 2.
+
+(f) insert return values:
+      NULL       – success
+      other ptr  – duplicate node (key already present)
+      elm itself – table full (kickout depth exhausted)
+
+REL_HASH API
+
+Declarations & codegen
+
+REL_HASH_HEAD(name)                           /* declares struct name { mask, nb } */
+REL_HASH_INIT(head, nb_buckets)               /* initialise head */
+REL_HASH_GENERATE(name, type, key_field, key_len, hash_fn)
+
+hash_fn signature: union rel_hash_hash_u hash_fn(const void *key);
+key_len: 64, 128, 256, or 512 (bits)
+
+Single-shot ops
+
+type *name_find  (head, buckets, base, key)
+type *name_insert(head, buckets, base, elm)
+type *name_remove(head, buckets, base, key)
+int   name_walk  (head, buckets, base, cb, arg)   /* cb: int(*)(type*,void*) */
+
+Staged find (pipeline stages – find の構成要素)
+
+void  name_hash_key (ctx,    head, buckets, key)   /* x1 */
+void  name_scan_bk  (ctx,    head, buckets)
+type *name_cmp_key  (ctx,    base)
+
+void  name_hash_key2(ctx[2], head, buckets, keys[2])  /* x2 bulk */
+void  name_scan_bk2 (ctx[2], head, buckets)
+void  name_cmp_key2 (ctx[2], base, results[2])
+
+void  name_hash_key4(ctx[4], head, buckets, keys[4])  /* x4 bulk */
+void  name_scan_bk4 (ctx[4], head, buckets)
+void  name_cmp_key4 (ctx[4], base, results[4])
+
+Arch dispatch
+
+void rel_hash_arch_init(void)   /* call once at startup; selects Generic/AVX2/AVX-512 */
+
 Build
 
 Standard: C11 (also builds with -std=gnu11).
 
 Suggested flags:
 
--O3 -std=gnu11 -Wall -Wextra -Werror -pedantic
+-O3 -std=gnu11 -mavx2 -Wall -Wextra -Werror -pedantic
 # Optional during testing:
 -fsanitize=address,undefined -fno-omit-frame-pointer
 
@@ -427,7 +560,8 @@ No internal synchronization. For multi-process or multi-thread writers, place op
 
 Testing
 
-The project includes unit tests and fuzz tests (for each container and the RB tree) covering:
+The project includes unit tests and fuzz tests (for each container, the RB tree,
+and the cuckoo hash table) covering:
 
 empty/singleton/multi transitions,
 
@@ -435,7 +569,10 @@ all insert/remove variants,
 
 safe iteration while removing elements,
 
-RB invariants (root black, no red-red, equal black height).
+RB invariants (root black, no red-red, equal black height),
+
+hash table: duplicate detection, staged pipeline correctness, walk count,
+fuzz (random insert/find/remove verified against a reference model).
 
 Integrate your own allocator/free-list to model persistent shared-memory scenarios.
 
@@ -446,3 +583,4 @@ BSD 3-Clause License
 Acknowledgements
 
 APIs mirror the BSD queue/tree interfaces while replacing raw pointers with indices to enable robust shared-memory deployments.
+The cuckoo hash table follows the XOR-based two-bucket scheme for O(1) amortised insert with prefetch-driven staged lookup.
