@@ -8,6 +8,8 @@
 #ifndef _REL_TREE_H_
 #define _REL_TREE_H_
 
+#include "rel_defs.h"
+
 /*
  * RB Tree
  */

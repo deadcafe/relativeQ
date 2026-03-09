@@ -8,6 +8,8 @@
 #ifndef _REL_QUEUE_H_
 #define _REL_QUEUE_H_
 
+#include "rel_defs.h"
+
 /*
  * Single List
  */

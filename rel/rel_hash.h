@@ -45,8 +45,9 @@
 #ifndef _REL_HASH_H_
 #define _REL_HASH_H_
 
+#include "rel_defs.h"
+
 #include <stdint.h>
-#include <stddef.h>
 #include <string.h>
 
 #if defined(__x86_64__)
@@ -55,47 +56,22 @@
 #endif
 
 /*---------------------------------------------------------------------------
- * Portability helpers
+ * Hash common infrastructure
+ * (guarded so rel_hash_key.h can provide the same block independently)
  *---------------------------------------------------------------------------*/
-#ifndef REL_FORCE_INLINE
-# if defined(__GNUC__) || defined(__clang__)
-#  define REL_FORCE_INLINE __attribute__((always_inline)) inline
-# else
-#  define REL_FORCE_INLINE inline
-# endif
-#endif
+#ifndef _REL_HASH_COMMON_
+#define _REL_HASH_COMMON_
 
 /* Silence unused-function / unused-variable warnings for static symbols */
+#ifndef _REL_UNUSED
 #define _REL_UNUSED __attribute__((unused))
-
-/*---------------------------------------------------------------------------
- * Index primitives (guarded – may already be defined by rel_queue.h /
- * rel_tree.h when the user includes more than one header)
- *---------------------------------------------------------------------------*/
-#ifndef REL_NIL
-# define REL_NIL ((unsigned)0u)
-#endif
-
-#ifndef REL_IDX_FROM_PTR
-# define REL_IDX_FROM_PTR(base, p)                                            \
-    ((unsigned)((p) ? (unsigned)((p) - (base)) + 1u : REL_NIL))
-#endif
-
-#ifndef REL_PTR_FROM_IDX
-# define REL_PTR_FROM_IDX(base, i)                                            \
-    ((unsigned)(i) != REL_NIL ? (base) + ((unsigned)(i) - 1u) : NULL)
 #endif
 
 /*===========================================================================
- * Bucket layout
- * 128 bytes = 2 × 64-byte cache lines, aligned to 64 bytes.
+ * Constants shared across all hash variants
  *===========================================================================*/
 #define REL_HASH_BUCKET_ENTRY_SZ 16
-
-struct rel_hash_bucket_s {
-    uint32_t hash[REL_HASH_BUCKET_ENTRY_SZ]; /* 64 bytes: fingerprints       */
-    uint32_t idx [REL_HASH_BUCKET_ENTRY_SZ]; /* 64 bytes: 1-origin node idx  */
-} __attribute__((aligned(64)));
+#define REL_HASH_FOLLOW_DEPTH 8
 
 /*===========================================================================
  * Hash union
@@ -104,33 +80,6 @@ union rel_hash_hash_u {
     uint64_t val64;
     uint32_t val32[2];
 };
-
-/*===========================================================================
- * Head struct and init macros
- *===========================================================================*/
-#define REL_HASH_HEAD(name)                                                   \
-    struct name {                                                             \
-        unsigned rhh_mask;                                                    \
-        unsigned rhh_nb;                                                      \
-    }
-
-/* REL_HASH_INIT: see convenience macro API below */
-
-/*===========================================================================
- * Find context (staged pipeline)
- *===========================================================================*/
-struct rel_hash_find_ctx_s {
-    union rel_hash_hash_u     hash;
-    struct rel_hash_bucket_s *bk[2];
-    uint32_t                  fp;          /* full fingerprint stored in bk  */
-    uint32_t                  fp_hits[2];  /* bitmask: fp match & slot !NIL  */
-    const void               *key;         /* pointer to search key          */
-};
-
-/*===========================================================================
- * Cuckoo kickout depth limit
- *===========================================================================*/
-#define REL_HASH_FOLLOW_DEPTH 8
 
 /*===========================================================================
  * Arch handler – runtime SIMD dispatch
@@ -287,6 +236,39 @@ rel_hash_arch_init(void)
     rel_hash_arch = &_rel_hash_arch_GEN;
 #endif
 }
+
+#endif /* _REL_HASH_COMMON_ */
+
+/*===========================================================================
+ * Fingerprint-variant bucket layout
+ * 128 bytes = 2 × 64-byte cache lines, aligned to 64 bytes.
+ *===========================================================================*/
+struct rel_hash_bucket_s {
+    uint32_t hash[REL_HASH_BUCKET_ENTRY_SZ]; /* 64 bytes: fingerprints       */
+    uint32_t idx [REL_HASH_BUCKET_ENTRY_SZ]; /* 64 bytes: 1-origin node idx  */
+} __attribute__((aligned(64)));
+
+/*===========================================================================
+ * Head struct and init macros
+ *===========================================================================*/
+#define REL_HASH_HEAD(name)                                                   \
+    struct name {                                                             \
+        unsigned rhh_mask;                                                    \
+        unsigned rhh_nb;                                                      \
+    }
+
+/* REL_HASH_INIT: see convenience macro API below */
+
+/*===========================================================================
+ * Find context (staged pipeline)
+ *===========================================================================*/
+struct rel_hash_find_ctx_s {
+    union rel_hash_hash_u     hash;
+    struct rel_hash_bucket_s *bk[2];
+    uint32_t                  fp;          /* full fingerprint stored in bk  */
+    uint32_t                  fp_hits[2];  /* bitmask: fp match & slot !NIL  */
+    const void               *key;         /* pointer to search key          */
+};
 
 /*---------------------------------------------------------------------------
  * rel_hash_prefetch_key – prefetch key data into L1/L2 before name_hash_key.
