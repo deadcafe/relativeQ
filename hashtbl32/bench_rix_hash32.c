@@ -1,5 +1,5 @@
-/* bench_rel_hash32.c
- *  rel_hash32.h 検索性能ベンチマーク (32-bit key 版)
+/* bench_rix_hash32.c
+ *  rix_hash32.h 検索性能ベンチマーク (32-bit key 版)
  *  指標: 256 検索あたりの CPU cycle 数
  *
  *  Usage: ./hash32_bench [table_n [nb_bk [repeat]]]
@@ -10,12 +10,12 @@
  *  128-bit 版との相違点:
  *    - キーは uint32_t 値そのものであり、キーデータへのポインタ間接参照が不要。
  *      key_pool は uint32_t[] であり、HW prefetcher が順次アクセスを処理する。
- *      → key prefetch stage (rel_hash_prefetch_key) は不要・不採用。
+ *      → key prefetch stage (rix_hash_prefetch_key) は不要・不採用。
  *    - hash_field がノードに存在しないため、bk_0/bk_1 配置の確認は
  *      各スロットのキーを再ハッシュして判定する。
  *    - ノードサイズが 8 bytes と小さいため、DRAM-cold テストのために
  *      bk_mem を大きく設定する (バケット数を増やす)。
- *    - cmp_key は idx != REL_NIL の確認のみ (フルキー比較なし) → 高速。
+ *    - cmp_key は idx != RIX_NIL の確認のみ (フルキー比較なし) → 高速。
  */
 
 #include <stdio.h>
@@ -26,7 +26,7 @@
 #include <time.h>
 #include <sys/mman.h>
 
-#include "rel_hash32.h"
+#include "rix_hash32.h"
 
 /* ================================================================== */
 /* ノード定義                                                          */
@@ -38,8 +38,8 @@ typedef struct mynode_s {
 
 #define BENCH_INVALID_KEY  0xFFFFFFFFu   /* sentinel: never used as a real key */
 
-REL_HASH32_HEAD(myht32);
-REL_HASH32_GENERATE(myht32, mynode_t, key, BENCH_INVALID_KEY)
+RIX_HASH32_HEAD(myht32);
+RIX_HASH32_GENERATE(myht32, mynode_t, key, BENCH_INVALID_KEY)
 
 /* ================================================================== */
 /* TSC 計測ヘルパ                                                      */
@@ -83,7 +83,7 @@ now_sec(void)
 #define KPD8  8   /* x8 Nahead: 8 batches × 8 keys = 64 keys 先行 */
 #define KPD6 11   /* x6 Nahead: 11 batches × 6 keys = 66 keys 先行 */
 
-static struct rel_hash32_find_ctx_s g_ctx[BENCH_N];
+static struct rix_hash32_find_ctx_s g_ctx[BENCH_N];
 static mynode_t                    *g_res[BENCH_N];
 
 /* ================================================================== */
@@ -108,10 +108,10 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
 {
     /* ---- メモリ見積もり ------------------------------------------- */
     size_t node_mem = (size_t)table_n * sizeof(mynode_t);
-    size_t bk_mem   = (size_t)nb_bk   * sizeof(struct rel_hash32_bucket_s);
+    size_t bk_mem   = (size_t)nb_bk   * sizeof(struct rix_hash32_bucket_s);
     size_t pool_mem = (size_t)repeat * BENCH_N * sizeof(uint32_t);
     printf("[BENCH] table_n=%u  nb_bk=%u  slots=%u\n",
-           table_n, nb_bk, nb_bk * REL_HASH_BUCKET_ENTRY_SZ);
+           table_n, nb_bk, nb_bk * RIX_HASH_BUCKET_ENTRY_SZ);
     printf("  memory : nodes=%.1f MB  buckets=%.1f MB"
            "  key_pool=%.1f MB  total=%.1f MB\n",
            node_mem / 1e6, bk_mem / 1e6, pool_mem / 1e6,
@@ -130,7 +130,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
     madvise(nodes, node_mem, MADV_HUGEPAGE);
 
     /*
-     * キーは 1-origin 連番: 重複なし、0 (REL_NIL) を避ける。
+     * キーは 1-origin 連番: 重複なし、0 (RIX_NIL) を避ける。
      * xorshift64 で生成したランダムキーでも可だが、32-bit 空間の
      * 衝突確率は table_n^2 / 2^33 で、table_n=10M では ~1.2% 程度。
      * 連番は衝突ゼロで挿入率を保証する。
@@ -141,14 +141,14 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
     }
 
     /* ---- バケット確保 --------------------------------------------- */
-    struct rel_hash32_bucket_s *bk =
-        (struct rel_hash32_bucket_s *)mmap(NULL, bk_mem,
+    struct rix_hash32_bucket_s *bk =
+        (struct rix_hash32_bucket_s *)mmap(NULL, bk_mem,
                                            PROT_READ | PROT_WRITE,
                                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (bk == MAP_FAILED) { perror("mmap bk"); exit(1); }
     madvise(bk, bk_mem, MADV_HUGEPAGE);
     struct myht32 head;
-    REL_HASH32_INIT(myht32, &head, bk, nb_bk);
+    RIX_HASH32_INIT(myht32, &head, bk, nb_bk);
 
     /* ---- 挿入 ----------------------------------------------------- */
     printf("  inserting...\n"); fflush(stdout);
@@ -167,19 +167,19 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
     double t_ins_start = now_sec();
     for (unsigned i = 0; i < table_n; i++) {
         /* 挿入前に経路を判定 */
-        union rel_hash_hash_u _h =
-            _rel_hash32_fn((uint32_t)nodes[i].key, head.rhh_mask);
+        union rix_hash_hash_u _h =
+            _rix_hash32_fn((uint32_t)nodes[i].key, head.rhh_mask);
         unsigned _b0 = _h.val32[0] & head.rhh_mask;
         unsigned _b1 = _h.val32[1] & head.rhh_mask;
-        uint32_t _nilm0 = rel_hash_arch->find_u32x16(bk[_b0].key,
+        uint32_t _nilm0 = rix_hash_arch->find_u32x16(bk[_b0].key,
                                                       BENCH_INVALID_KEY);
-        uint32_t _nilm1 = rel_hash_arch->find_u32x16(bk[_b1].key,
+        uint32_t _nilm1 = rix_hash_arch->find_u32x16(bk[_b1].key,
                                                       BENCH_INVALID_KEY);
         if      (_nilm0) ins_bk0_fast++;
         else if (_nilm1) ins_bk1_fast++;
         else             ins_kickout++;
 
-        if (REL_HASH32_INSERT(myht32, &head, bk, nodes, &nodes[i]) == NULL)
+        if (RIX_HASH32_INSERT(myht32, &head, bk, nodes, &nodes[i]) == NULL)
             n_hit++;
         if ((i + 1) % report_step == 0) {
             printf("    %3u%%\r",
@@ -188,7 +188,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         }
     }
     double t_ins = now_sec() - t_ins_start;
-    double fill = 100.0 * n_hit / ((double)nb_bk * REL_HASH_BUCKET_ENTRY_SZ);
+    double fill = 100.0 * n_hit / ((double)nb_bk * RIX_HASH_BUCKET_ENTRY_SZ);
     printf("  inserted : %u/%u (%.1f%% fill)  %.2f s  %.1f ns/insert\n",
            n_hit, table_n, fill, t_ins, t_ins * 1e9 / table_n);
     printf("  insert paths: bk0_fast=%" PRIu64 "  bk1_fast=%" PRIu64
@@ -206,12 +206,12 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         unsigned mask = head.rhh_mask;
 
         for (unsigned b = 0; b < nb_bk; b++) {
-            for (unsigned s = 0; s < REL_HASH_BUCKET_ENTRY_SZ; s++) {
+            for (unsigned s = 0; s < RIX_HASH_BUCKET_ENTRY_SZ; s++) {
                 uint32_t nidx = bk[b].idx[s];
-                if (nidx == (uint32_t)REL_NIL)
+                if (nidx == (uint32_t)RIX_NIL)
                     continue;
                 uint32_t key = bk[b].key[s];
-                union rel_hash_hash_u h = _rel_hash32_fn(key, mask);
+                union rix_hash_hash_u h = _rix_hash32_fn(key, mask);
                 if (b == (h.val32[0] & mask))
                     in_bk0++;
                 else
@@ -234,7 +234,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
      * 128-bit 版と異なり、キーは値そのもの (ポインタ間接参照なし)。
      * key_pool は連続メモリへの順次アクセスとなり、HW prefetcher が
      * キーデータの DRAM ミスを自動的に処理する。
-     * → key prefetch stage (rel_hash_prefetch_key 相当) は不要。
+     * → key prefetch stage (rix_hash_prefetch_key 相当) は不要。
      *
      * key_pool には挿入済みノードのキーのみを格納し、全検索がヒットする
      * ように設計する (miss 時の bk_1 アクセスが常に発生しないようにする)。
@@ -254,76 +254,76 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
 
         /* single find */
         for (int i = 0; i < BENCH_N; i++)
-            g_res[i] = REL_HASH32_FIND(myht32, &head, bk, nodes, wk[i]);
+            g_res[i] = RIX_HASH32_FIND(myht32, &head, bk, nodes, wk[i]);
         /* x1 staged */
         for (int i = 0; i < BENCH_N; i++)
-            REL_HASH32_HASH_KEY(myht32, &g_ctx[i], &head, bk, wk[i]);
+            RIX_HASH32_HASH_KEY(myht32, &g_ctx[i], &head, bk, wk[i]);
         for (int i = 0; i < BENCH_N; i++)
-            REL_HASH32_SCAN_BK(myht32, &g_ctx[i], &head, bk);
+            RIX_HASH32_SCAN_BK(myht32, &g_ctx[i], &head, bk);
         for (int i = 0; i < BENCH_N; i++)
-            g_res[i] = REL_HASH32_CMP_KEY(myht32, &g_ctx[i], nodes);
+            g_res[i] = RIX_HASH32_CMP_KEY(myht32, &g_ctx[i], nodes);
         /* x2 */
         for (int b = 0; b < BENCH_N / 2; b++)
-            REL_HASH32_HASH_KEY2(myht32, &g_ctx[b * 2], &head, bk, wk + b * 2);
+            RIX_HASH32_HASH_KEY2(myht32, &g_ctx[b * 2], &head, bk, wk + b * 2);
         for (int b = 0; b < BENCH_N / 2; b++)
-            REL_HASH32_SCAN_BK2(myht32, &g_ctx[b * 2], &head, bk);
+            RIX_HASH32_SCAN_BK2(myht32, &g_ctx[b * 2], &head, bk);
         for (int b = 0; b < BENCH_N / 2; b++)
-            REL_HASH32_PREFETCH_NODE2(myht32, &g_ctx[b * 2], nodes);
+            RIX_HASH32_PREFETCH_NODE2(myht32, &g_ctx[b * 2], nodes);
         for (int b = 0; b < BENCH_N / 2; b++)
-            REL_HASH32_CMP_KEY2(myht32, &g_ctx[b * 2], nodes, &g_res[b * 2]);
+            RIX_HASH32_CMP_KEY2(myht32, &g_ctx[b * 2], nodes, &g_res[b * 2]);
         /* x4 */
         for (int b = 0; b < BENCH_N / 4; b++)
-            REL_HASH32_HASH_KEY4(myht32, &g_ctx[b * 4], &head, bk, wk + b * 4);
+            RIX_HASH32_HASH_KEY4(myht32, &g_ctx[b * 4], &head, bk, wk + b * 4);
         for (int b = 0; b < BENCH_N / 4; b++)
-            REL_HASH32_SCAN_BK4(myht32, &g_ctx[b * 4], &head, bk);
+            RIX_HASH32_SCAN_BK4(myht32, &g_ctx[b * 4], &head, bk);
         for (int b = 0; b < BENCH_N / 4; b++)
-            REL_HASH32_PREFETCH_NODE4(myht32, &g_ctx[b * 4], nodes);
+            RIX_HASH32_PREFETCH_NODE4(myht32, &g_ctx[b * 4], nodes);
         for (int b = 0; b < BENCH_N / 4; b++)
-            REL_HASH32_CMP_KEY4(myht32, &g_ctx[b * 4], nodes, &g_res[b * 4]);
+            RIX_HASH32_CMP_KEY4(myht32, &g_ctx[b * 4], nodes, &g_res[b * 4]);
         /* x6 */
         for (int b = 0; b < BENCH_N6 / 6; b++)
-            REL_HASH32_HASH_KEY_N(myht32, &g_ctx[b * 6], 6, &head, bk, wk + b * 6);
+            RIX_HASH32_HASH_KEY_N(myht32, &g_ctx[b * 6], 6, &head, bk, wk + b * 6);
         for (int b = 0; b < BENCH_N6 / 6; b++)
-            REL_HASH32_SCAN_BK_N(myht32, &g_ctx[b * 6], 6, &head, bk);
+            RIX_HASH32_SCAN_BK_N(myht32, &g_ctx[b * 6], 6, &head, bk);
         for (int b = 0; b < BENCH_N6 / 6; b++)
-            REL_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b * 6], 6, nodes);
+            RIX_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b * 6], 6, nodes);
         for (int b = 0; b < BENCH_N6 / 6; b++)
-            REL_HASH32_CMP_KEY_N(myht32, &g_ctx[b * 6], 6, nodes, &g_res[b * 6]);
+            RIX_HASH32_CMP_KEY_N(myht32, &g_ctx[b * 6], 6, nodes, &g_res[b * 6]);
         /* x8 */
         for (int b = 0; b < BENCH_N8 / 8; b++)
-            REL_HASH32_HASH_KEY_N(myht32, &g_ctx[b * 8], 8, &head, bk, wk + b * 8);
+            RIX_HASH32_HASH_KEY_N(myht32, &g_ctx[b * 8], 8, &head, bk, wk + b * 8);
         for (int b = 0; b < BENCH_N8 / 8; b++)
-            REL_HASH32_SCAN_BK_N(myht32, &g_ctx[b * 8], 8, &head, bk);
+            RIX_HASH32_SCAN_BK_N(myht32, &g_ctx[b * 8], 8, &head, bk);
         for (int b = 0; b < BENCH_N8 / 8; b++)
-            REL_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b * 8], 8, nodes);
+            RIX_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b * 8], 8, nodes);
         for (int b = 0; b < BENCH_N8 / 8; b++)
-            REL_HASH32_CMP_KEY_N(myht32, &g_ctx[b * 8], 8, nodes, &g_res[b * 8]);
+            RIX_HASH32_CMP_KEY_N(myht32, &g_ctx[b * 8], 8, nodes, &g_res[b * 8]);
         /* x8 Nahead warmup */
         for (int b = 0; b < KPD8 && b < BENCH_N8/8; b++)
-            REL_HASH32_HASH_KEY_N(myht32, &g_ctx[b*8], 8, &head, bk, wk + b*8);
+            RIX_HASH32_HASH_KEY_N(myht32, &g_ctx[b*8], 8, &head, bk, wk + b*8);
         for (int b = 0; b < BENCH_N8/8; b++) {
             int pf = b + KPD8;
             if (pf < BENCH_N8/8)
-                REL_HASH32_HASH_KEY_N(myht32, &g_ctx[pf*8], 8, &head, bk, wk + pf*8);
-            REL_HASH32_SCAN_BK_N(myht32, &g_ctx[b*8], 8, &head, bk);
+                RIX_HASH32_HASH_KEY_N(myht32, &g_ctx[pf*8], 8, &head, bk, wk + pf*8);
+            RIX_HASH32_SCAN_BK_N(myht32, &g_ctx[b*8], 8, &head, bk);
         }
         for (int b = 0; b < BENCH_N8/8; b++)
-            REL_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b*8], 8, nodes);
+            RIX_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b*8], 8, nodes);
         for (int b = 0; b < BENCH_N8/8; b++)
-            REL_HASH32_CMP_KEY_N(myht32, &g_ctx[b*8], 8, nodes, &g_res[b*8]);
+            RIX_HASH32_CMP_KEY_N(myht32, &g_ctx[b*8], 8, nodes, &g_res[b*8]);
         /* x6 Nahead warmup */
         for (int b = 0; b < KPD6 && b < BENCH_N6/6; b++)
-            REL_HASH32_HASH_KEY_N(myht32, &g_ctx[b*6], 6, &head, bk, wk + b*6);
+            RIX_HASH32_HASH_KEY_N(myht32, &g_ctx[b*6], 6, &head, bk, wk + b*6);
         for (int b = 0; b < BENCH_N6/6; b++) {
             int pf = b + KPD6;
             if (pf < BENCH_N6/6)
-                REL_HASH32_HASH_KEY_N(myht32, &g_ctx[pf*6], 6, &head, bk, wk + pf*6);
-            REL_HASH32_SCAN_BK_N(myht32, &g_ctx[b*6], 6, &head, bk);
+                RIX_HASH32_HASH_KEY_N(myht32, &g_ctx[pf*6], 6, &head, bk, wk + pf*6);
+            RIX_HASH32_SCAN_BK_N(myht32, &g_ctx[b*6], 6, &head, bk);
         }
         for (int b = 0; b < BENCH_N6/6; b++)
-            REL_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b*6], 6, nodes);
+            RIX_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b*6], 6, nodes);
         for (int b = 0; b < BENCH_N6/6; b++)
-            REL_HASH32_CMP_KEY_N(myht32, &g_ctx[b*6], 6, nodes, &g_res[b*6]);
+            RIX_HASH32_CMP_KEY_N(myht32, &g_ctx[b*6], 6, nodes, &g_res[b*6]);
     }
 
     /* ---- 計測 ----------------------------------------------------- */
@@ -364,7 +364,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
         for (int i = 0; i < BENCH_N; i++)
-            g_res[i] = REL_HASH32_FIND(myht32, &head, bk, nodes, ik[i]);
+            g_res[i] = RIX_HASH32_FIND(myht32, &head, bk, nodes, ik[i]);
         uint64_t cy = tsc_end() - t0;
         if (cy < result[0].min_cy) result[0].min_cy = cy;
         result[0].sum_cy += cy;
@@ -375,11 +375,11 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
         for (int i = 0; i < BENCH_N; i++)
-            REL_HASH32_HASH_KEY(myht32, &g_ctx[i], &head, bk, ik[i]);
+            RIX_HASH32_HASH_KEY(myht32, &g_ctx[i], &head, bk, ik[i]);
         for (int i = 0; i < BENCH_N; i++)
-            REL_HASH32_SCAN_BK(myht32, &g_ctx[i], &head, bk);
+            RIX_HASH32_SCAN_BK(myht32, &g_ctx[i], &head, bk);
         for (int i = 0; i < BENCH_N; i++)
-            g_res[i] = REL_HASH32_CMP_KEY(myht32, &g_ctx[i], nodes);
+            g_res[i] = RIX_HASH32_CMP_KEY(myht32, &g_ctx[i], nodes);
         uint64_t cy = tsc_end() - t0;
         if (cy < result[1].min_cy) result[1].min_cy = cy;
         result[1].sum_cy += cy;
@@ -390,13 +390,13 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
         for (int i = 0; i < BENCH_N; i++)
-            REL_HASH32_HASH_KEY(myht32, &g_ctx[i], &head, bk, ik[i]);
+            RIX_HASH32_HASH_KEY(myht32, &g_ctx[i], &head, bk, ik[i]);
         for (int i = 0; i < BENCH_N; i++)
-            REL_HASH32_SCAN_BK(myht32, &g_ctx[i], &head, bk);
+            RIX_HASH32_SCAN_BK(myht32, &g_ctx[i], &head, bk);
         for (int i = 0; i < BENCH_N; i++)
-            REL_HASH32_PREFETCH_NODE(myht32, &g_ctx[i], nodes);
+            RIX_HASH32_PREFETCH_NODE(myht32, &g_ctx[i], nodes);
         for (int i = 0; i < BENCH_N; i++)
-            g_res[i] = REL_HASH32_CMP_KEY(myht32, &g_ctx[i], nodes);
+            g_res[i] = RIX_HASH32_CMP_KEY(myht32, &g_ctx[i], nodes);
         uint64_t cy = tsc_end() - t0;
         if (cy < result[2].min_cy) result[2].min_cy = cy;
         result[2].sum_cy += cy;
@@ -407,13 +407,13 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
         for (int b = 0; b < BENCH_N / 2; b++)
-            REL_HASH32_HASH_KEY2(myht32, &g_ctx[b * 2], &head, bk, ik + b * 2);
+            RIX_HASH32_HASH_KEY2(myht32, &g_ctx[b * 2], &head, bk, ik + b * 2);
         for (int b = 0; b < BENCH_N / 2; b++)
-            REL_HASH32_SCAN_BK2(myht32, &g_ctx[b * 2], &head, bk);
+            RIX_HASH32_SCAN_BK2(myht32, &g_ctx[b * 2], &head, bk);
         for (int b = 0; b < BENCH_N / 2; b++)
-            REL_HASH32_PREFETCH_NODE2(myht32, &g_ctx[b * 2], nodes);
+            RIX_HASH32_PREFETCH_NODE2(myht32, &g_ctx[b * 2], nodes);
         for (int b = 0; b < BENCH_N / 2; b++)
-            REL_HASH32_CMP_KEY2(myht32, &g_ctx[b * 2], nodes, &g_res[b * 2]);
+            RIX_HASH32_CMP_KEY2(myht32, &g_ctx[b * 2], nodes, &g_res[b * 2]);
         uint64_t cy = tsc_end() - t0;
         if (cy < result[3].min_cy) result[3].min_cy = cy;
         result[3].sum_cy += cy;
@@ -424,11 +424,11 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
         for (int b = 0; b < BENCH_N / 4; b++)
-            REL_HASH32_HASH_KEY4(myht32, &g_ctx[b * 4], &head, bk, ik + b * 4);
+            RIX_HASH32_HASH_KEY4(myht32, &g_ctx[b * 4], &head, bk, ik + b * 4);
         for (int b = 0; b < BENCH_N / 4; b++)
-            REL_HASH32_SCAN_BK4(myht32, &g_ctx[b * 4], &head, bk);
+            RIX_HASH32_SCAN_BK4(myht32, &g_ctx[b * 4], &head, bk);
         for (int b = 0; b < BENCH_N / 4; b++)
-            REL_HASH32_CMP_KEY4(myht32, &g_ctx[b * 4], nodes, &g_res[b * 4]);
+            RIX_HASH32_CMP_KEY4(myht32, &g_ctx[b * 4], nodes, &g_res[b * 4]);
         uint64_t cy = tsc_end() - t0;
         if (cy < result[4].min_cy) result[4].min_cy = cy;
         result[4].sum_cy += cy;
@@ -439,13 +439,13 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
         for (int b = 0; b < BENCH_N / 4; b++)
-            REL_HASH32_HASH_KEY4(myht32, &g_ctx[b * 4], &head, bk, ik + b * 4);
+            RIX_HASH32_HASH_KEY4(myht32, &g_ctx[b * 4], &head, bk, ik + b * 4);
         for (int b = 0; b < BENCH_N / 4; b++)
-            REL_HASH32_SCAN_BK4(myht32, &g_ctx[b * 4], &head, bk);
+            RIX_HASH32_SCAN_BK4(myht32, &g_ctx[b * 4], &head, bk);
         for (int b = 0; b < BENCH_N / 4; b++)
-            REL_HASH32_PREFETCH_NODE4(myht32, &g_ctx[b * 4], nodes);
+            RIX_HASH32_PREFETCH_NODE4(myht32, &g_ctx[b * 4], nodes);
         for (int b = 0; b < BENCH_N / 4; b++)
-            REL_HASH32_CMP_KEY4(myht32, &g_ctx[b * 4], nodes, &g_res[b * 4]);
+            RIX_HASH32_CMP_KEY4(myht32, &g_ctx[b * 4], nodes, &g_res[b * 4]);
         uint64_t cy = tsc_end() - t0;
         if (cy < result[5].min_cy) result[5].min_cy = cy;
         result[5].sum_cy += cy;
@@ -456,13 +456,13 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
         for (int b = 0; b < BENCH_N6 / 6; b++)
-            REL_HASH32_HASH_KEY_N(myht32, &g_ctx[b * 6], 6, &head, bk, ik + b * 6);
+            RIX_HASH32_HASH_KEY_N(myht32, &g_ctx[b * 6], 6, &head, bk, ik + b * 6);
         for (int b = 0; b < BENCH_N6 / 6; b++)
-            REL_HASH32_SCAN_BK_N(myht32, &g_ctx[b * 6], 6, &head, bk);
+            RIX_HASH32_SCAN_BK_N(myht32, &g_ctx[b * 6], 6, &head, bk);
         for (int b = 0; b < BENCH_N6 / 6; b++)
-            REL_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b * 6], 6, nodes);
+            RIX_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b * 6], 6, nodes);
         for (int b = 0; b < BENCH_N6 / 6; b++)
-            REL_HASH32_CMP_KEY_N(myht32, &g_ctx[b * 6], 6, nodes, &g_res[b * 6]);
+            RIX_HASH32_CMP_KEY_N(myht32, &g_ctx[b * 6], 6, nodes, &g_res[b * 6]);
         uint64_t cy = tsc_end() - t0;
         if (cy < result[6].min_cy) result[6].min_cy = cy;
         result[6].sum_cy += cy;
@@ -473,13 +473,13 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
         for (int b = 0; b < BENCH_N8 / 8; b++)
-            REL_HASH32_HASH_KEY_N(myht32, &g_ctx[b * 8], 8, &head, bk, ik + b * 8);
+            RIX_HASH32_HASH_KEY_N(myht32, &g_ctx[b * 8], 8, &head, bk, ik + b * 8);
         for (int b = 0; b < BENCH_N8 / 8; b++)
-            REL_HASH32_SCAN_BK_N(myht32, &g_ctx[b * 8], 8, &head, bk);
+            RIX_HASH32_SCAN_BK_N(myht32, &g_ctx[b * 8], 8, &head, bk);
         for (int b = 0; b < BENCH_N8 / 8; b++)
-            REL_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b * 8], 8, nodes);
+            RIX_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b * 8], 8, nodes);
         for (int b = 0; b < BENCH_N8 / 8; b++)
-            REL_HASH32_CMP_KEY_N(myht32, &g_ctx[b * 8], 8, nodes, &g_res[b * 8]);
+            RIX_HASH32_CMP_KEY_N(myht32, &g_ctx[b * 8], 8, nodes, &g_res[b * 8]);
         uint64_t cy = tsc_end() - t0;
         if (cy < result[7].min_cy) result[7].min_cy = cy;
         result[7].sum_cy += cy;
@@ -490,17 +490,17 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
         for (int b = 0; b < KPD6 && b < BENCH_N6/6; b++)
-            REL_HASH32_HASH_KEY_N(myht32, &g_ctx[b*6], 6, &head, bk, ik + b*6);
+            RIX_HASH32_HASH_KEY_N(myht32, &g_ctx[b*6], 6, &head, bk, ik + b*6);
         for (int b = 0; b < BENCH_N6/6; b++) {
             int pf = b + KPD6;
             if (pf < BENCH_N6/6)
-                REL_HASH32_HASH_KEY_N(myht32, &g_ctx[pf*6], 6, &head, bk, ik + pf*6);
-            REL_HASH32_SCAN_BK_N(myht32, &g_ctx[b*6], 6, &head, bk);
+                RIX_HASH32_HASH_KEY_N(myht32, &g_ctx[pf*6], 6, &head, bk, ik + pf*6);
+            RIX_HASH32_SCAN_BK_N(myht32, &g_ctx[b*6], 6, &head, bk);
         }
         for (int b = 0; b < BENCH_N6/6; b++)
-            REL_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b*6], 6, nodes);
+            RIX_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b*6], 6, nodes);
         for (int b = 0; b < BENCH_N6/6; b++)
-            REL_HASH32_CMP_KEY_N(myht32, &g_ctx[b*6], 6, nodes, &g_res[b*6]);
+            RIX_HASH32_CMP_KEY_N(myht32, &g_ctx[b*6], 6, nodes, &g_res[b*6]);
         uint64_t cy = tsc_end() - t0;
         if (cy < result[8].min_cy) result[8].min_cy = cy;
         result[8].sum_cy += cy;
@@ -511,17 +511,17 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
         for (int b = 0; b < KPD8 && b < BENCH_N8/8; b++)
-            REL_HASH32_HASH_KEY_N(myht32, &g_ctx[b*8], 8, &head, bk, ik + b*8);
+            RIX_HASH32_HASH_KEY_N(myht32, &g_ctx[b*8], 8, &head, bk, ik + b*8);
         for (int b = 0; b < BENCH_N8/8; b++) {
             int pf = b + KPD8;
             if (pf < BENCH_N8/8)
-                REL_HASH32_HASH_KEY_N(myht32, &g_ctx[pf*8], 8, &head, bk, ik + pf*8);
-            REL_HASH32_SCAN_BK_N(myht32, &g_ctx[b*8], 8, &head, bk);
+                RIX_HASH32_HASH_KEY_N(myht32, &g_ctx[pf*8], 8, &head, bk, ik + pf*8);
+            RIX_HASH32_SCAN_BK_N(myht32, &g_ctx[b*8], 8, &head, bk);
         }
         for (int b = 0; b < BENCH_N8/8; b++)
-            REL_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b*8], 8, nodes);
+            RIX_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b*8], 8, nodes);
         for (int b = 0; b < BENCH_N8/8; b++)
-            REL_HASH32_CMP_KEY_N(myht32, &g_ctx[b*8], 8, nodes, &g_res[b*8]);
+            RIX_HASH32_CMP_KEY_N(myht32, &g_ctx[b*8], 8, nodes, &g_res[b*8]);
         uint64_t cy = tsc_end() - t0;
         if (cy < result[9].min_cy) result[9].min_cy = cy;
         result[9].sum_cy += cy;
@@ -590,12 +590,12 @@ main(int argc, char **argv)
     if (nb_bk == 0) {
         /* デフォルト: ~80% 充填を目標 (slots = table_n / 0.8) */
         nb_bk = 1;
-        while ((uint64_t)nb_bk * REL_HASH_BUCKET_ENTRY_SZ * 4 <
+        while ((uint64_t)nb_bk * RIX_HASH_BUCKET_ENTRY_SZ * 4 <
                (uint64_t)table_n * 5)
             nb_bk <<= 1;
     }
 
-    rel_hash_arch_init();
+    rix_hash_arch_init();
     bench_find(table_n, nb_bk, repeat);
     return 0;
 }

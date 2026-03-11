@@ -30,22 +30,22 @@
  */
 
 /*
- * rel_hash_key.h – merged index-based cuckoo hash for 32-bit and 64-bit keys
+ * rix_hash_key.h – merged index-based cuckoo hash for 32-bit and 64-bit keys
  *
- * Combines rel_hash32.h and rel_hash64.h into a single header.
+ * Combines rix_hash32.h and rix_hash64.h into a single header.
  * Hash common infrastructure (arch dispatch, SIMD helpers) is guarded by
- * _REL_HASH_COMMON_ so it can coexist with rel_hash.h if both are included.
+ * _RIX_HASH_COMMON_ so it can coexist with rix_hash.h if both are included.
  *
  * Key types: uint32_t (hash32) and uint64_t (hash64), stored directly in
  * bucket (no fingerprint array).  No hash_field required in the node struct.
- * Runtime SIMD dispatch via rel_hash_arch (Generic / AVX2 / AVX-512).
- * Index-based: REL_NIL=0, 1-origin indices (no raw pointers stored).
+ * Runtime SIMD dispatch via rix_hash_arch (Generic / AVX2 / AVX-512).
+ * Index-based: RIX_NIL=0, 1-origin indices (no raw pointers stored).
  */
 
-#ifndef _REL_HASH_KEY_H_
-#define _REL_HASH_KEY_H_
+#ifndef _RIX_HASH_KEY_H_
+#define _RIX_HASH_KEY_H_
 
-#include "rel_defs.h"
+#include "rix_defs.h"
 
 #include <stdint.h>
 
@@ -56,26 +56,26 @@
 
 /*---------------------------------------------------------------------------
  * Hash common infrastructure
- * (guarded so rel_hash.h can provide the same block independently)
+ * (guarded so rix_hash.h can provide the same block independently)
  *---------------------------------------------------------------------------*/
-#ifndef _REL_HASH_COMMON_
-#define _REL_HASH_COMMON_
+#ifndef _RIX_HASH_COMMON_
+#define _RIX_HASH_COMMON_
 
 /* Silence unused-function / unused-variable warnings for static symbols */
-#ifndef _REL_UNUSED
-#define _REL_UNUSED __attribute__((unused))
+#ifndef _RIX_UNUSED
+#define _RIX_UNUSED __attribute__((unused))
 #endif
 
 /*===========================================================================
  * Constants shared across all hash variants
  *===========================================================================*/
-#define REL_HASH_BUCKET_ENTRY_SZ 16
-#define REL_HASH_FOLLOW_DEPTH 8
+#define RIX_HASH_BUCKET_ENTRY_SZ 16
+#define RIX_HASH_FOLLOW_DEPTH 8
 
 /*===========================================================================
  * Hash union
  *===========================================================================*/
-union rel_hash_hash_u {
+union rix_hash_hash_u {
     uint64_t val64;
     uint32_t val32[2];
 };
@@ -83,21 +83,21 @@ union rel_hash_hash_u {
 /*===========================================================================
  * Arch handler – runtime SIMD dispatch
  *===========================================================================*/
-struct rel_hash_arch_s {
+struct rix_hash_arch_s {
     /* find val in uint32_t[16], returns 16-bit bitmask of hit positions */
     uint32_t (*find_u32x16)(const uint32_t *arr, uint32_t val);
     /* find val in uint64_t[16], returns 16-bit bitmask of hit positions */
     uint32_t (*find_u64x16)(const uint64_t *arr, uint64_t  val);
 };
 
-/* Set once by rel_hash_arch_init(); extern so multiple TUs share one copy. */
-static _REL_UNUSED const struct rel_hash_arch_s *rel_hash_arch;
+/* Set once by rix_hash_arch_init(); extern so multiple TUs share one copy. */
+static _RIX_UNUSED const struct rix_hash_arch_s *rix_hash_arch;
 
 /*---------------------------------------------------------------------------
  * Generic (scalar) implementations
  *---------------------------------------------------------------------------*/
-static REL_FORCE_INLINE _REL_UNUSED uint32_t
-_rel_hash_find_u32x16_GEN(const uint32_t *arr, uint32_t val)
+static RIX_FORCE_INLINE _RIX_UNUSED uint32_t
+_rix_hash_find_u32x16_GEN(const uint32_t *arr, uint32_t val)
 {
     uint32_t mask = 0u;
     for (unsigned i = 0u; i < 16u; i++)
@@ -106,8 +106,8 @@ _rel_hash_find_u32x16_GEN(const uint32_t *arr, uint32_t val)
     return mask;
 }
 
-static REL_FORCE_INLINE _REL_UNUSED uint32_t
-_rel_hash_find_u64x16_GEN(const uint64_t *arr, uint64_t val)
+static RIX_FORCE_INLINE _RIX_UNUSED uint32_t
+_rix_hash_find_u64x16_GEN(const uint64_t *arr, uint64_t val)
 {
     uint32_t mask = 0u;
     for (unsigned i = 0u; i < 16u; i++)
@@ -116,9 +116,9 @@ _rel_hash_find_u64x16_GEN(const uint64_t *arr, uint64_t val)
     return mask;
 }
 
-static _REL_UNUSED const struct rel_hash_arch_s _rel_hash_arch_GEN = {
-    _rel_hash_find_u32x16_GEN,
-    _rel_hash_find_u64x16_GEN,
+static _RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_GEN = {
+    _rix_hash_find_u32x16_GEN,
+    _rix_hash_find_u64x16_GEN,
 };
 
 /*---------------------------------------------------------------------------
@@ -126,8 +126,8 @@ static _REL_UNUSED const struct rel_hash_arch_s _rel_hash_arch_GEN = {
  *---------------------------------------------------------------------------*/
 #if defined(__x86_64__) && defined(__AVX2__)
 
-static REL_FORCE_INLINE _REL_UNUSED uint32_t
-_rel_hash_find_u32x16_AVX2(const uint32_t *arr, uint32_t val)
+static RIX_FORCE_INLINE _RIX_UNUSED uint32_t
+_rix_hash_find_u32x16_AVX2(const uint32_t *arr, uint32_t val)
 {
     __m256i vval = _mm256_set1_epi32((int)val);
     __m256i a0   = _mm256_loadu_si256((const __m256i *)(const void *)arr);
@@ -141,8 +141,8 @@ _rel_hash_find_u32x16_AVX2(const uint32_t *arr, uint32_t val)
     return lo | (hi << 8);
 }
 
-static REL_FORCE_INLINE _REL_UNUSED uint32_t
-_rel_hash_find_u64x16_AVX2(const uint64_t *arr, uint64_t val)
+static RIX_FORCE_INLINE _RIX_UNUSED uint32_t
+_rix_hash_find_u64x16_AVX2(const uint64_t *arr, uint64_t val)
 {
     __m256i vval = _mm256_set1_epi64x((long long)val);
     __m256i v0   =
@@ -164,9 +164,9 @@ _rel_hash_find_u64x16_AVX2(const uint64_t *arr, uint64_t val)
     return m0 | (m1 << 4) | (m2 << 8) | (m3 << 12);
 }
 
-static _REL_UNUSED const struct rel_hash_arch_s _rel_hash_arch_AVX2 = {
-    _rel_hash_find_u32x16_AVX2,
-    _rel_hash_find_u64x16_AVX2,
+static _RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_AVX2 = {
+    _rix_hash_find_u32x16_AVX2,
+    _rix_hash_find_u64x16_AVX2,
 };
 
 #endif /* __x86_64__ && __AVX2__ */
@@ -176,8 +176,8 @@ static _REL_UNUSED const struct rel_hash_arch_s _rel_hash_arch_AVX2 = {
  *---------------------------------------------------------------------------*/
 #if defined(__x86_64__) && defined(__AVX512F__)
 
-static REL_FORCE_INLINE _REL_UNUSED uint32_t
-_rel_hash_find_u32x16_AVX512(const uint32_t *arr, uint32_t val)
+static RIX_FORCE_INLINE _RIX_UNUSED uint32_t
+_rix_hash_find_u32x16_AVX512(const uint32_t *arr, uint32_t val)
 {
     __m512i vval = _mm512_set1_epi32((int)val);
     __m512i va   = _mm512_loadu_si512((const void *)arr);
@@ -185,8 +185,8 @@ _rel_hash_find_u32x16_AVX512(const uint32_t *arr, uint32_t val)
     return (uint32_t)m;
 }
 
-static REL_FORCE_INLINE _REL_UNUSED uint32_t
-_rel_hash_find_u64x16_AVX512(const uint64_t *arr, uint64_t val)
+static RIX_FORCE_INLINE _RIX_UNUSED uint32_t
+_rix_hash_find_u64x16_AVX512(const uint64_t *arr, uint64_t val)
 {
     __m512i vval = _mm512_set1_epi64((long long)val);
     __m512i va   = _mm512_loadu_si512((const void *)(arr + 0));
@@ -196,47 +196,47 @@ _rel_hash_find_u64x16_AVX512(const uint64_t *arr, uint64_t val)
     return (uint32_t)m0 | ((uint32_t)m1 << 8);
 }
 
-static _REL_UNUSED const struct rel_hash_arch_s _rel_hash_arch_AVX512 = {
-    _rel_hash_find_u32x16_AVX512,
-    _rel_hash_find_u64x16_AVX512,
+static _RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_AVX512 = {
+    _rix_hash_find_u32x16_AVX512,
+    _rix_hash_find_u64x16_AVX512,
 };
 
 #endif /* __x86_64__ && __AVX512F__ */
 
 /*---------------------------------------------------------------------------
- * rel_hash_arch_init – call once at program startup before any table ops.
+ * rix_hash_arch_init – call once at program startup before any table ops.
  * Detects CPU capabilities and selects the best available arch handler.
  *---------------------------------------------------------------------------*/
-static _REL_UNUSED void
-rel_hash_arch_init(void)
+static _RIX_UNUSED void
+rix_hash_arch_init(void)
 {
 #if defined(__x86_64__)
     unsigned eax = 0u, ebx = 0u, ecx = 0u, edx = 0u;
 
-    rel_hash_arch = &_rel_hash_arch_GEN; /* fallback */
+    rix_hash_arch = &_rix_hash_arch_GEN; /* fallback */
 
     if (__get_cpuid_count(7u, 0u, &eax, &ebx, &ecx, &edx)) {
 #if defined(__AVX512F__)
         /* AVX-512F: EBX bit 16 */
         if (ebx & (1u << 16)) {
-            rel_hash_arch = &_rel_hash_arch_AVX512;
+            rix_hash_arch = &_rix_hash_arch_AVX512;
             return;
         }
 #endif
 #if defined(__AVX2__)
         /* AVX2: EBX bit 5 */
         if (ebx & (1u << 5)) {
-            rel_hash_arch = &_rel_hash_arch_AVX2;
+            rix_hash_arch = &_rix_hash_arch_AVX2;
             return;
         }
 #endif
     }
 #else /* !__x86_64__ */
-    rel_hash_arch = &_rel_hash_arch_GEN;
+    rix_hash_arch = &_rix_hash_arch_GEN;
 #endif
 }
 
-#endif /* _REL_HASH_COMMON_ */
+#endif /* _RIX_HASH_COMMON_ */
 
 /*===========================================================================
  *===========================================================================
@@ -250,15 +250,15 @@ rel_hash_arch_init(void)
  * Bucket layout
  * 128 bytes = 2 x 64-byte cache lines, aligned to 64 bytes.
  *===========================================================================*/
-struct rel_hash32_bucket_s {
-    uint32_t key[REL_HASH_BUCKET_ENTRY_SZ]; /* 64 bytes: 32-bit keys         */
-    uint32_t idx[REL_HASH_BUCKET_ENTRY_SZ]; /* 64 bytes: 1-origin node idx   */
+struct rix_hash32_bucket_s {
+    uint32_t key[RIX_HASH_BUCKET_ENTRY_SZ]; /* 64 bytes: 32-bit keys         */
+    uint32_t idx[RIX_HASH_BUCKET_ENTRY_SZ]; /* 64 bytes: 1-origin node idx   */
 } __attribute__((aligned(64)));
 
 /*===========================================================================
  * Head struct
  *===========================================================================*/
-#define REL_HASH32_HEAD(name)                                                 \
+#define RIX_HASH32_HEAD(name)                                                 \
     struct name {                                                             \
         unsigned rhh_mask;                                                    \
         unsigned rhh_nb;                                                      \
@@ -267,8 +267,8 @@ struct rel_hash32_bucket_s {
 /*===========================================================================
  * Find context (staged pipeline)
  *===========================================================================*/
-struct rel_hash32_find_ctx_s {
-    struct rel_hash32_bucket_s *bk[2];
+struct rix_hash32_find_ctx_s {
+    struct rix_hash32_bucket_s *bk[2];
     uint32_t                    key;        /* 32-bit search key             */
     uint32_t                    hits[2];    /* bitmask: key match in bk[i]   */
 };
@@ -282,10 +282,10 @@ struct rel_hash32_find_ctx_s {
  *   h0 = CRC32C(0, key)
  *   h1 = CRC32C(~h0, key), re-seeded until bucket indices differ.
  *===========================================================================*/
-static REL_FORCE_INLINE _REL_UNUSED union rel_hash_hash_u
-_rel_hash32_fn(uint32_t key, uint32_t mask)
+static RIX_FORCE_INLINE _RIX_UNUSED union rix_hash_hash_u
+_rix_hash32_fn(uint32_t key, uint32_t mask)
 {
-    union rel_hash_hash_u r;
+    union rix_hash_hash_u r;
 #if defined(__x86_64__) && defined(__SSE4_2__)
     uint32_t h0   = (uint32_t)__builtin_ia32_crc32si(0u, key);
     uint32_t bk0  = h0 & mask;
@@ -314,17 +314,17 @@ _rel_hash32_fn(uint32_t key, uint32_t mask)
 }
 
 /*===========================================================================
- * REL_HASH32_GENERATE(name, type, key_field, invalid_key)
+ * RIX_HASH32_GENERATE(name, type, key_field, invalid_key)
  *
  *   name        – head struct tag AND generated-function prefix (must match
- *                 the tag given to REL_HASH32_HEAD)
+ *                 the tag given to RIX_HASH32_HEAD)
  *   type        – element struct type
  *   key_field   – field name inside type; must be uint32_t
  *   invalid_key – compile-time constant written to bk->key[] for empty/
  *                 removed slots.  Must not equal any key the caller will
  *                 ever insert or search.
  *
- * The hash function (_rel_hash32_fn) is provided internally.
+ * The hash function (_rix_hash32_fn) is provided internally.
  * No hash_field is required in the node struct.
  *
  * Invalid key contract:
@@ -332,7 +332,7 @@ _rel_hash32_fn(uint32_t key, uint32_t mask)
  *   name_remove() restores the freed slot's key to invalid_key.
  *   With this contract:
  *     – scan_bk never hits an empty/removed slot for a valid search key,
- *       so cmp_key / prefetch_node need no idx != REL_NIL guard.
+ *       so cmp_key / prefetch_node need no idx != RIX_NIL guard.
  *     – cmp_key reduces to a single __builtin_ctz on the hit mask.
  *     – invalid_key is a compile-time constant; no runtime load from head.
  *
@@ -359,27 +359,27 @@ _rel_hash32_fn(uint32_t key, uint32_t mask)
  *     type *name_remove(head, buckets, base, elm)   elm is type *
  *     int   name_walk  (head, buckets, base, cb, arg)
  *===========================================================================*/
-#define REL_HASH32_GENERATE(name, type, key_field, invalid_key)               \
+#define RIX_HASH32_GENERATE(name, type, key_field, invalid_key)               \
                                                                               \
 /* ================================================================== */      \
 /* Initialisation                                                     */      \
 /*                                                                    */      \
 /* Must be called before any other operation on this table.           */      \
 /* Fills every bk->key[] slot with invalid_key and every bk->idx[]    */      \
-/* slot with REL_NIL.  nb_bk must be a power of 2.                    */      \
+/* slot with RIX_NIL.  nb_bk must be a power of 2.                    */      \
 /* ================================================================== */      \
-static _REL_UNUSED void                                                       \
+static _RIX_UNUSED void                                                       \
 name##_init(struct name *head,                                                \
-            struct rel_hash32_bucket_s *buckets,                              \
+            struct rix_hash32_bucket_s *buckets,                              \
             unsigned nb_bk)                                                   \
 {                                                                             \
     head->rhh_mask = nb_bk - 1u;                                              \
     head->rhh_nb   = 0u;                                                      \
     for (unsigned _b = 0u; _b < nb_bk; _b++) {                                \
-        struct rel_hash32_bucket_s *_bk = buckets + _b;                       \
-        for (unsigned _s = 0u; _s < REL_HASH_BUCKET_ENTRY_SZ; _s++) {         \
+        struct rix_hash32_bucket_s *_bk = buckets + _b;                       \
+        for (unsigned _s = 0u; _s < RIX_HASH_BUCKET_ENTRY_SZ; _s++) {         \
             _bk->key[_s] = (uint32_t)(invalid_key);                           \
-            _bk->idx[_s] = (uint32_t)REL_NIL;                                 \
+            _bk->idx[_s] = (uint32_t)RIX_NIL;                                 \
         }                                                                     \
     }                                                                         \
 }                                                                             \
@@ -387,13 +387,13 @@ name##_init(struct name *head,                                                \
 /* ------------------------------------------------------------------ */      \
 /* Internal helpers: 1-origin index <-> pointer                       */      \
 /* ------------------------------------------------------------------ */      \
-static REL_FORCE_INLINE _REL_UNUSED unsigned                                  \
+static RIX_FORCE_INLINE _RIX_UNUSED unsigned                                  \
 name##_hidx(type *base, const type *p) {                                      \
-    return REL_IDX_FROM_PTR(base, (type *)(uintptr_t)p);                      \
+    return RIX_IDX_FROM_PTR(base, (type *)(uintptr_t)p);                      \
 }                                                                             \
-static REL_FORCE_INLINE _REL_UNUSED type *                                    \
+static RIX_FORCE_INLINE _RIX_UNUSED type *                                    \
 name##_hptr(type *base, unsigned i) {                                         \
-    return REL_PTR_FROM_IDX(base, i);                                         \
+    return RIX_PTR_FROM_IDX(base, i);                                         \
 }                                                                             \
                                                                               \
 /* ================================================================== */      \
@@ -402,14 +402,14 @@ name##_hptr(type *base, unsigned i) {                                         \
                                                                               \
 /* Stage 1: compute hash, resolve bucket pointers, issue bk[0] prefetch. */   \
 /* key is passed by value (uint32_t), not as a pointer. */                    \
-static REL_FORCE_INLINE _REL_UNUSED void                                      \
-name##_hash_key(struct rel_hash32_find_ctx_s *ctx,                            \
+static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+name##_hash_key(struct rix_hash32_find_ctx_s *ctx,                            \
                 struct name *head,                                            \
-                struct rel_hash32_bucket_s *buckets,                          \
+                struct rix_hash32_bucket_s *buckets,                          \
                 uint32_t key)                                                 \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
-    union rel_hash_hash_u _h = _rel_hash32_fn(key, mask);                     \
+    union rix_hash_hash_u _h = _rix_hash32_fn(key, mask);                     \
     ctx->key   = key;                                                         \
     ctx->bk[0] = buckets + (_h.val32[0] & mask);                              \
     ctx->bk[1] = buckets + (_h.val32[1] & mask);                              \
@@ -423,21 +423,21 @@ name##_hash_key(struct rel_hash32_find_ctx_s *ctx,                            \
 /* ctx->key (edge case: key=0 matches zero-initialized empty slots). */       \
 /* The idx != NIL guard in cmp_key and prefetch_node filters them out. */     \
 /* hits[1] = 0; bk[1] is scanned lazily in cmp_key on bk[0] miss. */          \
-static REL_FORCE_INLINE _REL_UNUSED void                                      \
-name##_scan_bk(struct rel_hash32_find_ctx_s *ctx,                             \
+static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+name##_scan_bk(struct rix_hash32_find_ctx_s *ctx,                             \
                struct name *head __attribute__((unused)),                     \
-               struct rel_hash32_bucket_s *buckets __attribute__((unused)))   \
+               struct rix_hash32_bucket_s *buckets __attribute__((unused)))   \
 {                                                                             \
-    ctx->hits[0] = rel_hash_arch->find_u32x16(ctx->bk[0]->key, ctx->key);     \
+    ctx->hits[0] = rix_hash_arch->find_u32x16(ctx->bk[0]->key, ctx->key);     \
     ctx->hits[1] = 0u;                                                        \
 }                                                                             \
                                                                               \
 /* Stage 3: prefetch node data for all hits[0] positions. */                  \
 /* Hides node-fetch latency (DRAM) before cmp_key is called. */               \
 /* With invalid_key contract: every hit is an occupied slot; */               \
-/* no idx != REL_NIL guard is needed. */                                      \
-static REL_FORCE_INLINE _REL_UNUSED void                                      \
-name##_prefetch_node(struct rel_hash32_find_ctx_s *ctx,                       \
+/* no idx != RIX_NIL guard is needed. */                                      \
+static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+name##_prefetch_node(struct rix_hash32_find_ctx_s *ctx,                       \
                      type *base)                                              \
 {                                                                             \
     uint32_t _hits = ctx->hits[0];                                            \
@@ -451,10 +451,10 @@ name##_prefetch_node(struct rel_hash32_find_ctx_s *ctx,                       \
                                                                               \
 /* Stage 4: return the node for the hit; lazily scan bk[1] on miss. */        \
 /* With invalid_key contract: any key match in scan_bk is an occupied */      \
-/* slot, so no idx != REL_NIL guard is needed.  Unique-key invariant */       \
+/* slot, so no idx != RIX_NIL guard is needed.  Unique-key invariant */       \
 /* guarantees at most one hit per bucket, so __builtin_ctz suffices. */       \
-static REL_FORCE_INLINE _REL_UNUSED type *                                    \
-name##_cmp_key(struct rel_hash32_find_ctx_s *ctx,                             \
+static RIX_FORCE_INLINE _RIX_UNUSED type *                                    \
+name##_cmp_key(struct rix_hash32_find_ctx_s *ctx,                             \
                type *base)                                                    \
 {                                                                             \
     /* Fast path: bk[0] */                                                    \
@@ -465,7 +465,7 @@ name##_cmp_key(struct rel_hash32_find_ctx_s *ctx,                             \
     }                                                                         \
     /* Slow path: bk[0] miss – lazily fetch and scan bk[1] */                 \
     {                                                                         \
-        _hits = rel_hash_arch->find_u32x16(ctx->bk[1]->key, ctx->key);        \
+        _hits = rix_hash_arch->find_u32x16(ctx->bk[1]->key, ctx->key);        \
         if (_hits) {                                                          \
             unsigned _bit = (unsigned)__builtin_ctz(_hits);                   \
             return name##_hptr(base, ctx->bk[1]->idx[_bit]);                  \
@@ -478,29 +478,29 @@ name##_cmp_key(struct rel_hash32_find_ctx_s *ctx,                             \
 /* Staged find – xN bulk                                              */      \
 /* FORCE_INLINE + constant n -> compiler unrolls identically to xN.   */      \
 /* ================================================================== */      \
-static REL_FORCE_INLINE _REL_UNUSED void                                      \
-name##_hash_key_n(struct rel_hash32_find_ctx_s *ctx,                          \
+static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+name##_hash_key_n(struct rix_hash32_find_ctx_s *ctx,                          \
                   int n,                                                      \
                   struct name *head,                                          \
-                  struct rel_hash32_bucket_s *buckets,                        \
+                  struct rix_hash32_bucket_s *buckets,                        \
                   const uint32_t *keys)                                       \
 {                                                                             \
     for (int _j = 0; _j < n; _j++)                                            \
         name##_hash_key(&ctx[_j], head, buckets, keys[_j]);                   \
 }                                                                             \
                                                                               \
-static REL_FORCE_INLINE _REL_UNUSED void                                      \
-name##_scan_bk_n(struct rel_hash32_find_ctx_s *ctx,                           \
+static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+name##_scan_bk_n(struct rix_hash32_find_ctx_s *ctx,                           \
                  int n,                                                       \
                  struct name *head,                                           \
-                 struct rel_hash32_bucket_s *buckets)                         \
+                 struct rix_hash32_bucket_s *buckets)                         \
 {                                                                             \
     for (int _j = 0; _j < n; _j++)                                            \
         name##_scan_bk(&ctx[_j], head, buckets);                              \
 }                                                                             \
                                                                               \
-static REL_FORCE_INLINE _REL_UNUSED void                                      \
-name##_prefetch_node_n(struct rel_hash32_find_ctx_s *ctx,                     \
+static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+name##_prefetch_node_n(struct rix_hash32_find_ctx_s *ctx,                     \
                        int n,                                                 \
                        type *base)                                            \
 {                                                                             \
@@ -508,8 +508,8 @@ name##_prefetch_node_n(struct rel_hash32_find_ctx_s *ctx,                     \
         name##_prefetch_node(&ctx[_j], base);                                 \
 }                                                                             \
                                                                               \
-static REL_FORCE_INLINE _REL_UNUSED void                                      \
-name##_cmp_key_n(struct rel_hash32_find_ctx_s *ctx,                           \
+static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+name##_cmp_key_n(struct rix_hash32_find_ctx_s *ctx,                           \
                  int n,                                                       \
                  type *base,                                                  \
                  type **results)                                              \
@@ -521,13 +521,13 @@ name##_cmp_key_n(struct rel_hash32_find_ctx_s *ctx,                           \
 /* ================================================================== */      \
 /* Single-shot find = hash_key + scan_bk + cmp_key                    */      \
 /* ================================================================== */      \
-static REL_FORCE_INLINE _REL_UNUSED type *                                    \
+static RIX_FORCE_INLINE _RIX_UNUSED type *                                    \
 name##_find(struct name *head,                                                \
-            struct rel_hash32_bucket_s *buckets,                              \
+            struct rix_hash32_bucket_s *buckets,                              \
             type *base,                                                       \
             uint32_t key)                                                     \
 {                                                                             \
-    struct rel_hash32_find_ctx_s _ctx;                                        \
+    struct rix_hash32_find_ctx_s _ctx;                                        \
     name##_hash_key(&_ctx, head, buckets, key);                               \
     name##_scan_bk (&_ctx, head, buckets);                                    \
     return name##_cmp_key(&_ctx, base);                                       \
@@ -544,25 +544,25 @@ name##_find(struct name *head,                                                \
 /* No hash_field in node: kickout re-hashes victim key to find alt    */      \
 /* bucket (slightly more expensive than XOR trick, but rare path).    */      \
 /* ================================================================== */      \
-static _REL_UNUSED type *                                                     \
+static _RIX_UNUSED type *                                                     \
 name##_insert(struct name *head,                                              \
-              struct rel_hash32_bucket_s *buckets,                            \
+              struct rix_hash32_bucket_s *buckets,                            \
               type *base,                                                     \
               type *elm)                                                      \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
-    union rel_hash_hash_u _h =                                                \
-        _rel_hash32_fn((uint32_t)elm->key_field, mask);                       \
+    union rix_hash_hash_u _h =                                                \
+        _rix_hash32_fn((uint32_t)elm->key_field, mask);                       \
     unsigned _bk0 = _h.val32[0] & mask;                                       \
     unsigned _bk1 = _h.val32[1] & mask;                                       \
                                                                               \
     /* Duplicate check in both candidate buckets. */                          \
     /* With invalid_key contract: any key match is an occupied slot; */       \
-    /* no idx != REL_NIL guard is needed. */                                  \
+    /* no idx != RIX_NIL guard is needed. */                                  \
     for (int _i = 0; _i < 2; _i++) {                                          \
-        struct rel_hash32_bucket_s *_bk =                                     \
+        struct rix_hash32_bucket_s *_bk =                                     \
             buckets + (_i == 0 ? _bk0 : _bk1);                                \
-        uint32_t _hits = rel_hash_arch->find_u32x16(_bk->key,                 \
+        uint32_t _hits = rix_hash_arch->find_u32x16(_bk->key,                 \
                                                     (uint32_t)elm->key_field);\
         if (_hits) {                                                          \
             unsigned _bit = (unsigned)__builtin_ctz(_hits);                   \
@@ -573,8 +573,8 @@ name##_insert(struct name *head,                                              \
     /* Fast path: find an empty slot in bk0 then bk1 */                       \
     for (int _i = 0; _i < 2; _i++) {                                          \
         unsigned _bki = (_i == 0) ? _bk0 : _bk1;                              \
-        struct rel_hash32_bucket_s *_bk = buckets + _bki;                     \
-        uint32_t _nilm = rel_hash_arch->find_u32x16(_bk->key,                 \
+        struct rix_hash32_bucket_s *_bk = buckets + _bki;                     \
+        uint32_t _nilm = rix_hash_arch->find_u32x16(_bk->key,                 \
                                             (uint32_t)(invalid_key));         \
         if (_nilm) {                                                          \
             unsigned _slot    = (unsigned)__builtin_ctz(_nilm);               \
@@ -595,10 +595,10 @@ name##_insert(struct name *head,                                              \
         unsigned _new_idx = name##_hidx(base, elm);                           \
         unsigned _cur_bk  = _bk0;                                             \
                                                                               \
-        for (int _d = 0; _d < REL_HASH_FOLLOW_DEPTH; _d++) {                  \
-            struct rel_hash32_bucket_s *_bk = buckets + _cur_bk;              \
+        for (int _d = 0; _d < RIX_HASH_FOLLOW_DEPTH; _d++) {                  \
+            struct rix_hash32_bucket_s *_bk = buckets + _cur_bk;              \
             unsigned _pos =                                                   \
-                (unsigned)_d & (REL_HASH_BUCKET_ENTRY_SZ - 1u);               \
+                (unsigned)_d & (RIX_HASH_BUCKET_ENTRY_SZ - 1u);               \
                                                                               \
             /* Save victim */                                                 \
             uint32_t _vic_key = _bk->key[_pos];                               \
@@ -609,15 +609,15 @@ name##_insert(struct name *head,                                              \
             _bk->idx[_pos] = _new_idx;                                        \
                                                                               \
             /* Re-hash victim to find its two candidate buckets */            \
-            union rel_hash_hash_u _vh = _rel_hash32_fn(_vic_key, mask);       \
+            union rix_hash_hash_u _vh = _rix_hash32_fn(_vic_key, mask);       \
             unsigned _vic_bk0 = _vh.val32[0] & mask;                          \
             unsigned _alt_bk  = (_vic_bk0 == _cur_bk)                         \
                                 ? (_vh.val32[1] & mask)                       \
                                 : _vic_bk0;                                   \
                                                                               \
             /* Try to place victim in alt bucket */                           \
-            struct rel_hash32_bucket_s *_alt = buckets + _alt_bk;             \
-            uint32_t _nilm = rel_hash_arch->find_u32x16(_alt->key,            \
+            struct rix_hash32_bucket_s *_alt = buckets + _alt_bk;             \
+            uint32_t _nilm = rix_hash_arch->find_u32x16(_alt->key,            \
                                             (uint32_t)(invalid_key));         \
             if (_nilm) {                                                      \
                 unsigned _slot    = (unsigned)__builtin_ctz(_nilm);           \
@@ -644,28 +644,28 @@ name##_insert(struct name *head,                                              \
 /* searches each by node index.  O(1): at most 2 find_u32x16 calls.   */      \
 /* Returns elm on success, NULL if elm is not currently in the table. */      \
 /* ================================================================== */      \
-static _REL_UNUSED type *                                                     \
+static _RIX_UNUSED type *                                                     \
 name##_remove(struct name *head,                                              \
-              struct rel_hash32_bucket_s *buckets,                            \
+              struct rix_hash32_bucket_s *buckets,                            \
               type *base,                                                     \
               type *elm)                                                      \
 {                                                                             \
     unsigned mask     = head->rhh_mask;                                       \
     unsigned node_idx = name##_hidx(base, elm);                               \
-    union rel_hash_hash_u _h =                                                \
-        _rel_hash32_fn((uint32_t)elm->key_field, mask);                       \
+    union rix_hash_hash_u _h =                                                \
+        _rix_hash32_fn((uint32_t)elm->key_field, mask);                       \
     unsigned _bk0 = _h.val32[0] & mask;                                       \
     unsigned _bk1 = _h.val32[1] & mask;                                       \
                                                                               \
     for (int _i = 0; _i < 2; _i++) {                                          \
-        struct rel_hash32_bucket_s *_bk =                                     \
+        struct rix_hash32_bucket_s *_bk =                                     \
             buckets + (_i == 0 ? _bk0 : _bk1);                                \
-        uint32_t _hits = rel_hash_arch->find_u32x16(_bk->idx,                 \
+        uint32_t _hits = rix_hash_arch->find_u32x16(_bk->idx,                 \
                                                     (uint32_t)node_idx);      \
         if (_hits) {                                                          \
             unsigned _slot    = (unsigned)__builtin_ctz(_hits);               \
             _bk->key[_slot] = (uint32_t)(invalid_key);                        \
-            _bk->idx[_slot] = (uint32_t)REL_NIL;                              \
+            _bk->idx[_slot] = (uint32_t)RIX_NIL;                              \
             head->rhh_nb--;                                                   \
             return elm;                                                       \
         }                                                                     \
@@ -679,19 +679,19 @@ name##_remove(struct name *head,                                              \
 /* cb(node, arg): return 0 to continue, non-zero to stop.             */      \
 /* Returns 0 when all entries are visited, or first non-zero cb rv.   */      \
 /* ================================================================== */      \
-static _REL_UNUSED int                                                        \
+static _RIX_UNUSED int                                                        \
 name##_walk(struct name *head,                                                \
-            struct rel_hash32_bucket_s *buckets,                              \
+            struct rix_hash32_bucket_s *buckets,                              \
             type *base,                                                       \
             int (*cb)(type *, void *),                                        \
             void *arg)                                                        \
 {                                                                             \
     unsigned _nb_bk = head->rhh_mask + 1u;                                    \
     for (unsigned _b = 0u; _b < _nb_bk; _b++) {                               \
-        struct rel_hash32_bucket_s *_bk = buckets + _b;                       \
-        for (unsigned _s = 0u; _s < REL_HASH_BUCKET_ENTRY_SZ; _s++) {         \
+        struct rix_hash32_bucket_s *_bk = buckets + _b;                       \
+        for (unsigned _s = 0u; _s < RIX_HASH_BUCKET_ENTRY_SZ; _s++) {         \
             unsigned _nidx = _bk->idx[_s];                                    \
-            if (_nidx == (unsigned)REL_NIL)                                   \
+            if (_nidx == (unsigned)RIX_NIL)                                   \
                 continue;                                                     \
             type *_node = name##_hptr(base, _nidx);                           \
             int   _r    = cb(_node, arg);                                     \
@@ -707,105 +707,105 @@ name##_walk(struct name *head,                                                \
  *
  * Wraps the generated name##_xxx() functions with BSD queue-style macros
  * that embed the table-name prefix explicitly.  The name argument must
- * match the tag passed to REL_HASH32_HEAD / REL_HASH32_GENERATE.
+ * match the tag passed to RIX_HASH32_HEAD / RIX_HASH32_GENERATE.
  *
  * Single-shot ops:
- *   REL_HASH32_INIT        (name, head, buckets, nb_bk)
- *   REL_HASH32_FIND        (name, head, buckets, base, key)
- *   REL_HASH32_INSERT      (name, head, buckets, base, elm)
- *   REL_HASH32_REMOVE      (name, head, buckets, base, elm)
- *   REL_HASH32_WALK        (name, head, buckets, base, cb, arg)
+ *   RIX_HASH32_INIT        (name, head, buckets, nb_bk)
+ *   RIX_HASH32_FIND        (name, head, buckets, base, key)
+ *   RIX_HASH32_INSERT      (name, head, buckets, base, elm)
+ *   RIX_HASH32_REMOVE      (name, head, buckets, base, elm)
+ *   RIX_HASH32_WALK        (name, head, buckets, base, cb, arg)
  *
  * Staged find – x1:
- *   REL_HASH32_HASH_KEY    (name, ctx, head, buckets, key)
- *   REL_HASH32_SCAN_BK     (name, ctx, head, buckets)
- *   REL_HASH32_PREFETCH_NODE(name, ctx, base)
- *   REL_HASH32_CMP_KEY     (name, ctx, base)
+ *   RIX_HASH32_HASH_KEY    (name, ctx, head, buckets, key)
+ *   RIX_HASH32_SCAN_BK     (name, ctx, head, buckets)
+ *   RIX_HASH32_PREFETCH_NODE(name, ctx, base)
+ *   RIX_HASH32_CMP_KEY     (name, ctx, base)
  *
  * Staged find – x2 / x4  (named shorthands; expand to _n internally):
- *   REL_HASH32_HASH_KEY2   (name, ctx, head, buckets, keys)
- *   REL_HASH32_SCAN_BK2    (name, ctx, head, buckets)
- *   REL_HASH32_PREFETCH_NODE2(name, ctx, base)
- *   REL_HASH32_CMP_KEY2    (name, ctx, base, results)
+ *   RIX_HASH32_HASH_KEY2   (name, ctx, head, buckets, keys)
+ *   RIX_HASH32_SCAN_BK2    (name, ctx, head, buckets)
+ *   RIX_HASH32_PREFETCH_NODE2(name, ctx, base)
+ *   RIX_HASH32_CMP_KEY2    (name, ctx, base, results)
  *
- *   REL_HASH32_HASH_KEY4   (name, ctx, head, buckets, keys)
- *   REL_HASH32_SCAN_BK4    (name, ctx, head, buckets)
- *   REL_HASH32_PREFETCH_NODE4(name, ctx, base)
- *   REL_HASH32_CMP_KEY4    (name, ctx, base, results)
+ *   RIX_HASH32_HASH_KEY4   (name, ctx, head, buckets, keys)
+ *   RIX_HASH32_SCAN_BK4    (name, ctx, head, buckets)
+ *   RIX_HASH32_PREFETCH_NODE4(name, ctx, base)
+ *   RIX_HASH32_CMP_KEY4    (name, ctx, base, results)
  *
  * Staged find – xN  (arbitrary n; FORCE_INLINE + constant n → unrolled):
- *   REL_HASH32_HASH_KEY_N  (name, ctx, n, head, buckets, keys)
- *   REL_HASH32_SCAN_BK_N   (name, ctx, n, head, buckets)
- *   REL_HASH32_PREFETCH_NODE_N(name, ctx, n, base)
- *   REL_HASH32_CMP_KEY_N   (name, ctx, n, base, results)
+ *   RIX_HASH32_HASH_KEY_N  (name, ctx, n, head, buckets, keys)
+ *   RIX_HASH32_SCAN_BK_N   (name, ctx, n, head, buckets)
+ *   RIX_HASH32_PREFETCH_NODE_N(name, ctx, n, base)
+ *   RIX_HASH32_CMP_KEY_N   (name, ctx, n, base, results)
  *===========================================================================*/
 
 /* ---- single-shot ops ---------------------------------------------------- */
-#define REL_HASH32_INIT(name, head, buckets, nb_bk)                           \
+#define RIX_HASH32_INIT(name, head, buckets, nb_bk)                           \
     name##_init(head, buckets, nb_bk)
 
-#define REL_HASH32_FIND(name, head, buckets, base, key)                       \
+#define RIX_HASH32_FIND(name, head, buckets, base, key)                       \
     name##_find(head, buckets, base, key)
 
-#define REL_HASH32_INSERT(name, head, buckets, base, elm)                     \
+#define RIX_HASH32_INSERT(name, head, buckets, base, elm)                     \
     name##_insert(head, buckets, base, elm)
 
-#define REL_HASH32_REMOVE(name, head, buckets, base, elm)                     \
+#define RIX_HASH32_REMOVE(name, head, buckets, base, elm)                     \
     name##_remove(head, buckets, base, elm)
 
-#define REL_HASH32_WALK(name, head, buckets, base, cb, arg)                   \
+#define RIX_HASH32_WALK(name, head, buckets, base, cb, arg)                   \
     name##_walk(head, buckets, base, cb, arg)
 
 /* ---- staged find – x1 --------------------------------------------------- */
-#define REL_HASH32_HASH_KEY(name, ctx, head, buckets, key)                    \
+#define RIX_HASH32_HASH_KEY(name, ctx, head, buckets, key)                    \
     name##_hash_key(ctx, head, buckets, key)
 
-#define REL_HASH32_SCAN_BK(name, ctx, head, buckets)                          \
+#define RIX_HASH32_SCAN_BK(name, ctx, head, buckets)                          \
     name##_scan_bk(ctx, head, buckets)
 
-#define REL_HASH32_PREFETCH_NODE(name, ctx, base)                             \
+#define RIX_HASH32_PREFETCH_NODE(name, ctx, base)                             \
     name##_prefetch_node(ctx, base)
 
-#define REL_HASH32_CMP_KEY(name, ctx, base)                                   \
+#define RIX_HASH32_CMP_KEY(name, ctx, base)                                   \
     name##_cmp_key(ctx, base)
 
 /* ---- staged find – x2 --------------------------------------------------- */
-#define REL_HASH32_HASH_KEY2(name, ctx, head, buckets, keys)                  \
+#define RIX_HASH32_HASH_KEY2(name, ctx, head, buckets, keys)                  \
     name##_hash_key_n(ctx, 2, head, buckets, keys)
 
-#define REL_HASH32_SCAN_BK2(name, ctx, head, buckets)                         \
+#define RIX_HASH32_SCAN_BK2(name, ctx, head, buckets)                         \
     name##_scan_bk_n(ctx, 2, head, buckets)
 
-#define REL_HASH32_PREFETCH_NODE2(name, ctx, base)                            \
+#define RIX_HASH32_PREFETCH_NODE2(name, ctx, base)                            \
     name##_prefetch_node_n(ctx, 2, base)
 
-#define REL_HASH32_CMP_KEY2(name, ctx, base, results)                         \
+#define RIX_HASH32_CMP_KEY2(name, ctx, base, results)                         \
     name##_cmp_key_n(ctx, 2, base, results)
 
 /* ---- staged find – x4 --------------------------------------------------- */
-#define REL_HASH32_HASH_KEY4(name, ctx, head, buckets, keys)                  \
+#define RIX_HASH32_HASH_KEY4(name, ctx, head, buckets, keys)                  \
     name##_hash_key_n(ctx, 4, head, buckets, keys)
 
-#define REL_HASH32_SCAN_BK4(name, ctx, head, buckets)                         \
+#define RIX_HASH32_SCAN_BK4(name, ctx, head, buckets)                         \
     name##_scan_bk_n(ctx, 4, head, buckets)
 
-#define REL_HASH32_PREFETCH_NODE4(name, ctx, base)                            \
+#define RIX_HASH32_PREFETCH_NODE4(name, ctx, base)                            \
     name##_prefetch_node_n(ctx, 4, base)
 
-#define REL_HASH32_CMP_KEY4(name, ctx, base, results)                         \
+#define RIX_HASH32_CMP_KEY4(name, ctx, base, results)                         \
     name##_cmp_key_n(ctx, 4, base, results)
 
 /* ---- staged find – xN (arbitrary n) ------------------------------------- */
-#define REL_HASH32_HASH_KEY_N(name, ctx, n, head, buckets, keys)              \
+#define RIX_HASH32_HASH_KEY_N(name, ctx, n, head, buckets, keys)              \
     name##_hash_key_n(ctx, n, head, buckets, keys)
 
-#define REL_HASH32_SCAN_BK_N(name, ctx, n, head, buckets)                     \
+#define RIX_HASH32_SCAN_BK_N(name, ctx, n, head, buckets)                     \
     name##_scan_bk_n(ctx, n, head, buckets)
 
-#define REL_HASH32_PREFETCH_NODE_N(name, ctx, n, base)                        \
+#define RIX_HASH32_PREFETCH_NODE_N(name, ctx, n, base)                        \
     name##_prefetch_node_n(ctx, n, base)
 
-#define REL_HASH32_CMP_KEY_N(name, ctx, n, base, results)                     \
+#define RIX_HASH32_CMP_KEY_N(name, ctx, n, base, results)                     \
     name##_cmp_key_n(ctx, n, base, results)
 
 /*===========================================================================
@@ -819,7 +819,7 @@ name##_walk(struct name *head,                                                \
 /*===========================================================================
  * Bucket entry count
  *===========================================================================*/
-#define REL_HASH64_BUCKET_ENTRY_SZ 16
+#define RIX_HASH64_BUCKET_ENTRY_SZ 16
 
 /*===========================================================================
  * Bucket layout
@@ -830,15 +830,15 @@ name##_walk(struct name *head,                                                \
  *
  * idx[16] is exactly uint32_t[16] – find_u32x16 scans it directly in remove.
  *===========================================================================*/
-struct rel_hash64_bucket_s {
-    uint64_t key[REL_HASH64_BUCKET_ENTRY_SZ]; /* CL0+CL1: 64-bit keys        */
-    uint32_t idx[REL_HASH64_BUCKET_ENTRY_SZ]; /* CL2: 1-origin node idx      */
+struct rix_hash64_bucket_s {
+    uint64_t key[RIX_HASH64_BUCKET_ENTRY_SZ]; /* CL0+CL1: 64-bit keys        */
+    uint32_t idx[RIX_HASH64_BUCKET_ENTRY_SZ]; /* CL2: 1-origin node idx      */
 } __attribute__((aligned(64)));
 
 /*===========================================================================
  * Head struct
  *===========================================================================*/
-#define REL_HASH64_HEAD(name)                                                 \
+#define RIX_HASH64_HEAD(name)                                                 \
     struct name {                                                             \
         unsigned rhh_mask;                                                    \
         unsigned rhh_nb;                                                      \
@@ -847,8 +847,8 @@ struct rel_hash64_bucket_s {
 /*===========================================================================
  * Find context (staged pipeline)
  *===========================================================================*/
-struct rel_hash64_find_ctx_s {
-    struct rel_hash64_bucket_s *bk[2];
+struct rix_hash64_find_ctx_s {
+    struct rix_hash64_bucket_s *bk[2];
     uint64_t                    key;        /* 64-bit search key             */
     uint32_t                    hits[2];    /* bitmask: key match in bk[i]   */
 };
@@ -862,10 +862,10 @@ struct rel_hash64_find_ctx_s {
  *   h0 = CRC32C(0,   key)
  *   h1 = CRC32C(~h0, key), re-seeded until bucket indices differ.
  *===========================================================================*/
-static REL_FORCE_INLINE _REL_UNUSED union rel_hash_hash_u
-_rel_hash64_fn(uint64_t key, uint32_t mask)
+static RIX_FORCE_INLINE _RIX_UNUSED union rix_hash_hash_u
+_rix_hash64_fn(uint64_t key, uint32_t mask)
 {
-    union rel_hash_hash_u r;
+    union rix_hash_hash_u r;
 #if defined(__x86_64__) && defined(__SSE4_2__)
     uint32_t h0   = (uint32_t)__builtin_ia32_crc32di(0ULL, key);
     uint32_t bk0  = h0 & mask;
@@ -896,17 +896,17 @@ _rel_hash64_fn(uint64_t key, uint32_t mask)
 }
 
 /*===========================================================================
- * REL_HASH64_GENERATE(name, type, key_field, invalid_key)
+ * RIX_HASH64_GENERATE(name, type, key_field, invalid_key)
  *
  *   name        – head struct tag AND generated-function prefix (must match
- *                 the tag given to REL_HASH64_HEAD)
+ *                 the tag given to RIX_HASH64_HEAD)
  *   type        – element struct type
  *   key_field   – field name inside type; must be uint64_t
  *   invalid_key – compile-time constant written to bk->key[] for empty/
  *                 removed slots.  Must not equal any key the caller will
  *                 ever insert or search.
  *
- * The hash function (_rel_hash64_fn) is provided internally.
+ * The hash function (_rix_hash64_fn) is provided internally.
  * No hash_field is required in the node struct.
  *
  * Invalid key contract:
@@ -914,16 +914,16 @@ _rel_hash64_fn(uint64_t key, uint32_t mask)
  *   name_remove() restores the freed slot's key to invalid_key.
  *   With this contract:
  *     – scan_bk never hits an empty/removed slot for a valid search key,
- *       so cmp_key / prefetch_node need no idx != REL_NIL guard.
+ *       so cmp_key / prefetch_node need no idx != RIX_NIL guard.
  *     – cmp_key reduces to a single __builtin_ctz on the hit mask.
  *     – invalid_key is a compile-time constant; no runtime load from head.
  *
  * Fill rate note:
- *   With 16 slots per bucket (same as rel_hash32), cuckoo achieves
+ *   With 16 slots per bucket (same as rix_hash32), cuckoo achieves
  *   the same fill rate behaviour.  Operating up to ~95 % fill is safe.
- *   Each bucket is 192 B (3 CL) vs 128 B (2 CL) for rel_hash32, so
- *   rel_hash64 uses 1.5× the bucket memory for the same entry count.
- *   See bench_rel_hash64 for measured curves.
+ *   Each bucket is 192 B (3 CL) vs 128 B (2 CL) for rix_hash32, so
+ *   rix_hash64 uses 1.5× the bucket memory for the same entry count.
+ *   See bench_rix_hash64 for measured curves.
  *
  * Generated functions:
  *
@@ -948,28 +948,28 @@ _rel_hash64_fn(uint64_t key, uint32_t mask)
  *     type *name_remove(head, buckets, base, elm)   elm is type *
  *     int   name_walk  (head, buckets, base, cb, arg)
  *===========================================================================*/
-#define REL_HASH64_GENERATE(name, type, key_field, invalid_key)               \
+#define RIX_HASH64_GENERATE(name, type, key_field, invalid_key)               \
                                                                               \
 /* ================================================================== */      \
 /* Initialisation                                                     */      \
 /*                                                                    */      \
 /* Must be called before any other operation on this table.           */      \
 /* Fills every bk->key[] slot with invalid_key, every bk->idx[] slot  */      \
-/* with REL_NIL.  nb_bk must be a power of 2.                         */      \
+/* with RIX_NIL.  nb_bk must be a power of 2.                         */      \
 /* ================================================================== */      \
                                                                               \
-static _REL_UNUSED void                                                       \
+static _RIX_UNUSED void                                                       \
 name##_init(struct name *head,                                                \
-            struct rel_hash64_bucket_s *buckets,                              \
+            struct rix_hash64_bucket_s *buckets,                              \
             unsigned nb_bk)                                                   \
 {                                                                             \
     head->rhh_mask = nb_bk - 1u;                                              \
     head->rhh_nb   = 0u;                                                      \
     for (unsigned _b = 0u; _b < nb_bk; _b++) {                                \
-        struct rel_hash64_bucket_s *_bk = buckets + _b;                       \
-        for (unsigned _s = 0u; _s < REL_HASH64_BUCKET_ENTRY_SZ; _s++) {       \
+        struct rix_hash64_bucket_s *_bk = buckets + _b;                       \
+        for (unsigned _s = 0u; _s < RIX_HASH64_BUCKET_ENTRY_SZ; _s++) {       \
             _bk->key[_s] = (uint64_t)(invalid_key);                           \
-            _bk->idx[_s] = (uint32_t)REL_NIL;                                 \
+            _bk->idx[_s] = (uint32_t)RIX_NIL;                                 \
         }                                                                     \
     }                                                                         \
 }                                                                             \
@@ -977,13 +977,13 @@ name##_init(struct name *head,                                                \
 /* ------------------------------------------------------------------ */      \
 /* Internal helpers: 1-origin index <-> pointer                       */      \
 /* ------------------------------------------------------------------ */      \
-static REL_FORCE_INLINE _REL_UNUSED unsigned                                  \
+static RIX_FORCE_INLINE _RIX_UNUSED unsigned                                  \
 name##_hidx(type *base, const type *p) {                                      \
-    return REL_IDX_FROM_PTR(base, (type *)(uintptr_t)p);                      \
+    return RIX_IDX_FROM_PTR(base, (type *)(uintptr_t)p);                      \
 }                                                                             \
-static REL_FORCE_INLINE _REL_UNUSED type *                                    \
+static RIX_FORCE_INLINE _RIX_UNUSED type *                                    \
 name##_hptr(type *base, unsigned i) {                                         \
-    return REL_PTR_FROM_IDX(base, i);                                         \
+    return RIX_PTR_FROM_IDX(base, i);                                         \
 }                                                                             \
                                                                               \
 /* ================================================================== */      \
@@ -998,14 +998,14 @@ name##_hptr(type *base, unsigned i) {                                         \
 /* bk[1] is not prefetched; it is scanned lazily in cmp_key on bk[0]     */   \
 /* miss (moderate fill -> most hits land in bk[0]).                      */   \
 /* key is passed by value (uint64_t), not as a pointer.                  */   \
-static REL_FORCE_INLINE _REL_UNUSED void                                      \
-name##_hash_key(struct rel_hash64_find_ctx_s *ctx,                            \
+static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+name##_hash_key(struct rix_hash64_find_ctx_s *ctx,                            \
                 struct name *head,                                            \
-                struct rel_hash64_bucket_s *buckets,                          \
+                struct rix_hash64_bucket_s *buckets,                          \
                 uint64_t key)                                                 \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
-    union rel_hash_hash_u _h = _rel_hash64_fn(key, mask);                     \
+    union rix_hash_hash_u _h = _rix_hash64_fn(key, mask);                     \
     ctx->key   = key;                                                         \
     ctx->bk[0] = buckets + (_h.val32[0] & mask);                              \
     ctx->bk[1] = buckets + (_h.val32[1] & mask);                              \
@@ -1016,18 +1016,18 @@ name##_hash_key(struct rel_hash64_find_ctx_s *ctx,                            \
                                                                               \
 /* Stage 2: scan bk[0]->key[] for ctx->key using find_u64x16. */              \
 /* hits[1] = 0; bk[1] is scanned lazily in cmp_key on bk[0] miss. */          \
-static REL_FORCE_INLINE _REL_UNUSED void                                      \
-name##_scan_bk(struct rel_hash64_find_ctx_s *ctx,                             \
+static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+name##_scan_bk(struct rix_hash64_find_ctx_s *ctx,                             \
                struct name *head __attribute__((unused)),                     \
-               struct rel_hash64_bucket_s *buckets __attribute__((unused)))   \
+               struct rix_hash64_bucket_s *buckets __attribute__((unused)))   \
 {                                                                             \
-    ctx->hits[0] = rel_hash_arch->find_u64x16(ctx->bk[0]->key, ctx->key);     \
+    ctx->hits[0] = rix_hash_arch->find_u64x16(ctx->bk[0]->key, ctx->key);     \
     ctx->hits[1] = 0u;                                                        \
 }                                                                             \
                                                                               \
 /* Stage 3: prefetch node data for all hits[0] positions. */                  \
-static REL_FORCE_INLINE _REL_UNUSED void                                      \
-name##_prefetch_node(struct rel_hash64_find_ctx_s *ctx,                       \
+static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+name##_prefetch_node(struct rix_hash64_find_ctx_s *ctx,                       \
                      type *base)                                              \
 {                                                                             \
     uint32_t _hits = ctx->hits[0];                                            \
@@ -1040,8 +1040,8 @@ name##_prefetch_node(struct rel_hash64_find_ctx_s *ctx,                       \
 }                                                                             \
                                                                               \
 /* Stage 4: return the node for the hit; lazily scan bk[1] on miss. */        \
-static REL_FORCE_INLINE _REL_UNUSED type *                                    \
-name##_cmp_key(struct rel_hash64_find_ctx_s *ctx,                             \
+static RIX_FORCE_INLINE _RIX_UNUSED type *                                    \
+name##_cmp_key(struct rix_hash64_find_ctx_s *ctx,                             \
                type *base)                                                    \
 {                                                                             \
     /* Fast path: bk[0] */                                                    \
@@ -1052,7 +1052,7 @@ name##_cmp_key(struct rel_hash64_find_ctx_s *ctx,                             \
     }                                                                         \
     /* Slow path: bk[0] miss – lazily fetch and scan bk[1] */                 \
     {                                                                         \
-        _hits = rel_hash_arch->find_u64x16(ctx->bk[1]->key, ctx->key);        \
+        _hits = rix_hash_arch->find_u64x16(ctx->bk[1]->key, ctx->key);        \
         if (_hits) {                                                          \
             unsigned _bit = (unsigned)__builtin_ctz(_hits);                   \
             return name##_hptr(base, ctx->bk[1]->idx[_bit]);                  \
@@ -1065,29 +1065,29 @@ name##_cmp_key(struct rel_hash64_find_ctx_s *ctx,                             \
 /* Staged find – xN bulk                                              */      \
 /* FORCE_INLINE + constant n -> compiler unrolls identically to xN.   */      \
 /* ================================================================== */      \
-static REL_FORCE_INLINE _REL_UNUSED void                                      \
-name##_hash_key_n(struct rel_hash64_find_ctx_s *ctx,                          \
+static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+name##_hash_key_n(struct rix_hash64_find_ctx_s *ctx,                          \
                   int n,                                                      \
                   struct name *head,                                          \
-                  struct rel_hash64_bucket_s *buckets,                        \
+                  struct rix_hash64_bucket_s *buckets,                        \
                   const uint64_t *keys)                                       \
 {                                                                             \
     for (int _j = 0; _j < n; _j++)                                            \
         name##_hash_key(&ctx[_j], head, buckets, keys[_j]);                   \
 }                                                                             \
                                                                               \
-static REL_FORCE_INLINE _REL_UNUSED void                                      \
-name##_scan_bk_n(struct rel_hash64_find_ctx_s *ctx,                           \
+static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+name##_scan_bk_n(struct rix_hash64_find_ctx_s *ctx,                           \
                  int n,                                                       \
                  struct name *head,                                           \
-                 struct rel_hash64_bucket_s *buckets)                         \
+                 struct rix_hash64_bucket_s *buckets)                         \
 {                                                                             \
     for (int _j = 0; _j < n; _j++)                                            \
         name##_scan_bk(&ctx[_j], head, buckets);                              \
 }                                                                             \
                                                                               \
-static REL_FORCE_INLINE _REL_UNUSED void                                      \
-name##_prefetch_node_n(struct rel_hash64_find_ctx_s *ctx,                     \
+static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+name##_prefetch_node_n(struct rix_hash64_find_ctx_s *ctx,                     \
                        int n,                                                 \
                        type *base)                                            \
 {                                                                             \
@@ -1095,8 +1095,8 @@ name##_prefetch_node_n(struct rel_hash64_find_ctx_s *ctx,                     \
         name##_prefetch_node(&ctx[_j], base);                                 \
 }                                                                             \
                                                                               \
-static REL_FORCE_INLINE _REL_UNUSED void                                      \
-name##_cmp_key_n(struct rel_hash64_find_ctx_s *ctx,                           \
+static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+name##_cmp_key_n(struct rix_hash64_find_ctx_s *ctx,                           \
                  int n,                                                       \
                  type *base,                                                  \
                  type **results)                                              \
@@ -1108,13 +1108,13 @@ name##_cmp_key_n(struct rel_hash64_find_ctx_s *ctx,                           \
 /* ================================================================== */      \
 /* Single-shot find = hash_key + scan_bk + cmp_key                    */      \
 /* ================================================================== */      \
-static REL_FORCE_INLINE _REL_UNUSED type *                                    \
+static RIX_FORCE_INLINE _RIX_UNUSED type *                                    \
 name##_find(struct name *head,                                                \
-            struct rel_hash64_bucket_s *buckets,                              \
+            struct rix_hash64_bucket_s *buckets,                              \
             type *base,                                                       \
             uint64_t key)                                                     \
 {                                                                             \
-    struct rel_hash64_find_ctx_s _ctx;                                        \
+    struct rix_hash64_find_ctx_s _ctx;                                        \
     name##_hash_key(&_ctx, head, buckets, key);                               \
     name##_scan_bk (&_ctx, head, buckets);                                    \
     return name##_cmp_key(&_ctx, base);                                       \
@@ -1131,23 +1131,23 @@ name##_find(struct name *head,                                                \
 /* No hash_field in node: kickout re-hashes victim key to find alt    */      \
 /* bucket (slightly more expensive than XOR trick, but rare path).    */      \
 /* ================================================================== */      \
-static _REL_UNUSED type *                                                     \
+static _RIX_UNUSED type *                                                     \
 name##_insert(struct name *head,                                              \
-              struct rel_hash64_bucket_s *buckets,                            \
+              struct rix_hash64_bucket_s *buckets,                            \
               type *base,                                                     \
               type *elm)                                                      \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
-    union rel_hash_hash_u _h =                                                \
-        _rel_hash64_fn((uint64_t)elm->key_field, mask);                       \
+    union rix_hash_hash_u _h =                                                \
+        _rix_hash64_fn((uint64_t)elm->key_field, mask);                       \
     unsigned _bk0 = _h.val32[0] & mask;                                       \
     unsigned _bk1 = _h.val32[1] & mask;                                       \
                                                                               \
     /* Duplicate check in both candidate buckets. */                          \
     for (int _i = 0; _i < 2; _i++) {                                          \
-        struct rel_hash64_bucket_s *_bk =                                     \
+        struct rix_hash64_bucket_s *_bk =                                     \
             buckets + (_i == 0 ? _bk0 : _bk1);                                \
-        uint32_t _hits = rel_hash_arch->find_u64x16(_bk->key,                 \
+        uint32_t _hits = rix_hash_arch->find_u64x16(_bk->key,                 \
                                                    (uint64_t)elm->key_field); \
         if (_hits) {                                                          \
             unsigned _bit = (unsigned)__builtin_ctz(_hits);                   \
@@ -1158,8 +1158,8 @@ name##_insert(struct name *head,                                              \
     /* Fast path: find an empty slot in bk0 then bk1 */                       \
     for (int _i = 0; _i < 2; _i++) {                                          \
         unsigned _bki = (_i == 0) ? _bk0 : _bk1;                              \
-        struct rel_hash64_bucket_s *_bk = buckets + _bki;                     \
-        uint32_t _nilm = rel_hash_arch->find_u64x16(_bk->key,                 \
+        struct rix_hash64_bucket_s *_bk = buckets + _bki;                     \
+        uint32_t _nilm = rix_hash_arch->find_u64x16(_bk->key,                 \
                                             (uint64_t)(invalid_key));         \
         if (_nilm) {                                                          \
             unsigned _slot    = (unsigned)__builtin_ctz(_nilm);               \
@@ -1177,10 +1177,10 @@ name##_insert(struct name *head,                                              \
         unsigned _new_idx = name##_hidx(base, elm);                           \
         unsigned _cur_bk  = _bk0;                                             \
                                                                               \
-        for (int _d = 0; _d < REL_HASH_FOLLOW_DEPTH; _d++) {                  \
-            struct rel_hash64_bucket_s *_bk = buckets + _cur_bk;              \
+        for (int _d = 0; _d < RIX_HASH_FOLLOW_DEPTH; _d++) {                  \
+            struct rix_hash64_bucket_s *_bk = buckets + _cur_bk;              \
             unsigned _pos =                                                   \
-                (unsigned)_d & (REL_HASH64_BUCKET_ENTRY_SZ - 1u);             \
+                (unsigned)_d & (RIX_HASH64_BUCKET_ENTRY_SZ - 1u);             \
                                                                               \
             /* Save victim */                                                 \
             uint64_t _vic_key = _bk->key[_pos];                               \
@@ -1191,15 +1191,15 @@ name##_insert(struct name *head,                                              \
             _bk->idx[_pos] = _new_idx;                                        \
                                                                               \
             /* Re-hash victim to find its two candidate buckets */            \
-            union rel_hash_hash_u _vh = _rel_hash64_fn(_vic_key, mask);       \
+            union rix_hash_hash_u _vh = _rix_hash64_fn(_vic_key, mask);       \
             unsigned _vic_bk0 = _vh.val32[0] & mask;                          \
             unsigned _alt_bk  = (_vic_bk0 == _cur_bk)                         \
                                 ? (_vh.val32[1] & mask)                       \
                                 : _vic_bk0;                                   \
                                                                               \
             /* Try to place victim in alt bucket */                           \
-            struct rel_hash64_bucket_s *_alt = buckets + _alt_bk;             \
-            uint32_t _nilm = rel_hash_arch->find_u64x16(_alt->key,            \
+            struct rix_hash64_bucket_s *_alt = buckets + _alt_bk;             \
+            uint32_t _nilm = rix_hash_arch->find_u64x16(_alt->key,            \
                                             (uint64_t)(invalid_key));         \
             if (_nilm) {                                                      \
                 unsigned _slot    = (unsigned)__builtin_ctz(_nilm);           \
@@ -1226,30 +1226,30 @@ name##_insert(struct name *head,                                              \
 /* 16 uint32_t).                                                      */      \
 /* Returns elm on success, NULL if elm is not currently in the table. */      \
 /* ================================================================== */      \
-static _REL_UNUSED type *                                                     \
+static _RIX_UNUSED type *                                                     \
 name##_remove(struct name *head,                                              \
-              struct rel_hash64_bucket_s *buckets,                            \
+              struct rix_hash64_bucket_s *buckets,                            \
               type *base,                                                     \
               type *elm)                                                      \
 {                                                                             \
     unsigned mask     = head->rhh_mask;                                       \
     unsigned node_idx = name##_hidx(base, elm);                               \
-    union rel_hash_hash_u _h =                                                \
-        _rel_hash64_fn((uint64_t)elm->key_field, mask);                       \
+    union rix_hash_hash_u _h =                                                \
+        _rix_hash64_fn((uint64_t)elm->key_field, mask);                       \
     unsigned _bk0 = _h.val32[0] & mask;                                       \
     unsigned _bk1 = _h.val32[1] & mask;                                       \
                                                                               \
     for (int _i = 0; _i < 2; _i++) {                                          \
-        struct rel_hash64_bucket_s *_bk =                                     \
+        struct rix_hash64_bucket_s *_bk =                                     \
             buckets + (_i == 0 ? _bk0 : _bk1);                                \
         /* Scan idx[16] as uint32_t[16] to locate slot by node index */       \
-        uint32_t _hits = rel_hash_arch->find_u32x16(                          \
+        uint32_t _hits = rix_hash_arch->find_u32x16(                          \
                              (const uint32_t *)_bk->idx,                      \
                              (uint32_t)node_idx);                             \
         if (_hits) {                                                          \
             unsigned _slot    = (unsigned)__builtin_ctz(_hits);               \
             _bk->key[_slot] = (uint64_t)(invalid_key);                        \
-            _bk->idx[_slot] = (uint32_t)REL_NIL;                              \
+            _bk->idx[_slot] = (uint32_t)RIX_NIL;                              \
             head->rhh_nb--;                                                   \
             return elm;                                                       \
         }                                                                     \
@@ -1260,19 +1260,19 @@ name##_remove(struct name *head,                                              \
 /* ================================================================== */      \
 /* Walk – iterate over all occupied slots                             */      \
 /* ================================================================== */      \
-static _REL_UNUSED int                                                        \
+static _RIX_UNUSED int                                                        \
 name##_walk(struct name *head,                                                \
-            struct rel_hash64_bucket_s *buckets,                              \
+            struct rix_hash64_bucket_s *buckets,                              \
             type *base,                                                       \
             int (*cb)(type *, void *),                                        \
             void *arg)                                                        \
 {                                                                             \
     unsigned _nb_bk = head->rhh_mask + 1u;                                    \
     for (unsigned _b = 0u; _b < _nb_bk; _b++) {                               \
-        struct rel_hash64_bucket_s *_bk = buckets + _b;                       \
-        for (unsigned _s = 0u; _s < REL_HASH64_BUCKET_ENTRY_SZ; _s++) {       \
+        struct rix_hash64_bucket_s *_bk = buckets + _b;                       \
+        for (unsigned _s = 0u; _s < RIX_HASH64_BUCKET_ENTRY_SZ; _s++) {       \
             unsigned _nidx = _bk->idx[_s];                                    \
-            if (_nidx == (unsigned)REL_NIL)                                   \
+            if (_nidx == (unsigned)RIX_NIL)                                   \
                 continue;                                                     \
             type *_node = name##_hptr(base, _nidx);                           \
             int   _r    = cb(_node, arg);                                     \
@@ -1287,105 +1287,105 @@ name##_walk(struct name *head,                                                \
  * Convenience macro API
  *
  * Single-shot ops:
- *   REL_HASH64_INIT        (name, head, buckets, nb_bk)
- *   REL_HASH64_FIND        (name, head, buckets, base, key)
- *   REL_HASH64_INSERT      (name, head, buckets, base, elm)
- *   REL_HASH64_REMOVE      (name, head, buckets, base, elm)
- *   REL_HASH64_WALK        (name, head, buckets, base, cb, arg)
+ *   RIX_HASH64_INIT        (name, head, buckets, nb_bk)
+ *   RIX_HASH64_FIND        (name, head, buckets, base, key)
+ *   RIX_HASH64_INSERT      (name, head, buckets, base, elm)
+ *   RIX_HASH64_REMOVE      (name, head, buckets, base, elm)
+ *   RIX_HASH64_WALK        (name, head, buckets, base, cb, arg)
  *
  * Staged find – x1:
- *   REL_HASH64_HASH_KEY    (name, ctx, head, buckets, key)
- *   REL_HASH64_SCAN_BK     (name, ctx, head, buckets)
- *   REL_HASH64_PREFETCH_NODE(name, ctx, base)
- *   REL_HASH64_CMP_KEY     (name, ctx, base)
+ *   RIX_HASH64_HASH_KEY    (name, ctx, head, buckets, key)
+ *   RIX_HASH64_SCAN_BK     (name, ctx, head, buckets)
+ *   RIX_HASH64_PREFETCH_NODE(name, ctx, base)
+ *   RIX_HASH64_CMP_KEY     (name, ctx, base)
  *
  * Staged find – x2 / x4:
- *   REL_HASH64_HASH_KEY2   (name, ctx, head, buckets, keys)
- *   REL_HASH64_SCAN_BK2    (name, ctx, head, buckets)
- *   REL_HASH64_PREFETCH_NODE2(name, ctx, base)
- *   REL_HASH64_CMP_KEY2    (name, ctx, base, results)
+ *   RIX_HASH64_HASH_KEY2   (name, ctx, head, buckets, keys)
+ *   RIX_HASH64_SCAN_BK2    (name, ctx, head, buckets)
+ *   RIX_HASH64_PREFETCH_NODE2(name, ctx, base)
+ *   RIX_HASH64_CMP_KEY2    (name, ctx, base, results)
  *
- *   REL_HASH64_HASH_KEY4   (name, ctx, head, buckets, keys)
- *   REL_HASH64_SCAN_BK4    (name, ctx, head, buckets)
- *   REL_HASH64_PREFETCH_NODE4(name, ctx, base)
- *   REL_HASH64_CMP_KEY4    (name, ctx, base, results)
+ *   RIX_HASH64_HASH_KEY4   (name, ctx, head, buckets, keys)
+ *   RIX_HASH64_SCAN_BK4    (name, ctx, head, buckets)
+ *   RIX_HASH64_PREFETCH_NODE4(name, ctx, base)
+ *   RIX_HASH64_CMP_KEY4    (name, ctx, base, results)
  *
  * Staged find – xN:
- *   REL_HASH64_HASH_KEY_N  (name, ctx, n, head, buckets, keys)
- *   REL_HASH64_SCAN_BK_N   (name, ctx, n, head, buckets)
- *   REL_HASH64_PREFETCH_NODE_N(name, ctx, n, base)
- *   REL_HASH64_CMP_KEY_N   (name, ctx, n, base, results)
+ *   RIX_HASH64_HASH_KEY_N  (name, ctx, n, head, buckets, keys)
+ *   RIX_HASH64_SCAN_BK_N   (name, ctx, n, head, buckets)
+ *   RIX_HASH64_PREFETCH_NODE_N(name, ctx, n, base)
+ *   RIX_HASH64_CMP_KEY_N   (name, ctx, n, base, results)
  *===========================================================================*/
 
 /* ---- single-shot ops ---------------------------------------------------- */
-#define REL_HASH64_INIT(name, head, buckets, nb_bk)                           \
+#define RIX_HASH64_INIT(name, head, buckets, nb_bk)                           \
     name##_init(head, buckets, nb_bk)
 
-#define REL_HASH64_FIND(name, head, buckets, base, key)                       \
+#define RIX_HASH64_FIND(name, head, buckets, base, key)                       \
     name##_find(head, buckets, base, key)
 
-#define REL_HASH64_INSERT(name, head, buckets, base, elm)                     \
+#define RIX_HASH64_INSERT(name, head, buckets, base, elm)                     \
     name##_insert(head, buckets, base, elm)
 
-#define REL_HASH64_REMOVE(name, head, buckets, base, elm)                     \
+#define RIX_HASH64_REMOVE(name, head, buckets, base, elm)                     \
     name##_remove(head, buckets, base, elm)
 
-#define REL_HASH64_WALK(name, head, buckets, base, cb, arg)                   \
+#define RIX_HASH64_WALK(name, head, buckets, base, cb, arg)                   \
     name##_walk(head, buckets, base, cb, arg)
 
 /* ---- staged find – x1 --------------------------------------------------- */
-#define REL_HASH64_HASH_KEY(name, ctx, head, buckets, key)                    \
+#define RIX_HASH64_HASH_KEY(name, ctx, head, buckets, key)                    \
     name##_hash_key(ctx, head, buckets, key)
 
-#define REL_HASH64_SCAN_BK(name, ctx, head, buckets)                          \
+#define RIX_HASH64_SCAN_BK(name, ctx, head, buckets)                          \
     name##_scan_bk(ctx, head, buckets)
 
-#define REL_HASH64_PREFETCH_NODE(name, ctx, base)                             \
+#define RIX_HASH64_PREFETCH_NODE(name, ctx, base)                             \
     name##_prefetch_node(ctx, base)
 
-#define REL_HASH64_CMP_KEY(name, ctx, base)                                   \
+#define RIX_HASH64_CMP_KEY(name, ctx, base)                                   \
     name##_cmp_key(ctx, base)
 
 /* ---- staged find – x2 --------------------------------------------------- */
-#define REL_HASH64_HASH_KEY2(name, ctx, head, buckets, keys)                  \
+#define RIX_HASH64_HASH_KEY2(name, ctx, head, buckets, keys)                  \
     name##_hash_key_n(ctx, 2, head, buckets, keys)
 
-#define REL_HASH64_SCAN_BK2(name, ctx, head, buckets)                         \
+#define RIX_HASH64_SCAN_BK2(name, ctx, head, buckets)                         \
     name##_scan_bk_n(ctx, 2, head, buckets)
 
-#define REL_HASH64_PREFETCH_NODE2(name, ctx, base)                            \
+#define RIX_HASH64_PREFETCH_NODE2(name, ctx, base)                            \
     name##_prefetch_node_n(ctx, 2, base)
 
-#define REL_HASH64_CMP_KEY2(name, ctx, base, results)                         \
+#define RIX_HASH64_CMP_KEY2(name, ctx, base, results)                         \
     name##_cmp_key_n(ctx, 2, base, results)
 
 /* ---- staged find – x4 --------------------------------------------------- */
-#define REL_HASH64_HASH_KEY4(name, ctx, head, buckets, keys)                  \
+#define RIX_HASH64_HASH_KEY4(name, ctx, head, buckets, keys)                  \
     name##_hash_key_n(ctx, 4, head, buckets, keys)
 
-#define REL_HASH64_SCAN_BK4(name, ctx, head, buckets)                         \
+#define RIX_HASH64_SCAN_BK4(name, ctx, head, buckets)                         \
     name##_scan_bk_n(ctx, 4, head, buckets)
 
-#define REL_HASH64_PREFETCH_NODE4(name, ctx, base)                            \
+#define RIX_HASH64_PREFETCH_NODE4(name, ctx, base)                            \
     name##_prefetch_node_n(ctx, 4, base)
 
-#define REL_HASH64_CMP_KEY4(name, ctx, base, results)                         \
+#define RIX_HASH64_CMP_KEY4(name, ctx, base, results)                         \
     name##_cmp_key_n(ctx, 4, base, results)
 
 /* ---- staged find – xN --------------------------------------------------- */
-#define REL_HASH64_HASH_KEY_N(name, ctx, n, head, buckets, keys)              \
+#define RIX_HASH64_HASH_KEY_N(name, ctx, n, head, buckets, keys)              \
     name##_hash_key_n(ctx, n, head, buckets, keys)
 
-#define REL_HASH64_SCAN_BK_N(name, ctx, n, head, buckets)                     \
+#define RIX_HASH64_SCAN_BK_N(name, ctx, n, head, buckets)                     \
     name##_scan_bk_n(ctx, n, head, buckets)
 
-#define REL_HASH64_PREFETCH_NODE_N(name, ctx, n, base)                        \
+#define RIX_HASH64_PREFETCH_NODE_N(name, ctx, n, base)                        \
     name##_prefetch_node_n(ctx, n, base)
 
-#define REL_HASH64_CMP_KEY_N(name, ctx, n, base, results)                     \
+#define RIX_HASH64_CMP_KEY_N(name, ctx, n, base, results)                     \
     name##_cmp_key_n(ctx, n, base, results)
 
-#endif /* _REL_HASH_KEY_H_ */
+#endif /* _RIX_HASH_KEY_H_ */
 
 /*
  * Local Variables:

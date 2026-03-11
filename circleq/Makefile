@@ -13,7 +13,7 @@ LIBS =
 
 
 SRCS    =       \
-	test_rel_circleq.c
+	test_rix_circleq.c
 
 OBJS = ${SRCS:.c=.o}
 DEPENDS = .depend

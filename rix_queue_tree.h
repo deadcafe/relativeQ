@@ -5,20 +5,20 @@
  * All rights reserved.
  *
  */
-#ifndef _REL_QUEUE_TREE_H_
-#define _REL_QUEUE_TREE_H_
+#ifndef _RIX_QUEUE_TREE_H_
+#define _RIX_QUEUE_TREE_H_
 
 /*
  * Backward-compatible umbrella header.
- * Each sub-header includes rel/rel_defs.h internally.
+ * Each sub-header includes rix/rix_defs.h internally.
  */
 
-#include <rel/rel_queue.h>
-#include <rel/rel_tree.h>
-#include <rel/rel_hash.h>
-#include <rel/rel_hash_key.h>
+#include <rix/rix_queue.h>
+#include <rix/rix_tree.h>
+#include <rix/rix_hash.h>
+#include <rix/rix_hash_key.h>
 
-#endif /* _REL_QUEUE_TREE_H_ */
+#endif /* _RIX_QUEUE_TREE_H_ */
 
 /*
  * Local Variables:

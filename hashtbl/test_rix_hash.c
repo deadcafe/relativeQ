@@ -1,5 +1,5 @@
-/* test_rel_hash.c
- *  REL_HASH (cuckoo hash table) – unit & fuzz tests
+/* test_rix_hash.c
+ *  RIX_HASH (cuckoo hash table) – unit & fuzz tests
  */
 
 #include <stdio.h>
@@ -7,7 +7,7 @@
 #include <string.h>
 #include <stdint.h>
 
-#include "rel_hash.h"
+#include "rix_hash.h"
 
 #define FAIL(msg) do { \
     fprintf(stderr, "FAIL %s:%d:%s: %s\n", __FILE__, __LINE__, __func__, (msg)); \
@@ -34,7 +34,7 @@ struct mynode {
 };
 
 /* 16-byte key comparison using SSE2 (struct mykey = two uint64_t) */
-static REL_FORCE_INLINE int
+static RIX_FORCE_INLINE int
 mykey_cmp(const void *a, const void *b)
 {
     __m128i va = _mm_loadu_si128((const __m128i *)a);
@@ -42,8 +42,8 @@ mykey_cmp(const void *a, const void *b)
     return _mm_movemask_epi8(_mm_cmpeq_epi8(va, vb)) == 0xffff;
 }
 
-REL_HASH_HEAD(myht);
-REL_HASH_GENERATE(myht, mynode, key, cur_hash, mykey_cmp)
+RIX_HASH_HEAD(myht);
+RIX_HASH_GENERATE(myht, mynode, key, cur_hash, mykey_cmp)
 
 /* ================================================================== */
 /* nohf variant: no hash_field (8-byte node)                           */
@@ -52,8 +52,8 @@ struct mynode_nohf {
     struct mykey key;
 };
 
-REL_HASH_HEAD(myht_nohf);
-REL_HASH_GENERATE_NOHF(myht_nohf, mynode_nohf, key, mykey_cmp)
+RIX_HASH_HEAD(myht_nohf);
+RIX_HASH_GENERATE_NOHF(myht_nohf, mynode_nohf, key, mykey_cmp)
 
 /* ================================================================== */
 /* Globals for basic tests                                             */
@@ -62,11 +62,11 @@ REL_HASH_GENERATE_NOHF(myht_nohf, mynode_nohf, key, mykey_cmp)
 #define NB_BK_BASIC   4u  /* 4 × 16 = 64 slots for 20 nodes  */
 
 static struct mynode          g_basic[NB_BASIC];
-static struct rel_hash_bucket_s g_bk[NB_BK_BASIC] __attribute__((aligned(64)));
+static struct rix_hash_bucket_s g_bk[NB_BK_BASIC] __attribute__((aligned(64)));
 static struct myht            g_head;
 
 static struct mynode_nohf       g_nohf[NB_BASIC];
-static struct rel_hash_bucket_s g_bk_nohf[NB_BK_BASIC] __attribute__((aligned(64)));
+static struct rix_hash_bucket_s g_bk_nohf[NB_BK_BASIC] __attribute__((aligned(64)));
 static struct myht_nohf         g_head_nohf;
 
 static void
@@ -74,7 +74,7 @@ basic_init(void)
 {
     memset(g_basic, 0, sizeof(g_basic));
     memset(g_bk,    0, sizeof(g_bk));
-    REL_HASH_INIT(myht, &g_head, NB_BK_BASIC);
+    RIX_HASH_INIT(myht, &g_head, NB_BK_BASIC);
     for (unsigned i = 0; i < NB_BASIC; i++) {
         g_basic[i].key.hi = (uint64_t)(i + 1);
         g_basic[i].key.lo = 0xDEADC0DE00000000ULL;
@@ -223,30 +223,30 @@ test_staged_find(void)
 
     /* --- x1 staged --- */
     for (unsigned i = 0; i < NB_BASIC; i++) {
-        struct rel_hash_find_ctx_s ctx;
-        REL_HASH_HASH_KEY(myht, &ctx, &g_head, g_bk, &g_basic[i].key);
-        REL_HASH_SCAN_BK (myht, &ctx, &g_head, g_bk);
-        struct mynode *r = REL_HASH_CMP_KEY(myht, &ctx, g_basic);
+        struct rix_hash_find_ctx_s ctx;
+        RIX_HASH_HASH_KEY(myht, &ctx, &g_head, g_bk, &g_basic[i].key);
+        RIX_HASH_SCAN_BK (myht, &ctx, &g_head, g_bk);
+        struct mynode *r = RIX_HASH_CMP_KEY(myht, &ctx, g_basic);
         if (r == NULL || r != &g_basic[i])
             FAILF("staged x1 find[%u] mismatch", i);
     }
     {   /* non-existent */
-        struct rel_hash_find_ctx_s ctx;
-        REL_HASH_HASH_KEY(myht, &ctx, &g_head, g_bk, &bad);
-        REL_HASH_SCAN_BK (myht, &ctx, &g_head, g_bk);
-        if (REL_HASH_CMP_KEY(myht, &ctx, g_basic) != NULL)
+        struct rix_hash_find_ctx_s ctx;
+        RIX_HASH_HASH_KEY(myht, &ctx, &g_head, g_bk, &bad);
+        RIX_HASH_SCAN_BK (myht, &ctx, &g_head, g_bk);
+        if (RIX_HASH_CMP_KEY(myht, &ctx, g_basic) != NULL)
             FAIL("staged x1 find of non-existent should be NULL");
     }
 
     /* --- x2 staged --- */
     {
-        struct rel_hash_find_ctx_s ctx2[2];
+        struct rix_hash_find_ctx_s ctx2[2];
         const struct mykey *keys2[2] = { &g_basic[0].key, &bad };
         struct mynode *res2[2];
 
-        REL_HASH_HASH_KEY2(myht, ctx2, &g_head, g_bk, keys2);
-        REL_HASH_SCAN_BK2 (myht, ctx2, &g_head, g_bk);
-        REL_HASH_CMP_KEY2 (myht, ctx2, g_basic, res2);
+        RIX_HASH_HASH_KEY2(myht, ctx2, &g_head, g_bk, keys2);
+        RIX_HASH_SCAN_BK2 (myht, ctx2, &g_head, g_bk);
+        RIX_HASH_CMP_KEY2 (myht, ctx2, g_basic, res2);
 
         if (res2[0] != &g_basic[0])
             FAILF("staged x2[0] mismatch: got %p", (void *)res2[0]);
@@ -257,15 +257,15 @@ test_staged_find(void)
 
     /* --- x4 staged --- */
     {
-        struct rel_hash_find_ctx_s ctx4[4];
+        struct rix_hash_find_ctx_s ctx4[4];
         const struct mykey *keys4[4] = {
             &g_basic[3].key, &bad, &g_basic[7].key, &g_basic[11].key
         };
         struct mynode *res4[4];
 
-        REL_HASH_HASH_KEY4(myht, ctx4, &g_head, g_bk, keys4);
-        REL_HASH_SCAN_BK4 (myht, ctx4, &g_head, g_bk);
-        REL_HASH_CMP_KEY4 (myht, ctx4, g_basic, res4);
+        RIX_HASH_HASH_KEY4(myht, ctx4, &g_head, g_bk, keys4);
+        RIX_HASH_SCAN_BK4 (myht, ctx4, &g_head, g_bk);
+        RIX_HASH_CMP_KEY4 (myht, ctx4, g_basic, res4);
 
         if (res4[0] != &g_basic[3])
             FAILF("staged x4[0] mismatch: got %p", (void *)res4[0]);
@@ -367,8 +367,8 @@ test_fuzz(unsigned seed, unsigned N, unsigned nb_bk, unsigned ops)
     }
 
     /* Allocate aligned bucket array (zeroed) */
-    struct rel_hash_bucket_s *bk = NULL;
-    size_t bk_sz = (size_t)nb_bk * sizeof(struct rel_hash_bucket_s);
+    struct rix_hash_bucket_s *bk = NULL;
+    size_t bk_sz = (size_t)nb_bk * sizeof(struct rix_hash_bucket_s);
     if (posix_memalign((void **)&bk, 64, bk_sz) != 0) {
         perror("posix_memalign");
         exit(1);
@@ -377,7 +377,7 @@ test_fuzz(unsigned seed, unsigned N, unsigned nb_bk, unsigned ops)
 
     /* Head */
     struct myht head;
-    REL_HASH_INIT(myht, &head, nb_bk);
+    RIX_HASH_INIT(myht, &head, nb_bk);
 
     /* Model: present[i] = 1 means nodes[i-1] is in the table */
     unsigned char *present = (unsigned char *)calloc((size_t)N + 1, 1);
@@ -476,7 +476,7 @@ nohf_init(void)
 {
     memset(g_nohf,    0, sizeof(g_nohf));
     memset(g_bk_nohf, 0, sizeof(g_bk_nohf));
-    REL_HASH_INIT(myht_nohf, &g_head_nohf, NB_BK_BASIC);
+    RIX_HASH_INIT(myht_nohf, &g_head_nohf, NB_BK_BASIC);
     for (unsigned i = 0; i < NB_BASIC; i++) {
         g_nohf[i].key.hi = (uint64_t)(i + 1);
         g_nohf[i].key.lo = 0xDEADC0DE00000000ULL;
@@ -615,15 +615,15 @@ test_nohf_fuzz(unsigned seed, unsigned N, unsigned nb_bk, unsigned ops)
         nodes[i].key.lo = 0;
     }
 
-    struct rel_hash_bucket_s *bk = NULL;
-    size_t bk_sz = (size_t)nb_bk * sizeof(struct rel_hash_bucket_s);
+    struct rix_hash_bucket_s *bk = NULL;
+    size_t bk_sz = (size_t)nb_bk * sizeof(struct rix_hash_bucket_s);
     if (posix_memalign((void **)&bk, 64, bk_sz) != 0) {
         perror("posix_memalign"); exit(1);
     }
     memset(bk, 0, bk_sz);
 
     struct myht_nohf head;
-    REL_HASH_INIT(myht_nohf, &head, nb_bk);
+    RIX_HASH_INIT(myht_nohf, &head, nb_bk);
 
     unsigned char *present = (unsigned char *)calloc((size_t)N + 1, 1);
     if (!present) { perror("calloc present"); exit(1); }
@@ -723,7 +723,7 @@ main(int argc, char **argv)
     if (argc >= 4) nb_bk = (unsigned)strtoul(argv[3], NULL, 10);
     if (argc >= 5) ops   = (unsigned)strtoul(argv[4], NULL, 10);
 
-    rel_hash_arch_init();
+    rix_hash_arch_init();
 
     test_init_empty();
     test_insert_find_remove();
@@ -736,7 +736,7 @@ main(int argc, char **argv)
     test_nohf_duplicate();
     test_nohf_fuzz(seed, N, nb_bk, ops);
 
-    printf("ALL REL_HASH TESTS PASSED\n");
+    printf("ALL RIX_HASH TESTS PASSED\n");
     return 0;
 }
 

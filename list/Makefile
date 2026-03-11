@@ -13,7 +13,7 @@ LIBS =
 
 
 SRCS    =       \
-	test_rel_list.c
+	test_rix_list.c
 
 OBJS = ${SRCS:.c=.o}
 DEPENDS = .depend

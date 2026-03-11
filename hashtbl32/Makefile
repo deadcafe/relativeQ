@@ -9,18 +9,18 @@ BENCH_CFLAGS = -std=gnu11 -O3 -mavx2 -msse4.2 -Wall -Wextra -I$(CURDIR)
 DEPENDS      = .depend
 
 TEST_TARGET  = hash32_test
-TEST_SRC     = test_rel_hash32.c
+TEST_SRC     = test_rix_hash32.c
 
 BENCH_TARGET = hash32_bench
-BENCH_SRC    = bench_rel_hash32.c
+BENCH_SRC    = bench_rix_hash32.c
 
 .PHONY: all clean depend test bench
 all: $(TEST_TARGET) $(BENCH_TARGET)
 
-$(TEST_TARGET): $(TEST_SRC) rel_hash32.h
+$(TEST_TARGET): $(TEST_SRC) rix_hash32.h
 	$(CC) $(CFLAGS) -o $@ $(TEST_SRC)
 
-$(BENCH_TARGET): $(BENCH_SRC) rel_hash32.h
+$(BENCH_TARGET): $(BENCH_SRC) rix_hash32.h
 	$(CC) $(BENCH_CFLAGS) -o $@ $(BENCH_SRC)
 
 test: $(TEST_TARGET)

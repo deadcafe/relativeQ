@@ -13,7 +13,7 @@ LIBS =
 
 
 SRCS    =       \
-	test_rel_rbtree.c
+	test_rix_rbtree.c
 
 OBJS = ${SRCS:.c=.o}
 DEPENDS = .depend

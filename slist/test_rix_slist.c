@@ -1,4 +1,4 @@
-/* test_rel_slist.c
+/* test_rix_slist.c
  */
 
 #include <stdio.h>
@@ -6,7 +6,7 @@
 #include <string.h>
 #include <assert.h>
 #include <sys/types.h>
-#include "../rel_queue_tree.h"
+#include "../rix_queue_tree.h"
 
 #define FAIL(msg) do { \
   fprintf(stderr, "FAIL %s:%d:%s: %s\n", __FILE__, __LINE__, __func__, (msg)); \
@@ -20,7 +20,7 @@
 
 struct node {
     int val;
-    REL_SLIST_ENTRY(node) link;
+    RIX_SLIST_ENTRY(node) link;
 };
 
 static struct node *g_nodes = NULL;
@@ -72,13 +72,13 @@ static void dump_vec(const vec_t *v, const char *name){
     fputc('\n', stderr);
 }
 
-REL_SLIST_HEAD(qhead, node);
+RIX_SLIST_HEAD(qhead, node);
 
 static void extract_forward(struct qhead *h, vec_t *out){
     vec_clear(out);
-    for (struct node *it = REL_SLIST_FIRST(h, g_nodes);
-         it; it = REL_SLIST_NEXT(it, g_nodes, link)) {
-        vec_push_back(out, REL_IDX_FROM_PTR(g_nodes, it));
+    for (struct node *it = RIX_SLIST_FIRST(h, g_nodes);
+         it; it = RIX_SLIST_NEXT(it, g_nodes, link)) {
+        vec_push_back(out, RIX_IDX_FROM_PTR(g_nodes, it));
     }
 }
 
@@ -86,10 +86,10 @@ static void check_integrity_against_model(struct qhead *h,
                                           const vec_t *model,
                                           const char *tag)
 {
-    if (REL_SLIST_EMPTY(h)) {
-        if (h->rslh_first != REL_NIL) FAILF("EMPTY but first not NIL tag=%s", tag);
+    if (RIX_SLIST_EMPTY(h)) {
+        if (h->rslh_first != RIX_NIL) FAILF("EMPTY but first not NIL tag=%s", tag);
     } else {
-        if (h->rslh_first == REL_NIL) FAILF("NON-EMPTY but first is NIL tag=%s", tag);
+        if (h->rslh_first == RIX_NIL) FAILF("NON-EMPTY but first is NIL tag=%s", tag);
     }
 
     vec_t fw; vec_init(&fw); extract_forward(h, &fw);
@@ -107,18 +107,18 @@ static void check_integrity_against_model(struct qhead *h,
     if (fw.n != 0){
         unsigned first = fw.a[0], last = fw.a[fw.n-1];
         if (h->rslh_first != first) FAILF("head first mismatch tag=%s", tag);
-        if (NODEP(last)->link.rsle_next != REL_NIL) FAILF("last.next != NIL tag=%s", tag);
+        if (NODEP(last)->link.rsle_next != RIX_NIL) FAILF("last.next != NIL tag=%s", tag);
     }
 
     for (size_t i=0;i<fw.n;i++){
         unsigned cur  = fw.a[i];
-        unsigned next = (i+1<fw.n)? fw.a[i+1] : REL_NIL;
+        unsigned next = (i+1<fw.n)? fw.a[i+1] : RIX_NIL;
         if (NODEP(cur)->link.rsle_next != next)
             FAILF("next link broken at idx=%u tag=%s", cur, tag);
 
-        if (REL_PTR_FROM_IDX(g_nodes, REL_NIL) != NULL) FAIL("PTR_FROM_IDX(NIL) must be NULL");
-        if (REL_IDX_FROM_PTR(g_nodes, (struct node*)NULL) != REL_NIL) FAIL("IDX_FROM_PTR(NULL) must be NIL");
-        if (REL_IDX_FROM_PTR(g_nodes, NODEP(cur)) != cur) FAIL("IDX<->PTR roundtrip failed");
+        if (RIX_PTR_FROM_IDX(g_nodes, RIX_NIL) != NULL) FAIL("PTR_FROM_IDX(NIL) must be NULL");
+        if (RIX_IDX_FROM_PTR(g_nodes, (struct node*)NULL) != RIX_NIL) FAIL("IDX_FROM_PTR(NULL) must be NIL");
+        if (RIX_IDX_FROM_PTR(g_nodes, NODEP(cur)) != cur) FAIL("IDX<->PTR roundtrip failed");
     }
 
     vec_free(&fw);
@@ -142,13 +142,13 @@ static void model_remove_after(vec_t *m, unsigned base){
 static void model_remove_valM(vec_t *m, unsigned x){ int ok=vec_remove_val(m,x); assert(ok); }
 
 static void slist_push_tail(struct qhead *h, unsigned idx){
-    if (REL_SLIST_EMPTY(h)){
-        REL_SLIST_INSERT_HEAD(h, g_nodes, NODEP(idx), link);
+    if (RIX_SLIST_EMPTY(h)){
+        RIX_SLIST_INSERT_HEAD(h, g_nodes, NODEP(idx), link);
         return;
     }
-    struct node *it = REL_SLIST_FIRST(h, g_nodes);
-    while (REL_SLIST_NEXT(it, g_nodes, link)) it = REL_SLIST_NEXT(it, g_nodes, link);
-    REL_SLIST_INSERT_AFTER(g_nodes, it, NODEP(idx), link);
+    struct node *it = RIX_SLIST_FIRST(h, g_nodes);
+    while (RIX_SLIST_NEXT(it, g_nodes, link)) it = RIX_SLIST_NEXT(it, g_nodes, link);
+    RIX_SLIST_INSERT_AFTER(g_nodes, it, NODEP(idx), link);
 }
 
 static unsigned xrnd_state = 0x12345678u;
@@ -166,43 +166,43 @@ static unsigned rnd_in(unsigned lo, unsigned hi){
 
 static void test_init_empty(void){
     printf("[T] init/empty\n");
-    struct qhead h = REL_SLIST_HEAD_INITIALIZER(h);
-    if (!REL_SLIST_EMPTY(&h)) FAIL("HEAD_INITIALIZER not empty");
-    if (h.rslh_first != REL_NIL) FAIL("HEAD_INITIALIZER first not NIL");
-    REL_SLIST_INIT(&h);
-    if (!REL_SLIST_EMPTY(&h)) FAIL("INIT not empty");
-    if (REL_SLIST_FIRST(&h, g_nodes) != NULL) FAIL("FIRST must be NULL on empty");
+    struct qhead h = RIX_SLIST_HEAD_INITIALIZER(h);
+    if (!RIX_SLIST_EMPTY(&h)) FAIL("HEAD_INITIALIZER not empty");
+    if (h.rslh_first != RIX_NIL) FAIL("HEAD_INITIALIZER first not NIL");
+    RIX_SLIST_INIT(&h);
+    if (!RIX_SLIST_EMPTY(&h)) FAIL("INIT not empty");
+    if (RIX_SLIST_FIRST(&h, g_nodes) != NULL) FAIL("FIRST must be NULL on empty");
 }
 
 static void test_insert_remove_basic(void){
     printf("[T] insert/remove basic\n");
-    struct qhead h; REL_SLIST_INIT(&h);
+    struct qhead h; RIX_SLIST_INIT(&h);
     vec_t m; vec_init(&m);
 
     unsigned a=1,b=2,c=3,d=4,e=5;
 
-    REL_SLIST_INSERT_HEAD(&h, g_nodes, NODEP(a), link); model_insert_head(&m, a);
+    RIX_SLIST_INSERT_HEAD(&h, g_nodes, NODEP(a), link); model_insert_head(&m, a);
     check_integrity_against_model(&h,&m,"ins_head_a");
 
-    REL_SLIST_INSERT_AFTER(g_nodes, NODEP(a), NODEP(b), link); model_insert_after(&m, a, b);
+    RIX_SLIST_INSERT_AFTER(g_nodes, NODEP(a), NODEP(b), link); model_insert_after(&m, a, b);
     check_integrity_against_model(&h,&m,"after_a_b");
 
-    REL_SLIST_INSERT_HEAD(&h, g_nodes, NODEP(c), link); model_insert_head(&m, c);
+    RIX_SLIST_INSERT_HEAD(&h, g_nodes, NODEP(c), link); model_insert_head(&m, c);
     check_integrity_against_model(&h,&m,"ins_head_c");
 
-    REL_SLIST_INSERT_AFTER(g_nodes, NODEP(b), NODEP(d), link); model_insert_after(&m, b, d);
+    RIX_SLIST_INSERT_AFTER(g_nodes, NODEP(b), NODEP(d), link); model_insert_after(&m, b, d);
     check_integrity_against_model(&h,&m,"after_b_d");
 
     slist_push_tail(&h, e); model_insert_after(&m, d, e);
     check_integrity_against_model(&h,&m,"push_tail_e");
 
-    REL_SLIST_REMOVE_HEAD(&h, g_nodes, link); model_remove_head(&m);
+    RIX_SLIST_REMOVE_HEAD(&h, g_nodes, link); model_remove_head(&m);
     check_integrity_against_model(&h,&m,"rm_head");
 
-    REL_SLIST_REMOVE_AFTER(g_nodes, NODEP(a), link); model_remove_after(&m, a);
+    RIX_SLIST_REMOVE_AFTER(g_nodes, NODEP(a), link); model_remove_after(&m, a);
     check_integrity_against_model(&h,&m,"rm_after_a");
 
-    REL_SLIST_REMOVE(&h, g_nodes, NODEP(d), node, link); model_remove_valM(&m, d);
+    RIX_SLIST_REMOVE(&h, g_nodes, NODEP(d), node, link); model_remove_valM(&m, d);
     check_integrity_against_model(&h,&m,"rm_val_d");
 
     vec_free(&m);
@@ -210,17 +210,17 @@ static void test_insert_remove_basic(void){
 
 static void test_foreach_safe_and_previndex(void){
     printf("[T] foreach/safe/previndex\n");
-    struct qhead h; REL_SLIST_INIT(&h);
+    struct qhead h; RIX_SLIST_INIT(&h);
     vec_t m; vec_init(&m);
 
     for (unsigned i=1;i<=16;i++){ slist_push_tail(&h, i); vec_push_back(&m, i); }
     check_integrity_against_model(&h,&m,"fill_1_16");
 
     struct node *it, *tmp;
-    REL_SLIST_FOREACH_SAFE(it, &h, g_nodes, link, tmp){
-        unsigned idx = REL_IDX_FROM_PTR(g_nodes, it);
+    RIX_SLIST_FOREACH_SAFE(it, &h, g_nodes, link, tmp){
+        unsigned idx = RIX_IDX_FROM_PTR(g_nodes, it);
         if ((idx & 1u)==0){
-            REL_SLIST_REMOVE(&h, g_nodes, it, node, link);
+            RIX_SLIST_REMOVE(&h, g_nodes, it, node, link);
             model_remove_valM(&m, idx);
         }
     }
@@ -228,8 +228,8 @@ static void test_foreach_safe_and_previndex(void){
 
     {
         unsigned *px = &h.rslh_first;
-        while (*px != REL_NIL) {
-            struct node *cur = REL_PTR_FROM_IDX(g_nodes, *px);
+        while (*px != RIX_NIL) {
+            struct node *cur = RIX_PTR_FROM_IDX(g_nodes, *px);
             *px = cur->link.rsle_next;
         }
     }
@@ -243,7 +243,7 @@ static void test_fuzz(unsigned seed, unsigned N, unsigned ops){
     printf("[T] fuzz seed=%u N=%u ops=%u\n", seed, N, ops);
     xrnd_state = seed ? seed : 0xC0FFEE11u;
 
-    struct qhead h; REL_SLIST_INIT(&h);
+    struct qhead h; RIX_SLIST_INIT(&h);
     vec_t m; vec_init(&m);
 
     for (unsigned step=0; step<ops; step++){
@@ -253,14 +253,14 @@ static void test_fuzz(unsigned seed, unsigned N, unsigned ops){
             unsigned idx = rnd_in(1,N);
             ssize_t pos = vec_find(&m, idx);
             if (pos >= 0){
-                REL_SLIST_REMOVE(&h, g_nodes, NODEP(idx), node, link);
+                RIX_SLIST_REMOVE(&h, g_nodes, NODEP(idx), node, link);
                 model_remove_valM(&m, idx);
             }
             if (m.n==0 || (xrnd()%2)==0){
-                REL_SLIST_INSERT_HEAD(&h, g_nodes, NODEP(idx), link); model_insert_head(&m, idx);
+                RIX_SLIST_INSERT_HEAD(&h, g_nodes, NODEP(idx), link); model_insert_head(&m, idx);
             } else {
                 unsigned base = m.a[xrnd()%m.n];
-                REL_SLIST_INSERT_AFTER(g_nodes, NODEP(base), NODEP(idx), link);
+                RIX_SLIST_INSERT_AFTER(g_nodes, NODEP(base), NODEP(idx), link);
                 model_insert_after(&m, base, idx);
             }
             check_integrity_against_model(&h,&m,"fuzz_insert");
@@ -268,16 +268,16 @@ static void test_fuzz(unsigned seed, unsigned N, unsigned ops){
             if (m.n==0) continue;
             unsigned mode = xrnd()%3;
             if (mode==0){
-                REL_SLIST_REMOVE_HEAD(&h, g_nodes, link);
+                RIX_SLIST_REMOVE_HEAD(&h, g_nodes, link);
                 model_remove_head(&m);
             } else if (mode==1 && m.n>=2){
                 size_t p = (size_t)(xrnd()%(m.n-1));
                 unsigned base = m.a[p];
-                REL_SLIST_REMOVE_AFTER(g_nodes, NODEP(base), link);
+                RIX_SLIST_REMOVE_AFTER(g_nodes, NODEP(base), link);
                 model_remove_after(&m, base);
             } else {
                 unsigned idx = m.a[xrnd()%m.n];
-                REL_SLIST_REMOVE(&h, g_nodes, NODEP(idx), node, link);
+                RIX_SLIST_REMOVE(&h, g_nodes, NODEP(idx), node, link);
                 model_remove_valM(&m, idx);
             }
             check_integrity_against_model(&h,&m,"fuzz_remove");
@@ -302,7 +302,7 @@ int main(int argc, char **argv){
     if (!g_nodes){ perror("calloc g_nodes"); return 1; }
     for (unsigned i=0;i<N;i++){
         g_nodes[i].val = (int)(i+1);
-        g_nodes[i].link.rsle_next = REL_NIL;
+        g_nodes[i].link.rsle_next = RIX_NIL;
     }
 
     test_init_empty();
@@ -311,6 +311,6 @@ int main(int argc, char **argv){
     test_fuzz(seed, N, ops);
 
     free(g_nodes);
-    printf("ALL REL_SLIST TESTS PASSED ✅\n");
+    printf("ALL RIX_SLIST TESTS PASSED ✅\n");
     return 0;
 }

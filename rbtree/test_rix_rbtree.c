@@ -1,5 +1,5 @@
-/* test_rel_rbtree.c
- *  REL_RB
+/* test_rix_rbtree.c
+ *  RIX_RB
  */
 
 #include <stdio.h>
@@ -7,7 +7,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <assert.h>
-#include "../rel_queue_tree.h"
+#include "../rix_queue_tree.h"
 
 #define FAIL(msg) do { \
   fprintf(stderr, "FAIL %s:%d:%s: %s\n", __FILE__, __LINE__, __func__, (msg)); \
@@ -21,13 +21,13 @@
 
 struct node {
     int key;
-    REL_RB_ENTRY(node) rb; /* rbe_parent/rbe_left/rbe_right/rbe_color */
+    RIX_RB_ENTRY(node) rb; /* rbe_parent/rbe_left/rbe_right/rbe_color */
 };
 
 static struct node *g_nodes = NULL;
 static unsigned g_cap = 0;
 
-REL_RB_HEAD(tree);
+RIX_RB_HEAD(tree);
 
 static int node_cmp(const struct node *a, const struct node *b){
     if (a->key < b->key) return -1;
@@ -35,8 +35,8 @@ static int node_cmp(const struct node *a, const struct node *b){
     return 0;
 }
 
-REL_RB_PROTOTYPE(tree, struct node, rb, node_cmp)
-REL_RB_GENERATE(tree, struct node, rb, node_cmp)
+RIX_RB_PROTOTYPE(tree, struct node, rb, node_cmp)
+RIX_RB_GENERATE(tree, struct node, rb, node_cmp)
 
 typedef struct { int *a; size_t n, cap; } vec_t;
 
@@ -76,7 +76,7 @@ static int vec_erase_key(vec_t *v, int key){
 
 static struct node *np_from_idx(unsigned idx){ return idx? &g_nodes[idx-1] : NULL; }
 static unsigned idx_from_ptr(const struct node *p){
-    return REL_IDX_FROM_PTR(g_nodes, (struct node*)p);
+    return RIX_IDX_FROM_PTR(g_nodes, (struct node*)p);
 }
 
 static int check_rb_black_height(struct node *x, int *bh_out){
@@ -84,15 +84,15 @@ static int check_rb_black_height(struct node *x, int *bh_out){
         *bh_out = 1;
         return 1;
     }
-    struct node *L = REL_RB_LEFT(x, g_nodes, rb);
-    struct node *R = REL_RB_RIGHT(x, g_nodes, rb);
+    struct node *L = RIX_RB_LEFT(x, g_nodes, rb);
+    struct node *R = RIX_RB_RIGHT(x, g_nodes, rb);
 
-    if (L && REL_RB_PARENT(L, g_nodes, rb) != x) FAIL("parent mismatch (left)");
-    if (R && REL_RB_PARENT(R, g_nodes, rb) != x) FAIL("parent mismatch (right)");
+    if (L && RIX_RB_PARENT(L, g_nodes, rb) != x) FAIL("parent mismatch (left)");
+    if (R && RIX_RB_PARENT(R, g_nodes, rb) != x) FAIL("parent mismatch (right)");
 
-    if (REL_RB_COLOR(x, rb) == REL_RB_RED){
-        if (L && REL_RB_COLOR(L, rb) != REL_RB_BLACK) FAIL("red parent with red left child");
-        if (R && REL_RB_COLOR(R, rb) != REL_RB_BLACK) FAIL("red parent with red right child");
+    if (RIX_RB_COLOR(x, rb) == RIX_RB_RED){
+        if (L && RIX_RB_COLOR(L, rb) != RIX_RB_BLACK) FAIL("red parent with red left child");
+        if (R && RIX_RB_COLOR(R, rb) != RIX_RB_BLACK) FAIL("red parent with red right child");
     }
 
     int bl=0, br=0;
@@ -102,25 +102,25 @@ static int check_rb_black_height(struct node *x, int *bh_out){
         FAILF("black-height mismatch: left=%d right=%d key=%d", bl, br, x->key);
         return 0;
     }
-    *bh_out = bl + (REL_RB_COLOR(x, rb)==REL_RB_BLACK ? 1 : 0);
+    *bh_out = bl + (RIX_RB_COLOR(x, rb)==RIX_RB_BLACK ? 1 : 0);
     return 1;
 }
 
 static void inorder_collect(struct node *x, vec_t *out){
     if (!x) return;
-    inorder_collect(REL_RB_LEFT(x, g_nodes, rb), out);
+    inorder_collect(RIX_RB_LEFT(x, g_nodes, rb), out);
     vec_insert_unique(out, x->key);
-    inorder_collect(REL_RB_RIGHT(x, g_nodes, rb), out);
+    inorder_collect(RIX_RB_RIGHT(x, g_nodes, rb), out);
 }
 
 static void check_integrity_against_model(struct tree *h, const vec_t *model, const char *tag){
-    if (REL_PTR_FROM_IDX(g_nodes, REL_NIL) != NULL) FAIL("PTR_FROM_IDX(NIL) must be NULL");
-    if (idx_from_ptr(NULL) != REL_NIL) FAIL("IDX_FROM_PTR(NULL) must be NIL");
+    if (RIX_PTR_FROM_IDX(g_nodes, RIX_NIL) != NULL) FAIL("PTR_FROM_IDX(NIL) must be NULL");
+    if (idx_from_ptr(NULL) != RIX_NIL) FAIL("IDX_FROM_PTR(NULL) must be NIL");
 
-    struct node *root = REL_RB_ROOT(h, g_nodes);
-    if (!REL_RB_EMPTY(h)){
-        if (REL_RB_COLOR(root, rb) != REL_RB_BLACK) FAILF("root not black tag=%s", tag);
-        if (REL_RB_PARENT(root, g_nodes, rb) != NULL) FAILF("root parent not NULL tag=%s", tag);
+    struct node *root = RIX_RB_ROOT(h, g_nodes);
+    if (!RIX_RB_EMPTY(h)){
+        if (RIX_RB_COLOR(root, rb) != RIX_RB_BLACK) FAILF("root not black tag=%s", tag);
+        if (RIX_RB_PARENT(root, g_nodes, rb) != NULL) FAILF("root parent not NULL tag=%s", tag);
     }
 
     int bh=0; (void)check_rb_black_height(root, &bh);
@@ -138,7 +138,7 @@ static void check_integrity_against_model(struct tree *h, const vec_t *model, co
 
     size_t cnt=0; long long sum=0;
     struct node *it;
-    REL_RB_FOREACH(it, tree, h, g_nodes){
+    RIX_RB_FOREACH(it, tree, h, g_nodes){
         cnt++; sum += it->key;
         if (np_from_idx(idx_from_ptr(it)) != it) FAIL("PTR<->IDX roundtrip failed");
     }
@@ -147,7 +147,7 @@ static void check_integrity_against_model(struct tree *h, const vec_t *model, co
     if (sum != expected_sum) FAILF("FOREACH sum mismatch tag=%s", tag);
 
     cnt=0; sum=0;
-    REL_RB_FOREACH_REVERSE(it, tree, h, g_nodes){
+    RIX_RB_FOREACH_REVERSE(it, tree, h, g_nodes){
         cnt++; sum += it->key;
     }
     if (cnt != model->n) FAILF("FOREACH_REVERSE count mismatch tag=%s", tag);
@@ -158,10 +158,10 @@ static void check_integrity_against_model(struct tree *h, const vec_t *model, co
 
 static void test_init_empty(void){
     printf("[T] init/empty\n");
-    struct tree h = REL_RB_HEAD_INITIALIZER(h);
-    REL_RB_INIT(&h);
-    if (!REL_RB_EMPTY(&h)) FAIL("INIT not empty");
-    if (REL_RB_ROOT(&h, g_nodes) != NULL) FAIL("ROOT must be NULL");
+    struct tree h = RIX_RB_HEAD_INITIALIZER(h);
+    RIX_RB_INIT(&h);
+    if (!RIX_RB_EMPTY(&h)) FAIL("INIT not empty");
+    if (RIX_RB_ROOT(&h, g_nodes) != NULL) FAIL("ROOT must be NULL");
     vec_t m; vec_init(&m);
     check_integrity_against_model(&h, &m, "empty");
     vec_free(&m);
@@ -169,12 +169,12 @@ static void test_init_empty(void){
 
 static void test_basic_insert_find_minmax_nextprev(void){
     printf("[T] basic insert/find/minmax/nextprev\n");
-    struct tree h; REL_RB_INIT(&h);
+    struct tree h; RIX_RB_INIT(&h);
     vec_t m; vec_init(&m);
 
     for (int i=1;i<=20;i++){
         g_nodes[i-1].key = i;
-        if (REL_RB_INSERT(tree, &h, g_nodes, &g_nodes[i-1]) != NULL) FAIL("unexpected duplicate on fresh insert");
+        if (RIX_RB_INSERT(tree, &h, g_nodes, &g_nodes[i-1]) != NULL) FAIL("unexpected duplicate on fresh insert");
         vec_insert_unique(&m, i);
     }
     check_integrity_against_model(&h, &m, "ins_1_20");
@@ -183,11 +183,11 @@ static void test_basic_insert_find_minmax_nextprev(void){
     struct node key;
     for (int k=0;k<=22;k++){
         key.key = k;
-        struct node *f = REL_RB_FIND(tree, &h, g_nodes, &key);
+        struct node *f = RIX_RB_FIND(tree, &h, g_nodes, &key);
         if ((k>=1 && k<=20) && (!f || f->key!=k)) FAIL("find failed");
         if ((k<1 || k>20) && f) FAIL("find should be NULL");
 
-        struct node *nf = REL_RB_NFIND(tree, &h, g_nodes, &key);
+        struct node *nf = RIX_RB_NFIND(tree, &h, g_nodes, &key);
         int expect;
         if (k<=1) expect = 1;
         else if (k>20) expect = 0;
@@ -196,18 +196,18 @@ static void test_basic_insert_find_minmax_nextprev(void){
         else { if (!nf || nf->key != expect) FAIL("nfind mismatch"); }
     }
 
-    struct node *mn = REL_RB_MIN(tree, &h, g_nodes);
-    struct node *mx = REL_RB_MAX(tree, &h, g_nodes);
+    struct node *mn = RIX_RB_MIN(tree, &h, g_nodes);
+    struct node *mx = RIX_RB_MAX(tree, &h, g_nodes);
     if (!mn || mn->key!=1) FAIL("min mismatch");
     if (!mx || mx->key!=20) FAIL("max mismatch");
     /* 1→…→20 */
     int cur = 1;
-    for (struct node *it = mn; it; it = REL_RB_NEXT(tree, g_nodes, it), cur++){
+    for (struct node *it = mn; it; it = RIX_RB_NEXT(tree, g_nodes, it), cur++){
         if (it->key != cur) FAIL("next chain mismatch");
     }
     /* 20→…→1 */
     cur = 20;
-    for (struct node *it = mx; it; it = REL_RB_PREV(tree, g_nodes, it), cur--){
+    for (struct node *it = mx; it; it = RIX_RB_PREV(tree, g_nodes, it), cur--){
         if (it->key != cur) FAIL("prev chain mismatch");
     }
 
@@ -216,12 +216,12 @@ static void test_basic_insert_find_minmax_nextprev(void){
         int k = dels[i];
         struct node *p = &g_nodes[k-1];
         if (!vec_erase_key(&m, k)) FAIL("model erase failed");
-        if (REL_RB_REMOVE(tree, &h, g_nodes, p) != p) FAIL("remove must return the node itself");
+        if (RIX_RB_REMOVE(tree, &h, g_nodes, p) != p) FAIL("remove must return the node itself");
         check_integrity_against_model(&h, &m, "basic_removal");
     }
 
     for (int k=2;k<=4;k++){
-        struct node *dup = REL_RB_INSERT(tree, &h, g_nodes, &g_nodes[k-1]);
+        struct node *dup = RIX_RB_INSERT(tree, &h, g_nodes, &g_nodes[k-1]);
         if (!dup || dup->key!=k) FAIL("duplicate insert should return existing node");
         check_integrity_against_model(&h, &m, "dup_insert_noop");
     }
@@ -243,15 +243,15 @@ static void test_fuzz(unsigned seed, unsigned N, unsigned ops){
     printf("[T] fuzz seed=%u N=%u ops=%u\n", seed, N, ops);
     xr = seed ? seed : 0xC0FFEE11u;
 
-    struct tree h; REL_RB_INIT(&h);
+    struct tree h; RIX_RB_INIT(&h);
     vec_t m; vec_init(&m);
     present = (unsigned char*)calloc((size_t)N+1, 1);
     if (!present){ perror("calloc present"); exit(1); }
 
     for (unsigned i=1;i<=N;i++){
         g_nodes[i-1].key = (int)i;
-        g_nodes[i-1].rb.rbe_parent = g_nodes[i-1].rb.rbe_left = g_nodes[i-1].rb.rbe_right = REL_NIL;
-        g_nodes[i-1].rb.rbe_color  = REL_RB_RED;
+        g_nodes[i-1].rb.rbe_parent = g_nodes[i-1].rb.rbe_left = g_nodes[i-1].rb.rbe_right = RIX_NIL;
+        g_nodes[i-1].rb.rbe_color  = RIX_RB_RED;
     }
 
     for (unsigned step=0; step<ops; step++){
@@ -260,7 +260,7 @@ static void test_fuzz(unsigned seed, unsigned N, unsigned ops){
             unsigned idx = rnd_in(1,N);
             struct node *p = &g_nodes[idx-1];
 
-            struct node *ret = REL_RB_INSERT(tree, &h, g_nodes, p);
+            struct node *ret = RIX_RB_INSERT(tree, &h, g_nodes, p);
             if (present[idx]){
                 if (!ret || ret != p) FAIL("duplicate insert must return existing node");
             } else {
@@ -273,19 +273,19 @@ static void test_fuzz(unsigned seed, unsigned N, unsigned ops){
             if (!present[idx]) continue;
             struct node *p = &g_nodes[idx-1];
             if (!vec_erase_key(&m, p->key)) FAIL("model erase failed (fuzz)");
-            if (REL_RB_REMOVE(tree, &h, g_nodes, p) != p) FAIL("remove returns self");
+            if (RIX_RB_REMOVE(tree, &h, g_nodes, p) != p) FAIL("remove returns self");
             present[idx]=0;
         } else {
             int k = (int)rnd_in(1, N*2);
             struct node key = { .key = k };
-            struct node *f  = REL_RB_FIND(tree, &h, g_nodes, &key);
+            struct node *f  = RIX_RB_FIND(tree, &h, g_nodes, &key);
             size_t pos = vec_lower_bound(&m, k);
             if (pos < m.n && m.a[pos]==k){
                 if (!f || f->key!=k) FAIL("fuzz FIND mismatch");
             } else {
                 if (f) FAIL("fuzz FIND should be NULL");
             }
-            struct node *nf = REL_RB_NFIND(tree, &h, g_nodes, &key);
+            struct node *nf = RIX_RB_NFIND(tree, &h, g_nodes, &key);
             if (pos == m.n){
                 if (nf) FAIL("fuzz NFIND should be NULL");
             } else {
@@ -323,6 +323,6 @@ int main(int argc, char **argv){
     test_fuzz(seed, N, ops);
 
     free(g_nodes);
-    printf("ALL REL_RB TESTS PASSED ✅\n");
+    printf("ALL RIX_RB TESTS PASSED ✅\n");
     return 0;
 }

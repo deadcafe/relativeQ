@@ -4,7 +4,7 @@
  * Copyright (c) 2025 deadcafe.beef@gmail.com
  * All rights reserved.
  *
- * Unit tests for rel_hash32.h
+ * Unit tests for rix_hash32.h
  */
 
 #include <stdio.h>
@@ -13,7 +13,7 @@
 #include <stdint.h>
 #include <assert.h>
 
-#include "rel_hash32.h"
+#include "rix_hash32.h"
 
 /*---------------------------------------------------------------------------
  * Test node definition
@@ -30,17 +30,17 @@ typedef struct mynode_s {
 #define NB_NODES     (NB_BUCKETS * 16 / 2)  /* ~50% load factor */
 #define INVALID_KEY  0xFFFFFFFFu  /* sentinel; never used as a real key */
 
-REL_HASH32_HEAD(myht32);
-REL_HASH32_GENERATE(myht32, mynode_t, key, INVALID_KEY)
+RIX_HASH32_HEAD(myht32);
+RIX_HASH32_GENERATE(myht32, mynode_t, key, INVALID_KEY)
 
 static struct myht32              head;
-static struct rel_hash32_bucket_s buckets[NB_BUCKETS];
+static struct rix_hash32_bucket_s buckets[NB_BUCKETS];
 static mynode_t                   nodes[NB_NODES];
 
 static void
 reset_table(void)
 {
-    REL_HASH32_INIT(myht32, &head, buckets, NB_BUCKETS);
+    RIX_HASH32_INIT(myht32, &head, buckets, NB_BUCKETS);
     memset(nodes, 0, sizeof(nodes));
 }
 
@@ -62,14 +62,14 @@ test_insert_find(void)
     nodes[0].key = 42;
     nodes[0].val = 99;
 
-    mynode_t *r = REL_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[0]);
+    mynode_t *r = RIX_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[0]);
     if (r != NULL)
         FAIL("insert returned non-NULL: %p", (void *)r);
 
     if (head.rhh_nb != 1)
         FAIL("rhh_nb expected 1, got %u", head.rhh_nb);
 
-    mynode_t *f = REL_HASH32_FIND(myht32, &head, buckets, nodes, 42);
+    mynode_t *f = RIX_HASH32_FIND(myht32, &head, buckets, nodes, 42);
     if (f != &nodes[0])
         FAIL("find returned wrong node: %p vs %p", (void *)f, (void *)&nodes[0]);
 
@@ -89,9 +89,9 @@ test_find_miss(void)
     reset_table();
 
     nodes[0].key = 10;
-    REL_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[0]);
+    RIX_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[0]);
 
-    mynode_t *f = REL_HASH32_FIND(myht32, &head, buckets, nodes, 999);
+    mynode_t *f = RIX_HASH32_FIND(myht32, &head, buckets, nodes, 999);
     if (f != NULL)
         FAIL("find_miss returned non-NULL: %p", (void *)f);
 
@@ -110,11 +110,11 @@ test_duplicate_insert(void)
     nodes[0].key = 7;
     nodes[1].key = 7;
 
-    mynode_t *r0 = REL_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[0]);
+    mynode_t *r0 = RIX_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[0]);
     if (r0 != NULL)
         FAIL("first insert returned non-NULL: %p", (void *)r0);
 
-    mynode_t *r1 = REL_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[1]);
+    mynode_t *r1 = RIX_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[1]);
     if (r1 != &nodes[0])
         FAIL("duplicate insert returned %p, expected %p",
              (void *)r1, (void *)&nodes[0]);
@@ -135,16 +135,16 @@ test_remove(void)
     reset_table();
 
     nodes[0].key = 55;
-    REL_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[0]);
+    RIX_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[0]);
 
-    mynode_t *r = REL_HASH32_REMOVE(myht32, &head, buckets, nodes, &nodes[0]);
+    mynode_t *r = RIX_HASH32_REMOVE(myht32, &head, buckets, nodes, &nodes[0]);
     if (r != &nodes[0])
         FAIL("remove returned wrong node: %p", (void *)r);
 
     if (head.rhh_nb != 0)
         FAIL("rhh_nb expected 0 after remove, got %u", head.rhh_nb);
 
-    mynode_t *f = REL_HASH32_FIND(myht32, &head, buckets, nodes, 55);
+    mynode_t *f = RIX_HASH32_FIND(myht32, &head, buckets, nodes, 55);
     if (f != NULL)
         FAIL("find after remove returned non-NULL: %p", (void *)f);
 
@@ -163,7 +163,7 @@ test_remove_miss(void)
     nodes[0].key = 3;
     /* not inserted */
 
-    mynode_t *r = REL_HASH32_REMOVE(myht32, &head, buckets, nodes, &nodes[0]);
+    mynode_t *r = RIX_HASH32_REMOVE(myht32, &head, buckets, nodes, &nodes[0]);
     if (r != NULL)
         FAIL("remove_miss returned non-NULL: %p", (void *)r);
 
@@ -179,20 +179,20 @@ test_init_invalid_key(void)
     printf("[test_init_invalid_key]\n");
     reset_table();
 
-    /* After init, every key slot must hold INVALID_KEY and every idx REL_NIL */
+    /* After init, every key slot must hold INVALID_KEY and every idx RIX_NIL */
     unsigned bad_key = 0, bad_idx = 0;
     for (unsigned b = 0; b < NB_BUCKETS; b++) {
-        for (unsigned s = 0; s < REL_HASH_BUCKET_ENTRY_SZ; s++) {
+        for (unsigned s = 0; s < RIX_HASH_BUCKET_ENTRY_SZ; s++) {
             if (buckets[b].key[s] != INVALID_KEY) bad_key++;
-            if (buckets[b].idx[s] != (uint32_t)REL_NIL) bad_idx++;
+            if (buckets[b].idx[s] != (uint32_t)RIX_NIL) bad_idx++;
         }
     }
     if (bad_key)
         FAIL("init: %u slots have key != INVALID_KEY", bad_key);
     if (bad_idx)
-        FAIL("init: %u slots have idx != REL_NIL", bad_idx);
+        FAIL("init: %u slots have idx != RIX_NIL", bad_idx);
 
-    PASS("name_init fills all slots with invalid_key / REL_NIL");
+    PASS("name_init fills all slots with invalid_key / RIX_NIL");
 }
 
 /*---------------------------------------------------------------------------
@@ -205,14 +205,14 @@ test_remove_restores_invalid_key(void)
     reset_table();
 
     nodes[0].key = 42;
-    REL_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[0]);
-    REL_HASH32_REMOVE(myht32, &head, buckets, nodes, &nodes[0]);
+    RIX_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[0]);
+    RIX_HASH32_REMOVE(myht32, &head, buckets, nodes, &nodes[0]);
 
     /* All key slots must be INVALID_KEY again */
     unsigned bad = 0;
     for (unsigned b = 0; b < NB_BUCKETS; b++)
-        for (unsigned s = 0; s < REL_HASH_BUCKET_ENTRY_SZ; s++)
-            if (buckets[b].idx[s] == (uint32_t)REL_NIL &&
+        for (unsigned s = 0; s < RIX_HASH_BUCKET_ENTRY_SZ; s++)
+            if (buckets[b].idx[s] == (uint32_t)RIX_NIL &&
                 buckets[b].key[s] != INVALID_KEY)
                 bad++;
     if (bad)
@@ -233,19 +233,19 @@ test_key_zero(void)
     nodes[0].key = 0;
     nodes[0].val = 123;
 
-    mynode_t *r = REL_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[0]);
+    mynode_t *r = RIX_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[0]);
     if (r != NULL)
         FAIL("insert key=0 returned non-NULL: %p", (void *)r);
 
-    mynode_t *f = REL_HASH32_FIND(myht32, &head, buckets, nodes, 0);
+    mynode_t *f = RIX_HASH32_FIND(myht32, &head, buckets, nodes, 0);
     if (f != &nodes[0])
         FAIL("find key=0 returned wrong node: %p", (void *)f);
 
-    mynode_t *rem = REL_HASH32_REMOVE(myht32, &head, buckets, nodes, &nodes[0]);
+    mynode_t *rem = RIX_HASH32_REMOVE(myht32, &head, buckets, nodes, &nodes[0]);
     if (rem != &nodes[0])
         FAIL("remove key=0 returned wrong node: %p", (void *)rem);
 
-    mynode_t *f2 = REL_HASH32_FIND(myht32, &head, buckets, nodes, 0);
+    mynode_t *f2 = RIX_HASH32_FIND(myht32, &head, buckets, nodes, 0);
     if (f2 != NULL)
         FAIL("find key=0 after remove returned non-NULL: %p", (void *)f2);
 
@@ -273,13 +273,13 @@ test_walk(void)
     /* Insert 8 nodes with distinct keys */
     for (int i = 0; i < 8; i++) {
         nodes[i].key = (uint32_t)(100 + i);
-        mynode_t *r  = REL_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[i]);
+        mynode_t *r  = RIX_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[i]);
         if (r != NULL)
             FAIL("insert[%d] returned non-NULL", i);
     }
 
     unsigned cnt = 0;
-    int wret = REL_HASH32_WALK(myht32, &head, buckets, nodes, walk_cb, &cnt);
+    int wret = RIX_HASH32_WALK(myht32, &head, buckets, nodes, walk_cb, &cnt);
     if (wret != 0)
         FAIL("walk returned non-zero: %d", wret);
     if (cnt != 8)
@@ -302,7 +302,7 @@ test_bulk(void)
     for (unsigned i = 0; i < NB_NODES; i++) {
         nodes[i].key = i + 1;   /* avoid key=0 here */
         nodes[i].val = i * 2;
-        mynode_t *r = REL_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[i]);
+        mynode_t *r = RIX_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[i]);
         if (r == NULL) {
             inserted++;
         } else if (r == &nodes[i]) {
@@ -318,7 +318,7 @@ test_bulk(void)
     /* Verify all inserted nodes are findable */
     unsigned found = 0;
     for (unsigned i = 0; i < inserted; i++) {
-        mynode_t *f = REL_HASH32_FIND(myht32, &head, buckets, nodes, nodes[i].key);
+        mynode_t *f = RIX_HASH32_FIND(myht32, &head, buckets, nodes, nodes[i].key);
         if (f == NULL)
             FAIL("find failed for key=%u (i=%u)", nodes[i].key, i);
         if (f->val != nodes[i].val)
@@ -344,20 +344,20 @@ test_staged_x4(void)
     for (int i = 0; i < 4; i++) {
         nodes[i].key = (uint32_t)(200 + i);
         nodes[i].val = (uint32_t)(i + 1);
-        mynode_t *r  = REL_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[i]);
+        mynode_t *r  = RIX_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[i]);
         if (r != NULL)
             FAIL("insert[%d] failed", i);
     }
 
     /* Staged x4 find */
-    struct rel_hash32_find_ctx_s ctx[4];
+    struct rix_hash32_find_ctx_s ctx[4];
     uint32_t keys[4] = { 200, 201, 202, 203 };
     mynode_t *results[4];
 
-    REL_HASH32_HASH_KEY4(myht32, ctx, &head, buckets, keys);
-    REL_HASH32_SCAN_BK4(myht32, ctx, &head, buckets);
-    REL_HASH32_PREFETCH_NODE4(myht32, ctx, nodes);
-    REL_HASH32_CMP_KEY4(myht32, ctx, nodes, results);
+    RIX_HASH32_HASH_KEY4(myht32, ctx, &head, buckets, keys);
+    RIX_HASH32_SCAN_BK4(myht32, ctx, &head, buckets);
+    RIX_HASH32_PREFETCH_NODE4(myht32, ctx, nodes);
+    RIX_HASH32_CMP_KEY4(myht32, ctx, nodes, results);
 
     for (int i = 0; i < 4; i++) {
         if (results[i] != &nodes[i])
@@ -380,13 +380,13 @@ test_remove_all(void)
     int n = 32;
     for (int i = 0; i < n; i++) {
         nodes[i].key = (uint32_t)(500 + i);
-        mynode_t *r  = REL_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[i]);
+        mynode_t *r  = RIX_HASH32_INSERT(myht32, &head, buckets, nodes, &nodes[i]);
         if (r != NULL)
             FAIL("insert[%d] failed", i);
     }
 
     for (int i = 0; i < n; i++) {
-        mynode_t *r = REL_HASH32_REMOVE(myht32, &head, buckets, nodes, &nodes[i]);
+        mynode_t *r = RIX_HASH32_REMOVE(myht32, &head, buckets, nodes, &nodes[i]);
         if (r != &nodes[i])
             FAIL("remove[%d] returned %p, expected %p",
                  i, (void *)r, (void *)&nodes[i]);
@@ -397,7 +397,7 @@ test_remove_all(void)
 
     /* Table should be empty: all finds return NULL */
     for (int i = 0; i < n; i++) {
-        mynode_t *f = REL_HASH32_FIND(myht32, &head, buckets, nodes, nodes[i].key);
+        mynode_t *f = RIX_HASH32_FIND(myht32, &head, buckets, nodes, nodes[i].key);
         if (f != NULL)
             FAIL("find after remove_all key=%u returned non-NULL",
                  nodes[i].key);
@@ -412,9 +412,9 @@ test_remove_all(void)
 int
 main(void)
 {
-    rel_hash_arch_init();
+    rix_hash_arch_init();
 
-    printf("=== rel_hash32 tests ===\n");
+    printf("=== rix_hash32 tests ===\n");
 
     test_insert_find();
     test_find_miss();

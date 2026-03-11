@@ -1,11 +1,14 @@
-rel_queue_tree.h
+librix — Relative Index Library
 
-Index-based BSD queues & trees for shared memory.
-This single header provides relative (index-pointing) implementations of classic BSD data structures—SLIST, LIST, STAILQ, TAILQ, CIRCLEQ, and a Red-Black tree—so you can store them directly in shared memory or mmapped files without embedding raw pointers.
+Index-based data structures for shared memory.
+This library provides relative (index-pointing) implementations of classic BSD
+data structures—SLIST, LIST, STAILQ, TAILQ, CIRCLEQ, Red-Black tree, and
+high-performance cuckoo hash tables—so you can store them directly in shared
+memory or mmapped files without embedding raw pointers.
 
 Pointer-free storage: heads and nodes store unsigned indices only.
 
-1-origin indices: valid range 1..UINT_MAX-1; 0 is REL_NIL (end/sentinel).
+1-origin indices: valid range 1..UINT_MAX-1; 0 is RIX_NIL (end/sentinel).
 
 Per-call base pointer: APIs take base (your element array) to convert index⇄pointer on the fly.
 
@@ -21,17 +24,17 @@ Getting Started
 
 API Overview
 
-REL_SLIST
+RIX_SLIST
 
-REL_LIST
+RIX_LIST
 
-REL_STAILQ
+RIX_STAILQ
 
-REL_TAILQ
+RIX_TAILQ
 
-REL_CIRCLEQ
+RIX_CIRCLEQ
 
-REL_RB (Red-Black tree)
+RIX_RB (Red-Black tree)
 
 Build
 
@@ -57,9 +60,9 @@ Mixed 32/64-bit processes mapping the same region avoid pointer-size issues.
 
 Design
 
-Index scheme: unsigned with REL_NIL = 0.
+Index scheme: unsigned with RIX_NIL = 0.
 
-1-origin mapping: REL_IDX_FROM_PTR(base,p) returns (p - base) + 1; REL_PTR_FROM_IDX(base,i) returns (i ? base + (i-1) : NULL).
+1-origin mapping: RIX_IDX_FROM_PTR(base,p) returns (p - base) + 1; RIX_PTR_FROM_IDX(base,i) returns (i ? base + (i-1) : NULL).
 
 No pointers in storage: heads and link fields are indices only.
 
@@ -69,69 +72,69 @@ C11: portable macros; debug helpers available.
 
 Common helpers included:
 
-REL_NIL, REL_IDX_FROM_PTR(base,p), REL_PTR_FROM_IDX(base,i),
-REL_IDX_IS_NIL(i), REL_IDX_IS_VALID(i,cap),
-REL_MIN, REL_MAX, REL_COUNT_OF, REL_OFFSET_OF, REL_CONTAINER_OF,
-REL_SWAP, REL_CLAMP, REL_ASSERT, REL_STATIC_ASSERT
+RIX_NIL, RIX_IDX_FROM_PTR(base,p), RIX_PTR_FROM_IDX(base,i),
+RIX_IDX_IS_NIL(i), RIX_IDX_IS_VALID(i,cap),
+RIX_MIN, RIX_MAX, RIX_COUNT_OF, RIX_OFFSET_OF, RIX_CONTAINER_OF,
+RIX_SWAP, RIX_CLAMP, RIX_ASSERT, RIX_STATIC_ASSERT
 
 
 Max storable elements with unsigned is UINT_MAX - 1.
 
 Getting Started
-#include "rel_queue_tree.h"
+#include "rix_queue_tree.h"
 
 struct node {
     int value;
-    REL_TAILQ_ENTRY(node) link;     /* choose one container field */
+    RIX_TAILQ_ENTRY(node) link;     /* choose one container field */
 };
 
-REL_TAILQ_HEAD(qhead);
+RIX_TAILQ_HEAD(qhead);
 struct qhead h;
 
 struct node *base;  /* array in shared memory / mmap */
 
 void demo(void) {
-    REL_TAILQ_INIT(&h);
+    RIX_TAILQ_INIT(&h);
 
     struct node *a = &base[0], *b = &base[1];
     a->value = 10; b->value = 20;
 
-    REL_TAILQ_INSERT_HEAD(&h, base, a, link);
-    REL_TAILQ_INSERT_TAIL(&h, base, b, link);
+    RIX_TAILQ_INSERT_HEAD(&h, base, a, link);
+    RIX_TAILQ_INSERT_TAIL(&h, base, b, link);
 
-    for (struct node *it = REL_TAILQ_FIRST(&h, base); it;
-         it = REL_TAILQ_NEXT(&h, base, it, link)) {
+    for (struct node *it = RIX_TAILQ_FIRST(&h, base); it;
+         it = RIX_TAILQ_NEXT(&h, base, it, link)) {
         /* use it->value */
     }
 
-    REL_TAILQ_REMOVE(&h, base, a, link);
+    RIX_TAILQ_REMOVE(&h, base, a, link);
 }
 
 Red-Black tree quick start
 struct rbnode {
     int key;
-    REL_RB_ENTRY(rbnode) rb;
+    RIX_RB_ENTRY(rbnode) rb;
 };
 
 static int rb_cmp(const struct rbnode *a, const struct rbnode *b) {
     return (a->key > b->key) - (a->key < b->key);
 }
 
-REL_RB_HEAD(rhead);
-REL_RB_PROTOTYPE(rbt, rbnode, rb, rb_cmp)
-REL_RB_GENERATE (rbt, rbnode, rb, rb_cmp)
+RIX_RB_HEAD(rhead);
+RIX_RB_PROTOTYPE(rbt, rbnode, rb, rb_cmp)
+RIX_RB_GENERATE (rbt, rbnode, rb, rb_cmp)
 
 void rbt_demo(struct rhead *rh, struct rbnode *base) {
-    REL_RB_INIT(rh);
+    RIX_RB_INIT(rh);
 
     base[0].key = 42;
-    REL_RB_INSERT(rbt, rh, base, &base[0]);
+    RIX_RB_INSERT(rbt, rh, base, &base[0]);
 
     struct rbnode probe = {.key = 42};
-    struct rbnode *hit = REL_RB_FIND(rbt, rh, base, &probe);
+    struct rbnode *hit = RIX_RB_FIND(rbt, rh, base, &probe);
 
-    for (struct rbnode *it = REL_RB_MIN(rbt, rh, base);
-         it; it = REL_RB_NEXT(rbt, base, it)) {
+    for (struct rbnode *it = RIX_RB_MIN(rbt, rh, base);
+         it; it = RIX_RB_NEXT(rbt, base, it)) {
         /* ascending traversal */
     }
 }
@@ -140,269 +143,269 @@ API Overview
 
 Below, type is your element struct, field is the embedded link field, base is type* array, and head is the container head.
 
-REL_SLIST
+RIX_SLIST
 
 Declarations
 
-REL_SLIST_ENTRY(type)
+RIX_SLIST_ENTRY(type)
 
-REL_SLIST_HEAD(name)
+RIX_SLIST_HEAD(name)
 
-REL_SLIST_HEAD_INITIALIZER(var)
+RIX_SLIST_HEAD_INITIALIZER(var)
 
 Init & queries
 
-REL_SLIST_INIT(head)
+RIX_SLIST_INIT(head)
 
-REL_SLIST_EMPTY(head)
+RIX_SLIST_EMPTY(head)
 
-REL_SLIST_FIRST(head, base)
+RIX_SLIST_FIRST(head, base)
 
-REL_SLIST_NEXT(elm, base, field)
+RIX_SLIST_NEXT(elm, base, field)
 
 Modifiers
 
-REL_SLIST_INSERT_HEAD(head, base, elm, field)
+RIX_SLIST_INSERT_HEAD(head, base, elm, field)
 
-REL_SLIST_INSERT_AFTER(base, slistelm, elm, field)
+RIX_SLIST_INSERT_AFTER(base, slistelm, elm, field)
 
-REL_SLIST_REMOVE_HEAD(head, base, field)
+RIX_SLIST_REMOVE_HEAD(head, base, field)
 
-REL_SLIST_REMOVE_AFTER(base, elm, field)
+RIX_SLIST_REMOVE_AFTER(base, elm, field)
 
-REL_SLIST_REMOVE(head, base, elm, type, field) (linear search)
+RIX_SLIST_REMOVE(head, base, elm, type, field) (linear search)
 
 Iteration
 
-REL_SLIST_FOREACH(var, head, base, field)
+RIX_SLIST_FOREACH(var, head, base, field)
 
-REL_SLIST_FOREACH_SAFE(var, head, base, field, tvar)
+RIX_SLIST_FOREACH_SAFE(var, head, base, field, tvar)
 
-REL_SLIST_FOREACH_PREVINDEX(var, varidxp, head, base, field) (prev index pointer idiom)
+RIX_SLIST_FOREACH_PREVINDEX(var, varidxp, head, base, field) (prev index pointer idiom)
 
-REL_LIST
+RIX_LIST
 
 Declarations
 
-REL_LIST_ENTRY(type)
+RIX_LIST_ENTRY(type)
 
-REL_LIST_HEAD(name)
+RIX_LIST_HEAD(name)
 
-REL_LIST_HEAD_INITIALIZER(var)
+RIX_LIST_HEAD_INITIALIZER(var)
 
 Init & queries
 
-REL_LIST_INIT(head)
+RIX_LIST_INIT(head)
 
-REL_LIST_EMPTY(head)
+RIX_LIST_EMPTY(head)
 
-REL_LIST_FIRST(head, base)
+RIX_LIST_FIRST(head, base)
 
-REL_LIST_NEXT(elm, base, field)
+RIX_LIST_NEXT(elm, base, field)
 
 Modifiers
 
-REL_LIST_INSERT_HEAD(head, base, elm, field)
+RIX_LIST_INSERT_HEAD(head, base, elm, field)
 
-REL_LIST_INSERT_AFTER(head, base, listelm, elm, field)
+RIX_LIST_INSERT_AFTER(head, base, listelm, elm, field)
 
-REL_LIST_INSERT_BEFORE(head, base, listelm, elm, field)
+RIX_LIST_INSERT_BEFORE(head, base, listelm, elm, field)
 
-REL_LIST_REMOVE(head, base, elm, field)
+RIX_LIST_REMOVE(head, base, elm, field)
 
-REL_LIST_SWAP(head1, head2, base, type, field)
+RIX_LIST_SWAP(head1, head2, base, type, field)
 
 Iteration
 
-REL_LIST_FOREACH(var, head, base, field)
+RIX_LIST_FOREACH(var, head, base, field)
 
-REL_LIST_FOREACH_SAFE(var, head, base, field, tvar)
+RIX_LIST_FOREACH_SAFE(var, head, base, field, tvar)
 
-REL_STAILQ
+RIX_STAILQ
 
 Declarations
 
-REL_STAILQ_ENTRY(type)
+RIX_STAILQ_ENTRY(type)
 
-REL_STAILQ_HEAD(name)
+RIX_STAILQ_HEAD(name)
 
-REL_STAILQ_HEAD_INITIALIZER(var)
+RIX_STAILQ_HEAD_INITIALIZER(var)
 
 Init & queries
 
-REL_STAILQ_INIT(head)
+RIX_STAILQ_INIT(head)
 
-REL_STAILQ_EMPTY(head)
+RIX_STAILQ_EMPTY(head)
 
-REL_STAILQ_FIRST(head, base)
+RIX_STAILQ_FIRST(head, base)
 
-REL_STAILQ_LAST(head, base)
+RIX_STAILQ_LAST(head, base)
 
-REL_STAILQ_NEXT(head, base, elm, field)
+RIX_STAILQ_NEXT(head, base, elm, field)
 
 Modifiers
 
-REL_STAILQ_INSERT_HEAD(head, base, elm, field)
+RIX_STAILQ_INSERT_HEAD(head, base, elm, field)
 
-REL_STAILQ_INSERT_TAIL(head, base, elm, field)
+RIX_STAILQ_INSERT_TAIL(head, base, elm, field)
 
-REL_STAILQ_INSERT_AFTER(head, base, tqelm, elm, field)
+RIX_STAILQ_INSERT_AFTER(head, base, tqelm, elm, field)
 
-REL_STAILQ_REMOVE_HEAD(head, base, field)
+RIX_STAILQ_REMOVE_HEAD(head, base, field)
 
-REL_STAILQ_REMOVE_AFTER(head, base, elm, field)
+RIX_STAILQ_REMOVE_AFTER(head, base, elm, field)
 
-REL_STAILQ_REMOVE(head, base, elm, type, field) (linear search)
+RIX_STAILQ_REMOVE(head, base, elm, type, field) (linear search)
 
-REL_STAILQ_REMOVE_HEAD_UNTIL(head, base, elm, field)
+RIX_STAILQ_REMOVE_HEAD_UNTIL(head, base, elm, field)
 
-REL_STAILQ_CONCAT(head1, head2, base, field)
+RIX_STAILQ_CONCAT(head1, head2, base, field)
 
-REL_STAILQ_SWAP(head1, head2, base)
+RIX_STAILQ_SWAP(head1, head2, base)
 
 Iteration
 
-REL_STAILQ_FOREACH(var, head, base, field)
+RIX_STAILQ_FOREACH(var, head, base, field)
 
-REL_STAILQ_FOREACH_SAFE(var, head, base, field, tvar)
+RIX_STAILQ_FOREACH_SAFE(var, head, base, field, tvar)
 
-REL_TAILQ
+RIX_TAILQ
 
 Declarations
 
-REL_TAILQ_ENTRY(type)
+RIX_TAILQ_ENTRY(type)
 
-REL_TAILQ_HEAD(name)
+RIX_TAILQ_HEAD(name)
 
-REL_TAILQ_HEAD_INITIALIZER(var)
+RIX_TAILQ_HEAD_INITIALIZER(var)
 
 Init & queries
 
-REL_TAILQ_INIT(head) / REL_TAILQ_RESET(head)
+RIX_TAILQ_INIT(head) / RIX_TAILQ_RESET(head)
 
-REL_TAILQ_EMPTY(head)
+RIX_TAILQ_EMPTY(head)
 
-REL_TAILQ_FIRST(head, base)
+RIX_TAILQ_FIRST(head, base)
 
-REL_TAILQ_LAST(head, base)
+RIX_TAILQ_LAST(head, base)
 
-REL_TAILQ_NEXT(head, base, elm, field)
+RIX_TAILQ_NEXT(head, base, elm, field)
 
-REL_TAILQ_PREV(head, base, elm, field)
+RIX_TAILQ_PREV(head, base, elm, field)
 
 Modifiers
 
-REL_TAILQ_INSERT_HEAD(head, base, elm, field)
+RIX_TAILQ_INSERT_HEAD(head, base, elm, field)
 
-REL_TAILQ_INSERT_TAIL(head, base, elm, field)
+RIX_TAILQ_INSERT_TAIL(head, base, elm, field)
 
-REL_TAILQ_INSERT_AFTER(head, base, listelm, elm, field)
+RIX_TAILQ_INSERT_AFTER(head, base, listelm, elm, field)
 
-REL_TAILQ_INSERT_BEFORE(head, base, listelm, elm, field)
+RIX_TAILQ_INSERT_BEFORE(head, base, listelm, elm, field)
 
-REL_TAILQ_REMOVE(head, base, elm, field)
+RIX_TAILQ_REMOVE(head, base, elm, field)
 
-REL_TAILQ_CONCAT(head1, head2, base, field)
+RIX_TAILQ_CONCAT(head1, head2, base, field)
 
-REL_TAILQ_SWAP(head1, head2, base)
+RIX_TAILQ_SWAP(head1, head2, base)
 
 Iteration
 
-REL_TAILQ_FOREACH(var, head, base, field)
+RIX_TAILQ_FOREACH(var, head, base, field)
 
-REL_TAILQ_FOREACH_SAFE(var, head, base, field, tvar)
+RIX_TAILQ_FOREACH_SAFE(var, head, base, field, tvar)
 
-REL_TAILQ_FOREACH_REVERSE(var, head, base, field)
+RIX_TAILQ_FOREACH_REVERSE(var, head, base, field)
 
-REL_CIRCLEQ
+RIX_CIRCLEQ
 
 Declarations
 
-REL_CIRCLEQ_ENTRY(type)
+RIX_CIRCLEQ_ENTRY(type)
 
-REL_CIRCLEQ_HEAD(name)
+RIX_CIRCLEQ_HEAD(name)
 
-REL_CIRCLEQ_HEAD_INITIALIZER(var)
+RIX_CIRCLEQ_HEAD_INITIALIZER(var)
 
 Init & queries
 
-REL_CIRCLEQ_INIT(head)
+RIX_CIRCLEQ_INIT(head)
 
-REL_CIRCLEQ_EMPTY(head)
+RIX_CIRCLEQ_EMPTY(head)
 
-REL_CIRCLEQ_FIRST(head, base)
+RIX_CIRCLEQ_FIRST(head, base)
 
-REL_CIRCLEQ_LAST(head, base, field)
+RIX_CIRCLEQ_LAST(head, base, field)
 
-REL_CIRCLEQ_NEXT(elm, base, field)
+RIX_CIRCLEQ_NEXT(elm, base, field)
 
-REL_CIRCLEQ_PREV(elm, base, field)
+RIX_CIRCLEQ_PREV(elm, base, field)
 
 Modifiers
 
-REL_CIRCLEQ_INSERT_HEAD(head, base, elm, field)
+RIX_CIRCLEQ_INSERT_HEAD(head, base, elm, field)
 
-REL_CIRCLEQ_INSERT_TAIL(head, base, elm, field)
+RIX_CIRCLEQ_INSERT_TAIL(head, base, elm, field)
 
-REL_CIRCLEQ_INSERT_AFTER(head, base, listelm, elm, field)
+RIX_CIRCLEQ_INSERT_AFTER(head, base, listelm, elm, field)
 
-REL_CIRCLEQ_INSERT_BEFORE(head, base, listelm, elm, field)
+RIX_CIRCLEQ_INSERT_BEFORE(head, base, listelm, elm, field)
 
-REL_CIRCLEQ_REMOVE(head, base, elm, field)
+RIX_CIRCLEQ_REMOVE(head, base, elm, field)
 
 Iteration (one full lap)
 
-REL_CIRCLEQ_FOREACH(var, head, base, field)
+RIX_CIRCLEQ_FOREACH(var, head, base, field)
 
-REL_CIRCLEQ_FOREACH_REVERSE(var, head, base, field)
+RIX_CIRCLEQ_FOREACH_REVERSE(var, head, base, field)
 
-REL_CIRCLEQ_FOREACH_SAFE(var, head, base, field, tvar)
+RIX_CIRCLEQ_FOREACH_SAFE(var, head, base, field, tvar)
 
-REL_CIRCLEQ_FOREACH_REVERSE_SAFE(var, head, base, field, tvar)
+RIX_CIRCLEQ_FOREACH_REVERSE_SAFE(var, head, base, field, tvar)
 
-REL_RB (Red-Black Tree)
+RIX_RB (Red-Black Tree)
 
 Declarations & codegen
 
-REL_RB_ENTRY(type)
+RIX_RB_ENTRY(type)
 
-REL_RB_HEAD(name)
+RIX_RB_HEAD(name)
 
-REL_RB_HEAD_INITIALIZER(var)
+RIX_RB_HEAD_INITIALIZER(var)
 
-REL_RB_INIT(head)
+RIX_RB_INIT(head)
 
-REL_RB_PROTOTYPE(name, type, field, cmp)
+RIX_RB_PROTOTYPE(name, type, field, cmp)
 
-REL_RB_GENERATE (name, type, field, cmp) → emits full RB implementation using indices
+RIX_RB_GENERATE (name, type, field, cmp) → emits full RB implementation using indices
 
 Operations
 
-REL_RB_INSERT(name, head, base, elm) → returns existing node on duplicate, else NULL
+RIX_RB_INSERT(name, head, base, elm) → returns existing node on duplicate, else NULL
 
-REL_RB_REMOVE(name, head, base, elm) → returns removed elm
+RIX_RB_REMOVE(name, head, base, elm) → returns removed elm
 
-REL_RB_FIND(name, head, base, key)
+RIX_RB_FIND(name, head, base, key)
 
-REL_RB_NFIND(name, head, base, key) (lower bound)
+RIX_RB_NFIND(name, head, base, key) (lower bound)
 
-REL_RB_MIN(name, head, base), REL_RB_MAX(name, head, base)
+RIX_RB_MIN(name, head, base), RIX_RB_MAX(name, head, base)
 
-REL_RB_NEXT(name, base, elm), REL_RB_PREV(name, base, elm)
+RIX_RB_NEXT(name, base, elm), RIX_RB_PREV(name, base, elm)
 
 Iteration
 
-REL_RB_FOREACH(x, name, head, base)
+RIX_RB_FOREACH(x, name, head, base)
 
-REL_RB_FOREACH_REVERSE(x, name, head, base)
+RIX_RB_FOREACH_REVERSE(x, name, head, base)
 
 Comparator
 
 int cmp(const type *a, const type *b);  /* strict weak ordering */
 
-REL_HASH (Cuckoo Hash Table)
+RIX_HASH (Cuckoo Hash Table)
 
-A high-performance, index-based cuckoo hash table in hashtbl/rel_hash.h.
+A high-performance, index-based cuckoo hash table in hashtbl/rix_hash.h.
 Stores fingerprints and 1-origin node indices in bucket arrays; no raw pointers.
 Suitable for shared memory and file-backed regions.
 
@@ -428,7 +431,7 @@ Kickout uses the XOR symmetry: alt(bk) = (bk ^ fp_bk) & mask.
 
 Getting Started
 
-  #include "hashtbl/rel_hash.h"
+  #include "hashtbl/rix_hash.h"
 
   /* 1. Typedef the element struct (bare identifier required by macros) */
   typedef struct mynode mynode;
@@ -438,24 +441,24 @@ Getting Started
   };
 
   /* 2. Declare head – use the SAME name for HEAD and GENERATE */
-  REL_HASH_HEAD(myht);
+  RIX_HASH_HEAD(myht);
 
   /* 3. Provide a hash function */
-  static union rel_hash_hash_u my_hash(const void *key) { ... }
+  static union rix_hash_hash_u my_hash(const void *key) { ... }
 
   /* 4. Generate the full API */
-  REL_HASH_GENERATE(myht, mynode, key, 128, my_hash)
+  RIX_HASH_GENERATE(myht, mynode, key, 128, my_hash)
 
   /* 5. Initialise once at program startup */
-  rel_hash_arch_init();
+  rix_hash_arch_init();
 
   /* 6. Allocate 64-byte-aligned bucket array and node array */
-  struct rel_hash_bucket_s *buckets = aligned_alloc(64, NB_BK * sizeof(*buckets));
+  struct rix_hash_bucket_s *buckets = aligned_alloc(64, NB_BK * sizeof(*buckets));
   memset(buckets, 0, NB_BK * sizeof(*buckets));   /* zero = all slots empty */
   mynode *nodes = calloc(N, sizeof(*nodes));       /* 1-origin: nodes[0] = index 1 */
 
   struct myht head;
-  REL_HASH_INIT(&head, NB_BK);                    /* NB_BK must be a power of 2 */
+  RIX_HASH_INIT(&head, NB_BK);                    /* NB_BK must be a power of 2 */
 
   /* Single-shot operations */
   mynode *dup = myht_insert(&head, buckets, nodes, &nodes[i]);
@@ -468,7 +471,7 @@ Getting Started
   myht_walk(&head, buckets, nodes, cb, arg);
 
   /* Staged (pipelined) find – hide memory latency across N requests */
-  struct rel_hash_find_ctx_s ctx[4];
+  struct rix_hash_find_ctx_s ctx[4];
   const void *keys[4] = { ... };
   mynode *results[4];
 
@@ -478,13 +481,13 @@ Getting Started
 
 Important Notes
 
-(a) typedef required: REL_HASH_GENERATE uses type as a bare C identifier.
+(a) typedef required: RIX_HASH_GENERATE uses type as a bare C identifier.
     Always declare typedef struct foo foo; before using foo as the type argument.
 
-(b) Name consistency: the tag given to REL_HASH_HEAD(name) and the first
-    argument of REL_HASH_GENERATE(name,...) must be identical.
+(b) Name consistency: the tag given to RIX_HASH_HEAD(name) and the first
+    argument of RIX_HASH_GENERATE(name,...) must be identical.
 
-(c) rel_hash_arch_init() must be called once before any hash table operation.
+(c) rix_hash_arch_init() must be called once before any hash table operation.
     It detects CPU features (AVX-512F, AVX2) and sets the dispatch table.
 
 (d) Bucket array alignment: use aligned_alloc(64, ...) or posix_memalign
@@ -497,15 +500,15 @@ Important Notes
       other ptr  – duplicate node (key already present)
       elm itself – table full (kickout depth exhausted)
 
-REL_HASH API
+RIX_HASH API
 
 Declarations & codegen
 
-REL_HASH_HEAD(name)                           /* declares struct name { mask, nb } */
-REL_HASH_INIT(head, nb_buckets)               /* initialise head */
-REL_HASH_GENERATE(name, type, key_field, key_len, hash_fn)
+RIX_HASH_HEAD(name)                           /* declares struct name { mask, nb } */
+RIX_HASH_INIT(head, nb_buckets)               /* initialise head */
+RIX_HASH_GENERATE(name, type, key_field, key_len, hash_fn)
 
-hash_fn signature: union rel_hash_hash_u hash_fn(const void *key);
+hash_fn signature: union rix_hash_hash_u hash_fn(const void *key);
 key_len: 64, 128, 256, or 512 (bits)
 
 Single-shot ops
@@ -531,7 +534,7 @@ void  name_cmp_key4 (ctx[4], base, results[4])
 
 Arch dispatch
 
-void rel_hash_arch_init(void)   /* call once at startup; selects Generic/AVX2/AVX-512 */
+void rix_hash_arch_init(void)   /* call once at startup; selects Generic/AVX2/AVX-512 */
 
 Build
 
@@ -547,11 +550,11 @@ Suggested flags:
 Force-inline helper (optional):
 
 #if defined(_MSC_VER)
-  #define REL_FORCE_INLINE __forceinline
+  #define RIX_FORCE_INLINE __forceinline
 #elif defined(__GNUC__) || defined(__clang__)
-  #define REL_FORCE_INLINE __attribute__((always_inline)) inline
+  #define RIX_FORCE_INLINE __attribute__((always_inline)) inline
 #else
-  #define REL_FORCE_INLINE inline
+  #define RIX_FORCE_INLINE inline
 #endif
 
 Concurrency

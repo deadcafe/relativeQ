@@ -1,4 +1,4 @@
-# test_rel_hash.c テストシナリオ
+# test_rix_hash.c テストシナリオ
 
 ## 共通設定
 
@@ -15,7 +15,7 @@
 
 **目的**: 初期化直後のテーブルが空であることを確認する。
 
-1. `REL_HASH_INIT` 後、`rhh_nb == 0` かつ `rhh_mask == NB_BK_BASIC - 1` を検証。
+1. `RIX_HASH_INIT` 後、`rhh_nb == 0` かつ `rhh_mask == NB_BK_BASIC - 1` を検証。
 2. 空テーブルに対して `find` → `NULL` を返すことを確認。
 3. 空テーブルに対して `remove` → `NULL` を返すことを確認。
 
