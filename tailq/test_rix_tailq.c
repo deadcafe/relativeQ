@@ -18,7 +18,7 @@
 #include <string.h>
 #include <assert.h>
 #include <sys/types.h>  /* ssize_t */
-#include "../rix_queue_tree.h"
+#include "../librix.h"
 
 #define FAIL(msg) do {							\
     fprintf(stderr, "FAIL %s:%d:%s: %s\n", __FILE__, __LINE__, __func__, (msg)); \

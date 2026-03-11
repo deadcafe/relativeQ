@@ -81,7 +81,7 @@ RIX_SWAP, RIX_CLAMP, RIX_ASSERT, RIX_STATIC_ASSERT
 Max storable elements with unsigned is UINT_MAX - 1.
 
 Getting Started
-#include "rix_queue_tree.h"
+#include "librix.h"
 
 struct node {
     int value;
