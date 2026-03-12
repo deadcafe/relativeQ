@@ -7,8 +7,10 @@ TOPDIR := $(shell cd .. && pwd)
 CFLAGS       = -std=gnu11 -g -O2 -mavx2 -msse4.2 -Wall -Wextra -I$(TOPDIR)
 BENCH_CFLAGS = -std=gnu11 -O3 -mavx2 -msse4.2 -Wall -Wextra -I$(TOPDIR)
 
-COMMON_SRC   = flow4_cache.c
-COMMON_HDR   = flow4_cache.h flow_cache.h
+COMMON_SRC   = flow4_cache.c flow6_cache.c flow_unified_cache.c
+COMMON_HDR   = flow4_cache.h flow6_cache.h flow_unified_cache.h \
+               flow_cache.h flow_cache_common.h flow_cache_body.h \
+               flow_cache_test_body.h
 
 TEST_TARGET  = flow_cache_test
 TEST_SRC     = flow_cache_test.c $(COMMON_SRC)

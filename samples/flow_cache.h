@@ -67,7 +67,7 @@ struct flow_cache_stats {
     uint64_t inserts;       /* entries inserted */
     uint64_t evictions;     /* entries expired/evicted */
     uint32_t nb_entries;    /* current entry count */
-    uint32_t pool_cap;      /* pool capacity */
+    uint32_t max_entries;      /* pool capacity */
 };
 
 /*===========================================================================
@@ -76,6 +76,18 @@ struct flow_cache_stats {
 #define FLOW_CACHE_BATCH   8    /* keys per pipeline step */
 #define FLOW_CACHE_KPD     8    /* pipeline depth (batches ahead) */
 #define FLOW_CACHE_DIST    (FLOW_CACHE_BATCH * FLOW_CACHE_KPD)  /* 64 */
+
+/*===========================================================================
+ * Expire tuning parameters
+ *===========================================================================*/
+#define FLOW_CACHE_EXPIRE_SCAN_MIN    64   /* base scan count (low fill) */
+#define FLOW_CACHE_EXPIRE_SCAN_MAX  1024   /* max scan count (near full) */
+#define FLOW_CACHE_EXPIRE_PF_DIST     16   /* SW prefetch distance (entries) */
+
+/* Miss-rate-driven timeout adjustment parameters */
+#define FLOW_CACHE_TIMEOUT_DECAY_SHIFT    12  /* log2(batch) + 4 for batch=256 */
+#define FLOW_CACHE_TIMEOUT_RECOVER_SHIFT   8  /* recovery speed: 1/256 per batch */
+#define FLOW_CACHE_TIMEOUT_MIN_MS       1000  /* min timeout = 1.0 second */
 
 #endif /* _FLOW_CACHE_H_ */
 

@@ -5,14 +5,14 @@
  * All rights reserved.
  */
 
-#include "flow4_cache.h"
+#include "flow6_cache.h"
 
-#define FC_PREFIX       flow4
-#define FC_ENTRY        flow4_entry
-#define FC_KEY          flow4_key
-#define FC_CACHE        flow4_cache
-#define FC_HT_PREFIX    flow4_ht
-#define FC_FREE_HEAD    flow4_free_head
+#define FC_PREFIX       flow6
+#define FC_ENTRY        flow6_entry
+#define FC_KEY          flow6_key
+#define FC_CACHE        flow6_cache
+#define FC_HT_PREFIX    flow6_ht
+#define FC_FREE_HEAD    flow6_free_head
 #include "flow_cache_body.h"
 #undef FC_PREFIX
 #undef FC_ENTRY
