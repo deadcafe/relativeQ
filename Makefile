@@ -1,6 +1,8 @@
-SUBDIRS := slist list stailq tailq circleq rbtree
+TESTDIRS := tests/slist tests/list tests/stailq tests/tailq tests/circleq \
+            tests/rbtree tests/hashtbl tests/hashtbl32 tests/hashtbl64
+SUBDIRS  := $(TESTDIRS) samples
 
-.PHONY: all build test clean
+.PHONY: all build test bench clean htags
 all: test
 
 build:
@@ -9,10 +11,16 @@ build:
 	  $(MAKE) -C $$d; \
 	done
 
-test:	build
+test: build
 	@for d in $(SUBDIRS); do \
 	  echo "[TEST] $$d"; \
 	  $(MAKE) -C $$d test; \
+	done
+
+bench: build
+	@for d in $(SUBDIRS); do \
+	  echo "[BENCH] $$d"; \
+	  $(MAKE) -C $$d bench; \
 	done
 
 clean:
@@ -20,3 +28,9 @@ clean:
 	  echo "[CLEAN] $$d"; \
 	  $(MAKE) -C $$d clean; \
 	done
+	rm -rf HTML
+
+htags:
+	mkdir -p HTML
+	gtags HTML
+	htags -aDnosF -d HTML

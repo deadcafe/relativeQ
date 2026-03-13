@@ -58,3 +58,7 @@ dkms.conf
 .*~
 .bak
 .depend
+GPATH
+GRTAGS
+GTAGS
+HTML

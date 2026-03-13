@@ -1,0 +1,805 @@
+# librix -- Relative Index Library
+
+共有メモリ向けインデックスベースデータ構造ライブラリ。
+
+librix は、BSD 標準データ構造 (SLIST, LIST, STAILQ, TAILQ, CIRCLEQ,
+Red-Black ツリー) と高性能カッコーハッシュテーブル 3 種を、生ポインタを
+一切埋め込まない**相対インデックス**で実装します。共有メモリや mmap
+領域にそのまま格納できます。
+
+## 目次
+
+- なぜインデックスか?
+- 設計
+- リポジトリ構成
+- クイックスタート
+- 共通ヘルパー
+- キュー構造体
+  - RIX_SLIST
+  - RIX_LIST
+  - RIX_STAILQ
+  - RIX_TAILQ
+  - RIX_CIRCLEQ
+- Red-Black ツリー -- RIX_RB
+- カッコーハッシュテーブル
+  - バリアント比較
+  - RIX_HASH (フィンガープリント、可変長キー)
+  - RIX_HASH32 (uint32_t キー)
+  - RIX_HASH64 (uint64_t キー)
+- フローキャッシュサンプル
+- ビルド
+- 並行性
+- テスト
+- ライセンス
+
+---
+
+## なぜインデックスか?
+
+生ポインタはプロセスローカルであり再配置不可能です。代わりに**符号なし
+インデックス**を格納することで:
+
+- プロセスをまたいで、またリマップ後も構造体を再配置できる。
+- 共有メモリやファイルバック領域に自然に収まる。
+- ゼロ初期化でヘッド/ノードが自動的に空状態になる。
+- 同一領域をマップする 32/64 ビット混在プロセス間でポインタサイズの
+  不一致を回避できる。
+
+---
+
+## 設計
+
+| 概念 | 詳細 |
+|------|------|
+| NIL 番兵 | `RIX_NIL = 0` -- ゼロ値が「要素なし」を意味する |
+| 1-origin マッピング | 有効インデックスは `1 ... UINT_MAX-1`; `pool[i]` <-> インデックス `i+1` |
+| ポインタを格納しない | ヘッドとリンクフィールドはインデックスのみ |
+| 一時ポインタ | 変換はマクロ呼び出し時に `base` (要素配列) を渡すことで行う |
+| 規格 | C11; 外部依存なし; サブシステムごとに単一ヘッダ |
+
+インデックス <-> ポインタ変換マクロ:
+
+```c
+RIX_IDX_FROM_PTR(base, p)   /* (p - base) + 1  (NULL -> RIX_NIL) */
+RIX_PTR_FROM_IDX(base, i)   /* base + (i-1)    (0 -> NULL)        */
+```
+
+---
+
+## リポジトリ構成
+
+```
+include/
+  librix.h          傘ヘッダ (全サブシステムをインクルード)
+  rix/
+    rix_defs.h      共通マクロ、インデックスヘルパー
+    rix_queue.h     SLIST / LIST / STAILQ / TAILQ / CIRCLEQ
+    rix_tree.h      Red-Black ツリー
+    rix_hash.h      カッコーハッシュ -- フィンガープリント版 (可変長キー)
+    rix_hash32.h    カッコーハッシュ -- uint32_t キー版
+    rix_hash64.h    カッコーハッシュ -- uint64_t キー版
+    rix_hash_key.h  組み込みハッシュ関数 (CRC32c, identity, ...)
+samples/
+  flow_cache.h      3 バリアント全体の傘ヘッダ
+  flow4_cache.h/c   IPv4 5 タプルフローキャッシュ (20 バイトキー)
+  flow6_cache.h/c   IPv6 5 タプルフローキャッシュ (44 バイトキー)
+  flow_unified_cache.h/c  IPv4+IPv6 統合テーブル (44 バイトキー、family フィールド)
+  flow_cache_test.c テスト + ベンチマークドライバ
+```
+
+---
+
+## クイックスタート
+
+```c
+#include "librix.h"      /* キュー + ツリー + 全ハッシュバリアント */
+```
+
+必要なものだけインクルードすることも可能:
+
+```c
+#include "rix/rix_queue.h"   /* キュー構造体のみ */
+#include "rix/rix_tree.h"    /* Red-Black ツリーのみ */
+#include "rix/rix_hash.h"    /* カッコーハッシュ (fp 版) */
+#include "rix/rix_hash32.h"  /* カッコーハッシュ (u32 キー版) */
+#include "rix/rix_hash64.h"  /* カッコーハッシュ (u64 キー版) */
+```
+
+### キューの最小サンプル
+
+```c
+struct node {
+    int value;
+    RIX_TAILQ_ENTRY(node) link;
+};
+
+RIX_TAILQ_HEAD(qhead);
+struct qhead h;
+struct node *base;   /* 共有メモリ上の要素配列 */
+
+RIX_TAILQ_INIT(&h);
+
+RIX_TAILQ_INSERT_TAIL(&h, base, &base[0], link);
+RIX_TAILQ_INSERT_TAIL(&h, base, &base[1], link);
+
+struct node *it;
+RIX_TAILQ_FOREACH(it, &h, base, link) {
+    /* it->value を使用 */
+}
+
+RIX_TAILQ_REMOVE(&h, base, &base[0], link);
+```
+
+---
+
+## 共通ヘルパー
+
+`rix/rix_defs.h` で定義 (全サブシステムがインクルード済み):
+
+```c
+RIX_NIL                          /* 0 -- ヌルインデックス */
+RIX_IDX_FROM_PTR(base, p)        /* ポインタ -> インデックス */
+RIX_PTR_FROM_IDX(base, i)        /* インデックス -> ポインタ (i==0 なら NULL) */
+RIX_IDX_IS_NIL(i)                /* i == RIX_NIL */
+RIX_IDX_IS_VALID(i, cap)         /* 1 <= i <= cap */
+
+RIX_MIN(a, b)
+RIX_MAX(a, b)
+RIX_COUNT_OF(arr)
+RIX_OFFSET_OF(type, field)
+RIX_CONTAINER_OF(ptr, type, field)
+RIX_SWAP(a, b)
+RIX_CLAMP(v, lo, hi)
+RIX_ASSERT(expr)
+RIX_STATIC_ASSERT(expr, msg)
+```
+
+---
+
+## キュー構造体
+
+以下の全マクロで共通の引数:
+- `type` -- 要素の構造体名 (`struct` キーワードなしの裸の識別子)
+- `field` -- `type` 内に埋め込んだリンクフィールド名
+- `base` -- 要素配列への `type *` ポインタ
+- `head` -- コンテナヘッドへのポインタ
+
+### RIX_SLIST
+
+単方向リスト。先頭挿入 O(1)、削除 O(n)。
+
+```c
+/* 宣言 */
+RIX_SLIST_ENTRY(type)                   /* 構造体内リンクフィールド */
+RIX_SLIST_HEAD(name)                    /* ヘッド型の宣言 */
+RIX_SLIST_HEAD_INITIALIZER(var)         /* 静的初期化子 */
+
+/* 初期化・参照 */
+RIX_SLIST_INIT(head)
+RIX_SLIST_EMPTY(head)                   /* 空なら 1 */
+RIX_SLIST_FIRST(head, base)             /* 先頭要素または NULL */
+RIX_SLIST_NEXT(elm, base, field)        /* 次要素または NULL */
+
+/* 変更 */
+RIX_SLIST_INSERT_HEAD(head, base, elm, field)
+RIX_SLIST_INSERT_AFTER(base, slistelm, elm, field)
+RIX_SLIST_REMOVE_HEAD(head, base, field)
+RIX_SLIST_REMOVE_AFTER(base, elm, field)
+RIX_SLIST_REMOVE(head, base, elm, type, field)   /* O(n) 線形探索 */
+
+/* 反復 */
+RIX_SLIST_FOREACH(var, head, base, field)
+RIX_SLIST_FOREACH_SAFE(var, head, base, field, tvar)
+RIX_SLIST_FOREACH_PREVINDEX(var, varidxp, head, base, field)
+```
+
+### RIX_LIST
+
+双方向リスト。任意位置での挿入・削除が O(1)。
+
+```c
+/* 宣言 */
+RIX_LIST_ENTRY(type)
+RIX_LIST_HEAD(name)
+RIX_LIST_HEAD_INITIALIZER(var)
+
+/* 初期化・参照 */
+RIX_LIST_INIT(head)
+RIX_LIST_EMPTY(head)
+RIX_LIST_FIRST(head, base)
+RIX_LIST_NEXT(elm, base, field)
+
+/* 変更 */
+RIX_LIST_INSERT_HEAD(head, base, elm, field)
+RIX_LIST_INSERT_AFTER(head, base, listelm, elm, field)
+RIX_LIST_INSERT_BEFORE(head, base, listelm, elm, field)
+RIX_LIST_REMOVE(head, base, elm, field)
+RIX_LIST_SWAP(head1, head2, base, type, field)
+
+/* 反復 */
+RIX_LIST_FOREACH(var, head, base, field)
+RIX_LIST_FOREACH_SAFE(var, head, base, field, tvar)
+```
+
+### RIX_STAILQ
+
+単方向テールキュー。先頭・末尾挿入がともに O(1)。
+
+```c
+/* 宣言 */
+RIX_STAILQ_ENTRY(type)
+RIX_STAILQ_HEAD(name)
+RIX_STAILQ_HEAD_INITIALIZER(var)
+
+/* 初期化・参照 */
+RIX_STAILQ_INIT(head)
+RIX_STAILQ_EMPTY(head)
+RIX_STAILQ_FIRST(head, base)
+RIX_STAILQ_LAST(head, base)
+RIX_STAILQ_NEXT(head, base, elm, field)
+
+/* 変更 */
+RIX_STAILQ_INSERT_HEAD(head, base, elm, field)
+RIX_STAILQ_INSERT_TAIL(head, base, elm, field)
+RIX_STAILQ_INSERT_AFTER(head, base, tqelm, elm, field)
+RIX_STAILQ_REMOVE_HEAD(head, base, field)
+RIX_STAILQ_REMOVE_AFTER(head, base, elm, field)
+RIX_STAILQ_REMOVE(head, base, elm, type, field)   /* O(n) 線形探索 */
+RIX_STAILQ_REMOVE_HEAD_UNTIL(head, base, elm, field)
+RIX_STAILQ_CONCAT(head1, head2, base, field)
+RIX_STAILQ_SWAP(head1, head2, base)
+
+/* 反復 */
+RIX_STAILQ_FOREACH(var, head, base, field)
+RIX_STAILQ_FOREACH_SAFE(var, head, base, field, tvar)
+```
+
+### RIX_TAILQ
+
+双方向テールキュー。先頭・末尾・任意位置での挿入・削除がすべて O(1)。
+
+```c
+/* 宣言 */
+RIX_TAILQ_ENTRY(type)
+RIX_TAILQ_HEAD(name)
+RIX_TAILQ_HEAD_INITIALIZER(var)
+
+/* 初期化・参照 */
+RIX_TAILQ_INIT(head)
+RIX_TAILQ_RESET(head)           /* INIT の別名 */
+RIX_TAILQ_EMPTY(head)
+RIX_TAILQ_FIRST(head, base)
+RIX_TAILQ_LAST(head, base)
+RIX_TAILQ_NEXT(head, base, elm, field)
+RIX_TAILQ_PREV(head, base, elm, field)
+
+/* 変更 */
+RIX_TAILQ_INSERT_HEAD(head, base, elm, field)
+RIX_TAILQ_INSERT_TAIL(head, base, elm, field)
+RIX_TAILQ_INSERT_AFTER(head, base, listelm, elm, field)
+RIX_TAILQ_INSERT_BEFORE(head, base, listelm, elm, field)
+RIX_TAILQ_REMOVE(head, base, elm, field)
+RIX_TAILQ_CONCAT(head1, head2, base, field)
+RIX_TAILQ_SWAP(head1, head2, base)
+
+/* 反復 */
+RIX_TAILQ_FOREACH(var, head, base, field)
+RIX_TAILQ_FOREACH_SAFE(var, head, base, field, tvar)
+RIX_TAILQ_FOREACH_REVERSE(var, head, base, field)
+```
+
+### RIX_CIRCLEQ
+
+循環双方向リスト。FIRST が LAST に戻る循環走査が可能。
+
+```c
+/* 宣言 */
+RIX_CIRCLEQ_ENTRY(type)
+RIX_CIRCLEQ_HEAD(name)
+RIX_CIRCLEQ_HEAD_INITIALIZER(var)
+
+/* 初期化・参照 */
+RIX_CIRCLEQ_INIT(head)
+RIX_CIRCLEQ_EMPTY(head)
+RIX_CIRCLEQ_FIRST(head, base)
+RIX_CIRCLEQ_LAST(head, base, field)
+RIX_CIRCLEQ_NEXT(elm, base, field)
+RIX_CIRCLEQ_PREV(elm, base, field)
+
+/* 変更 */
+RIX_CIRCLEQ_INSERT_HEAD(head, base, elm, field)
+RIX_CIRCLEQ_INSERT_TAIL(head, base, elm, field)
+RIX_CIRCLEQ_INSERT_AFTER(head, base, listelm, elm, field)
+RIX_CIRCLEQ_INSERT_BEFORE(head, base, listelm, elm, field)
+RIX_CIRCLEQ_REMOVE(head, base, elm, field)
+
+/* 反復 (1 周分) */
+RIX_CIRCLEQ_FOREACH(var, head, base, field)
+RIX_CIRCLEQ_FOREACH_REVERSE(var, head, base, field)
+RIX_CIRCLEQ_FOREACH_SAFE(var, head, base, field, tvar)
+RIX_CIRCLEQ_FOREACH_REVERSE_SAFE(var, head, base, field, tvar)
+```
+
+---
+
+## Red-Black ツリー -- RIX_RB
+
+自己平衡 BST。挿入・削除・検索がすべて O(log n)。
+
+### 最小サンプル
+
+```c
+struct rbnode {
+    int key;
+    RIX_RB_ENTRY(rbnode) rb;
+};
+
+static int rb_cmp(const struct rbnode *a, const struct rbnode *b) {
+    return (a->key > b->key) - (a->key < b->key);
+}
+
+RIX_RB_HEAD(rbtree);
+RIX_RB_PROTOTYPE(rbt, rbnode, rb, rb_cmp)
+RIX_RB_GENERATE (rbt, rbnode, rb, rb_cmp)
+
+void demo(struct rbtree *rh, struct rbnode *base) {
+    RIX_RB_INIT(rh);
+
+    base[0].key = 42;
+    RIX_RB_INSERT(rbt, rh, base, &base[0]);
+
+    struct rbnode probe = { .key = 42 };
+    struct rbnode *hit = RIX_RB_FIND(rbt, rh, base, &probe);
+
+    struct rbnode *it;
+    RIX_RB_FOREACH(it, rbt, rh, base) { /* 昇順走査 */ }
+}
+```
+
+### API リファレンス
+
+```c
+/* 宣言・コード生成 */
+RIX_RB_ENTRY(type)
+RIX_RB_HEAD(name)
+RIX_RB_HEAD_INITIALIZER(var)
+RIX_RB_INIT(head)
+RIX_RB_PROTOTYPE(name, type, field, cmp)     /* extern 宣言 */
+RIX_RB_GENERATE (name, type, field, cmp)     /* 実装生成 */
+
+/* 操作 */
+RIX_RB_INSERT(name, head, base, elm)   /* NULL -> 挿入成功; 非 NULL -> 重複 */
+RIX_RB_REMOVE(name, head, base, elm)   /* 削除した elm を返す */
+RIX_RB_FIND  (name, head, base, key)   /* 完全一致または NULL */
+RIX_RB_NFIND (name, head, base, key)   /* 下界 (key 以上の最小ノード) */
+RIX_RB_MIN   (name, head, base)
+RIX_RB_MAX   (name, head, base)
+RIX_RB_NEXT  (name, base, elm)
+RIX_RB_PREV  (name, base, elm)
+
+/* 反復 */
+RIX_RB_FOREACH        (var, name, head, base)   /* 昇順 */
+RIX_RB_FOREACH_REVERSE(var, name, head, base)   /* 降順 */
+```
+
+比較関数シグネチャ: `int cmp(const type *a, const type *b)` -- 狭義弱順序。
+
+---
+
+## カッコーハッシュテーブル
+
+インデックスベースのカッコーハッシュ 3 バリアント。共通特性:
+
+- **バケットあたり 16 スロット** (SIMD 並列スキャン)
+- **実行時 SIMD ディスパッチ** -- `rix_hash_arch_init()` で Generic / AVX2 / AVX-512 を自動選択
+- **XOR 対称性による 2 候補バケット** -- 削除 O(1)、リハッシュ不要
+- **N 段先行パイプラインルックアップ** -- DRAM レイテンシを複数リクエスト間で隠蔽
+- **1-origin インデックス格納** -- `RIX_NIL = 0` が空スロットを示す; 生ポインタなし
+
+### バリアント比較
+
+| ヘッダ | キー格納場所 | バケットサイズ | 適したキー |
+|--------|------------|--------------|-----------|
+| `rix_hash.h`   | フィンガープリントをバケットに、フルキーをノードに格納 | 128 B (2 CL) | 可変長・大きなキー |
+| `rix_hash32.h` | `uint32_t` キーをバケットに直接格納 | 128 B (2 CL) | 32 ビット整数キー |
+| `rix_hash64.h` | `uint64_t` キーをバケットに直接格納 | 192 B (3 CL) | 64 ビット整数キー |
+
+性能 (DRAM コールド、1000 万エントリ、パイプライン x8):
+
+| バリアント | サイクル/op |
+|-----------|------------|
+| `rix_hash32` | ~58-60 |
+| `rix_hash64` | ~62-66 |
+| `rix_hash` (fp) | ~84-88 |
+
+---
+
+### RIX_HASH (フィンガープリント、可変長キー)
+
+ノード構造体に現在バケットのフィンガープリントを格納する `uint32_t`
+フィールドが必要 (O(1) 削除に使用)。
+
+```c
+#include "rix/rix_hash.h"
+
+/* 1. typedef 必須 -- マクロは裸の識別子を使用する */
+typedef struct mynode mynode;
+struct mynode {
+    uint8_t  key[16];    /* キーフィールド (可変長) */
+    uint32_t cur_hash;   /* フィンガープリントフィールド (名前は任意) */
+    uint32_t value;
+};
+
+/* 2. ヘッドの宣言と API 生成 */
+RIX_HASH_HEAD(myht);
+RIX_HASH_GENERATE(myht, mynode, key, cur_hash, my_cmp_fn)
+
+/* 3. 起動時に 1 度だけ初期化 */
+rix_hash_arch_init();
+
+/* 4. 64 バイトアライメントのバケット配列を確保 */
+struct rix_hash_bucket_s *buckets =
+    aligned_alloc(64, NB_BK * sizeof(*buckets));
+memset(buckets, 0, NB_BK * sizeof(*buckets));   /* 0 = 全スロット空 */
+mynode *pool = calloc(N, sizeof(*pool));         /* 1-origin: pool[0] = インデックス 1 */
+
+struct myht head;
+RIX_HASH_INIT(&head, NB_BK);   /* NB_BK は 2 の冪乗であること */
+```
+
+#### 単発操作
+
+```c
+/* 挿入: NULL -> 成功; 別ポインタ -> 重複; elm 自身 -> テーブル満杯 */
+mynode *dup = myht_insert(&head, buckets, pool, &pool[i]);
+
+/* キーポインタで検索 */
+mynode *hit = myht_find(&head, buckets, pool, key_ptr);
+
+/* キーポインタで削除 */
+mynode *rem = myht_remove(&head, buckets, pool, key_ptr);
+
+/* 全エントリ巡回: cb が 0 を返す間継続、非 0 で停止 */
+myht_walk(&head, buckets, pool, cb, arg);
+```
+
+#### パイプライン (ステージ型) 検索
+
+複数のルックアップを同時進行させて DRAM レイテンシを隠蔽する:
+
+```c
+struct rix_hash_find_ctx_s ctx[4];
+const void *keys[4] = { k0, k1, k2, k3 };
+mynode *results[4];
+
+/* ステージ 1: ハッシュ計算 + バケットプリフェッチ */
+myht_hash_key4(ctx, &head, buckets, keys);
+/* ステージ 2: フィンガープリントスキャン */
+myht_scan_bk4 (ctx, &head, buckets);
+/* ステージ 3: フルキー比較 */
+myht_cmp_key4 (ctx, pool, results);
+```
+
+バルクバリアント: `_key1` / `_key2` / `_key4` / `_key8` (サフィックスが件数)。
+
+#### `RIX_HASH_GENERATE` オプション
+
+| バリアント | マクロ |
+|-----------|-------|
+| 外部リンケージ | `RIX_HASH_GENERATE(name, type, key_field, hash_field, cmp_fn)` |
+| `static` リンケージ | `RIX_HASH_GENERATE_STATIC(name, type, key_field, hash_field, cmp_fn)` |
+
+`cmp_fn` シグネチャ: `int cmp_fn(const type *a, const type *b)` -- 等しければ 0 を返す。
+
+---
+
+### RIX_HASH32 (uint32_t キー)
+
+ノード構造体に `hash_field` 不要。キー自体をバケットに直接格納するため、
+`scan_bk` が 32 ビット完全一致比較を行う。
+
+```c
+#include "rix/rix_hash32.h"
+
+typedef struct entry32 entry32;
+struct entry32 {
+    uint32_t key;    /* キーフィールド (名前は任意) */
+    uint32_t value;
+};
+
+RIX_HASH32_HEAD(ht32);
+RIX_HASH32_GENERATE(ht32, entry32, key)
+
+rix_hash_arch_init();
+
+struct rix_hash32_bucket_s *buckets =
+    aligned_alloc(64, NB_BK * sizeof(*buckets));
+memset(buckets, 0, NB_BK * sizeof(*buckets));
+entry32 *pool = calloc(N, sizeof(*pool));
+
+struct ht32 head;
+RIX_HASH32_INIT(&head, NB_BK);
+```
+
+#### API
+
+```c
+entry32 *ht32_insert(&head, buckets, pool, &pool[i]);
+entry32 *ht32_find  (&head, buckets, pool, key_value);   /* 値渡しでキー指定 */
+entry32 *ht32_remove(&head, buckets, pool, key_value);
+int      ht32_walk  (&head, buckets, pool, cb, arg);
+
+/* パイプライン検索 (rix_hash と同じステージ構成) */
+struct rix_hash32_find_ctx_s ctx[4];
+uint32_t keys[4] = { k0, k1, k2, k3 };
+entry32 *results[4];
+
+ht32_hash_key4(ctx, &head, buckets, keys);
+ht32_scan_bk4 (ctx, &head, buckets);
+ht32_cmp_key4 (ctx, pool, results);
+```
+
+---
+
+### RIX_HASH64 (uint64_t キー)
+
+RIX_HASH32 と同じインターフェースで `uint64_t` キーに対応。
+バケットは 128 B ではなく 192 B (3 キャッシュライン)。
+
+```c
+#include "rix/rix_hash64.h"
+
+typedef struct entry64 entry64;
+struct entry64 {
+    uint64_t key;
+    uint32_t value;
+};
+
+RIX_HASH64_HEAD(ht64);
+RIX_HASH64_GENERATE(ht64, entry64, key)
+
+struct rix_hash64_bucket_s *buckets =
+    aligned_alloc(64, NB_BK * sizeof(*buckets));
+
+struct ht64 head;
+RIX_HASH64_INIT(&head, NB_BK);
+
+entry64 *ht64_insert(&head, buckets, pool, &pool[i]);
+entry64 *ht64_find  (&head, buckets, pool, key_value);
+entry64 *ht64_remove(&head, buckets, pool, key_value);
+```
+
+パイプラインステージは同じパターン: `ht64_hash_key4`, `ht64_scan_bk4`,
+`ht64_cmp_key4`。
+
+#### 全ハッシュバリアント共通の注意事項
+
+- `rix_hash_arch_init()` はハッシュ操作の前に**必ず 1 度**呼び出すこと。
+- バケット配列は**64 バイトアライメント**必須 (`aligned_alloc(64, ...)` または `posix_memalign`)。
+- `NB_BK` は**2 の冪乗**かつ 2 以上であること。
+- `insert` の戻り値:
+  - `NULL` -- 挿入成功
+  - 別のポインタ -- 重複 (同じキーがすでに存在)
+  - `elm` 自身 -- テーブル満杯 (キックアウト深度上限に達した)
+- 安全な充填率: 全スロット (`NB_BK * 16`) の **80% 以下**。
+
+---
+
+## フローキャッシュサンプル
+
+`samples/` は `rix_hash` を基盤とした本番品質のフローキャッシュを提供します。
+IPv4 専用・IPv6 専用・IPv4+IPv6 統合の 3 バリアントがあります。
+
+### インクルード
+
+```c
+#include "flow_cache.h"   /* 傘ヘッダ: 3 バリアント全てをインクルード */
+```
+
+### バリアント
+
+| バリアント | ヘッダ | キー | エントリサイズ |
+|-----------|--------|------|--------------|
+| `flow4` | `flow4_cache.h` | IPv4 5 タプル + vrfid (20 B) | 128 B (2 CL) |
+| `flow6` | `flow6_cache.h` | IPv6 5 タプル + vrfid (44 B) | 128 B (2 CL) |
+| `flowu` | `flow_unified_cache.h` | IPv4 or IPv6 + family フィールド (44 B) | 128 B (2 CL) |
+
+### ライフサイクル
+
+```c
+/* リソース確保 */
+unsigned nb_bk = flow_cache_nb_bk_hint(max_entries); /* ~50% 充填率でのサイジング */
+struct rix_hash_bucket_s *buckets =
+    aligned_alloc(64, nb_bk * sizeof(*buckets));
+struct flow4_entry *pool = aligned_alloc(64, max_entries * sizeof(*pool));
+
+/* 初期化 */
+struct flow4_cache fc;
+uint64_t tsc_hz  = flow_cache_calibrate_tsc_hz();
+uint64_t timeout = flow_cache_ms_to_tsc(tsc_hz, 30000); /* 30 秒 */
+flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, timeout);
+
+/* 一括クリア (VRF 削除、インターフェースダウンなど) */
+flow4_cache_flush(&fc);
+```
+
+### パケット処理ループ
+
+```c
+uint64_t now = flow_cache_rdtsc();
+
+/* 1. パイプライン一括ルックアップ */
+flow4_cache_lookup_batch(&fc, keys, nb_pkts, results);
+
+/* 2. パケットごとの後処理 */
+unsigned misses = 0;
+for (unsigned i = 0; i < nb_pkts; i++) {
+    if (results[i]) {
+        flow4_cache_touch(results[i], now, pkt_len[i]);   /* ヒット */
+    } else {
+        struct flow4_entry *e = flow4_cache_insert(&fc, &keys[i], now);
+        if (e) e->action = slow_path(&keys[i]);            /* ミス */
+        misses++;
+    }
+}
+
+/* 3. 適応的タイムアウト調整 */
+flow4_cache_adjust_timeout(&fc, misses);
+
+/* 4. エージングによるエビクション */
+flow4_cache_expire(&fc, now);
+/* または: flow4_cache_expire_2stage() -- バケットプリフェッチ版
+   pool >> LLC またはエビクション頻度が高い場合に有効 */
+```
+
+### API 一覧
+
+```c
+/* ライフサイクル */
+void     flow4_cache_init (fc, buckets, nb_bk, pool, max_entries, timeout_ms);
+void     flow4_cache_flush(fc);
+
+/* サイジングヘルパー */
+unsigned flow_cache_nb_bk_hint(max_entries);   /* ceil(max_entries/8)、2 の冪乗 */
+
+/* ルックアップ */
+void                flow4_cache_lookup_batch(fc, keys, nb_pkts, results);
+struct flow4_entry *flow4_cache_find        (fc, key);   /* 単発、パイプラインなし */
+
+/* 変更 */
+struct flow4_entry *flow4_cache_insert(fc, key, now);
+void                flow4_cache_remove(fc, entry);
+
+/* ヒット処理 */
+void flow4_cache_touch        (entry, now, pkt_len);
+void flow4_cache_update_action(entry, action, qos_class);
+
+/* エージング */
+void flow4_cache_expire         (fc, now);
+void flow4_cache_expire_2stage  (fc, now);
+void flow4_cache_adjust_timeout (fc, misses);
+
+/* 統計 */
+void     flow4_cache_stats     (fc, out);   /* struct flow_cache_stats に書き込む */
+unsigned flow4_cache_nb_entries(fc);
+
+/* タイムスタンプ (バリアント共通) */
+uint64_t flow_cache_rdtsc(void);
+uint64_t flow_cache_calibrate_tsc_hz(void);
+uint64_t flow_cache_ms_to_tsc(tsc_hz, ms);
+```
+
+`flow4` を `flow6` または `flowu` に置き換えると他のバリアントになります。
+3 バリアントは同一の API を持ちます。
+
+### FC_CALL -- バリアント汎用呼び出しマクロ
+
+テンプレート生成 API はシンボルが追いにくいため、`FC_CALL` マクロを使うと
+バリアントを直接指定して呼び出せます。
+
+```c
+#include "flow_cache.h"
+
+/* FC_CALL(prefix, suffix) は prefix##_##suffix に展開される */
+FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, max_entries, timeout_ms);
+FC_CALL(flow4, cache_lookup_batch)(&fc, keys, nb_pkts, results);
+FC_CALL(flow4, cache_insert)(&fc, &keys[i], now);
+FC_CALL(flow4, cache_touch)(results[i], now, pkt_len[i]);
+FC_CALL(flow4, cache_adjust_timeout)(&fc, misses);
+FC_CALL(flow4, cache_expire)(&fc, now);
+
+/* prefix はマクロトークンでも可 -- 先に展開されてから結合される */
+#define MY_FC flow6
+FC_CALL(MY_FC, cache_init)(&fc, ...);   /* -> flow6_cache_init(...) */
+```
+
+### 統計構造体
+
+```c
+struct flow_cache_stats {
+    uint64_t lookups;     /* lookup_batch 呼び出し総数 */
+    uint64_t hits;        /* キャッシュヒット数 */
+    uint64_t misses;      /* キャッシュミス数 */
+    uint64_t inserts;     /* 挿入エントリ数 */
+    uint64_t evictions;   /* タイムアウトによるエビクション数 */
+    uint64_t removes;     /* 明示的な削除数 (remove/flush) */
+    uint32_t nb_entries;  /* 現在のエントリ数 */
+    uint32_t max_entries; /* プール容量 */
+};
+```
+
+### 性能 (実測、DRAM コールド)
+
+| 操作 | サイクル数 |
+|------|-----------|
+| パイプライン一括ルックアップ | 150-220 cy/pkt |
+| エクスパイア (分散後) | ~10-20 cy/pkt |
+
+---
+
+## ビルド
+
+C11 必須。推奨フラグ:
+
+```sh
+cc -std=gnu11 -O3 -mavx2 -msse4.2 \
+   -Wall -Wextra -Wshadow -Werror  \
+   -I/path/to/librix/include       \
+   your_sources.c
+```
+
+開発時のサニタイザ:
+
+```sh
+-fsanitize=address,undefined -fno-omit-frame-pointer
+```
+
+---
+
+## 並行性
+
+librix は内部同期を持ちません。全構造体はシングルスレッド、または独自ロック
+(futex, pthread mutex, プロセス共有プリミティブ等) 下での
+マルチリーダ/シングルライタに適しています。
+
+ロックフリー / RCU 動作はスコープ外であり、追加設計が必要です。
+
+---
+
+## テスト
+
+```sh
+# キュー / ツリー / ハッシュ ユニットテスト
+make -C tests
+
+# フローキャッシュ 正確性テスト + ベンチマーク
+make -C samples
+./samples/flow_cache_test -n 1000000
+```
+
+テストカバレッジ:
+
+- 空 / シングルトン / 複数要素の各操作の遷移
+- 全挿入・削除バリアント
+- 削除しながらの安全な反復
+- Red-Black 不変条件 (ルートが黒、赤-赤なし、黒高さ一致)
+- ハッシュテーブル: 重複検出、パイプラインステージ正確性、walk カウント
+- ファジング: ランダム insert/find/remove をリファレンスモデルと照合
+- フローキャッシュ: find, remove, flush, expire, batch lookup, insert 枯渇
+
+---
+
+## ライセンス
+
+BSD 3-Clause。[LICENSE](LICENSE) を参照。
+
+---
+
+## 謝辞
+
+キューおよびツリー API は BSD `sys/queue.h` / `sys/tree.h` インターフェースを
+踏襲し、生ポインタをインデックスに置き換えることで堅牢な共有メモリ展開を
+実現しています。
+
+カッコーハッシュテーブルは XOR ベースの 2 バケット方式を採用し、
+プリフェッチ駆動のステージ型ルックアップにより O(1) 償却挿入を達成しています。

@@ -12,10 +12,17 @@
 #include <inttypes.h>
 #include <sys/mman.h>
 #include <time.h>
+#include <getopt.h>
 
-#include "flow4_cache.h"
-#include "flow6_cache.h"
-#include "flow_unified_cache.h"
+#include "flow_cache.h"
+
+/*
+ * flow4_ht functions needed by flow4_bench_single_find (ht_find) and
+ * flow4_bench_bk0_rate (ht_init, ht_insert) which probe raw hash table
+ * internals directly.  flow6_ht / flowu_ht are only accessed via the
+ * cache API, so no generate is needed for them here.
+ */
+RIX_HASH_GENERATE_STATIC(flow4_ht, flow4_entry, key, cur_hash, flow4_cmp)
 
 /*===========================================================================
  * TSC helpers (lfence/rdtscp for precise measurement)
@@ -51,7 +58,7 @@ xorshift64(void)
 }
 
 /*===========================================================================
- * Key generation — IPv4
+ * Key generation - IPv4
  *===========================================================================*/
 static struct flow4_key
 make_key4(uint32_t src, uint32_t dst, uint16_t sp, uint16_t dp,
@@ -84,7 +91,7 @@ make_random_key4(struct flow4_key *k)
 }
 
 /*===========================================================================
- * Key generation — IPv6
+ * Key generation - IPv6
  *===========================================================================*/
 static void
 make_random_key6(struct flow6_key *k)
@@ -106,7 +113,7 @@ make_random_key6(struct flow6_key *k)
 }
 
 /*===========================================================================
- * Key generation — Unified (random: 50% v4, 50% v6)
+ * Key generation - Unified (random: 50% v4, 50% v6)
  *===========================================================================*/
 static void
 make_random_keyu(struct flowu_key *k)
@@ -175,7 +182,7 @@ now_sec(void)
 {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
+    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 }
 
 /*===========================================================================
@@ -266,7 +273,7 @@ flow4_test_insert_exhaustion(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     assert(st.evictions >= 1);
     printf("    evictions: %" PRIu64 "\n", st.evictions);
 
-    /* all live, no expiry — insert must still succeed (forced bucket eviction) */
+    /* all live, no expiry - insert must still succeed (forced bucket eviction) */
     flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0);
     now = flow_cache_rdtsc();
     for (unsigned i = 0; i < max_entries; i++) {
@@ -342,7 +349,7 @@ flow4_bench_single_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
                         struct flow4_entry *pool, unsigned max_entries,
                         unsigned repeat)
 {
-    printf("\n[B-IPv4] single find (no pipeline) — hit vs miss latency\n");
+    printf("\n[B-IPv4] single find (no pipeline) - hit vs miss latency\n");
 
     struct flow4_cache fc;
     flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0);
@@ -603,14 +610,14 @@ flowu_test_mixed(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     assert(e6->key.family == FLOW_FAMILY_IPV6);
     assert(e6 != e4);   /* must be different entries (family differs) */
 
-    /* lookup both — must find correct entries */
+    /* lookup both - must find correct entries */
     struct flowu_entry *results[2];
     struct flowu_key keys[2] = { k4, k6 };
     flowu_cache_lookup_batch(&fc, keys, 2, results);
     assert(results[0] == e4);
     assert(results[1] == e6);
 
-    /* lookup with swapped families — must miss */
+    /* lookup with swapped families - must miss */
     struct flowu_key k4_as_v6 = k4;
     k4_as_v6.family = FLOW_FAMILY_IPV6;
     flowu_cache_lookup_batch(&fc, &k4_as_v6, 1, results);
@@ -631,18 +638,36 @@ static void
 usage(const char *prog)
 {
     fprintf(stderr,
-            "Usage: %s [max_entries [nb_bk [repeat]]]\n"
-            "  max_entries : entry pool capacity (default: 1024)\n"
-            "  nb_bk    : hash buckets, must be power-of-2\n"
-            "             (default: auto, ~50%% fill target)\n"
-            "  repeat   : benchmark repeat count (default: auto)\n"
+            "Usage: %s [OPTIONS]\n"
             "\n"
-            "  Each bucket holds 16 slots.\n"
-            "  Example: %s 1000000\n"
-            "           %s 100000000 8388608\n"
-            "           %s 100000000 8388608 500\n",
-            prog, prog, prog, prog);
+            "Options:\n"
+            "  -n, --entries N    Entry pool capacity, rounded up to next power-of-2\n"
+            "                     (default: 1024, min: 64)\n"
+            "  -b, --buckets N    Hash bucket count, must be power-of-2\n"
+            "                     (default: auto, targets ~50%% fill)\n"
+            "  -r, --repeat N     Benchmark repeat count (default: auto)\n"
+            "  -h, --help         Show this help and exit\n"
+            "\n"
+            "Each bucket holds %u slots.  Bucket memory = N * %zu bytes.\n"
+            "\n"
+            "Examples:\n"
+            "  %s -n 1000000\n"
+            "  %s -n 100000000 -b 8388608\n"
+            "  %s -n 100000000 -b 8388608 -r 500\n",
+            prog,
+            (unsigned)RIX_HASH_BUCKET_ENTRY_SZ,
+            sizeof(struct rix_hash_bucket_s),
+            prog, prog, prog);
 }
+
+/*===========================================================================
+ * Call-site macro for template-generated functions (mirrors FCT_FN in body.h)
+ * FCT_CALL(prefix, suffix) expands to prefix##_##suffix after full macro
+ * expansion of both arguments.  Consistent with FC_CALL(prefix, suffix).
+ *===========================================================================*/
+#define _FCT_CALL_CAT(a, b, c)      a ## b ## c
+#define FCT_CALL_CAT(a, b, c)       _FCT_CALL_CAT(a, b, c)
+#define FCT_CALL(prefix, suffix)    FCT_CALL_CAT(prefix, _, suffix)
 
 /*===========================================================================
  * Main
@@ -652,32 +677,45 @@ main(int argc, char **argv)
 {
     rix_hash_arch_init();
 
-    unsigned max_entries = 1024;
+    unsigned max_entries = 1048576;  /* 2^20 ~= 1M: realistic DRAM-cold benchmark */
     unsigned nb_bk = 0;    /* auto */
     unsigned repeat = 0;   /* auto */
 
-    if (argc > 1 &&
-        (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
-        usage(argv[0]);
-        return 0;
-    }
+    static const struct option long_opts[] = {
+        { "entries", required_argument, NULL, 'n' },
+        { "buckets", required_argument, NULL, 'b' },
+        { "repeat",  required_argument, NULL, 'r' },
+        { "help",    no_argument,       NULL, 'h' },
+        { NULL,      0,                 NULL,  0  },
+    };
 
-    if (argc > 1) {
-        max_entries = next_pow2((unsigned)strtoul(argv[1], NULL, 0));
-        if (max_entries < 64) {
-            fprintf(stderr, "max_entries must be >= 64\n");
+    int opt;
+    while ((opt = getopt_long(argc, argv, "n:b:r:h", long_opts, NULL)) != -1) {
+        switch (opt) {
+        case 'n':
+            max_entries = next_pow2((unsigned)strtoul(optarg, NULL, 0));
+            if (max_entries < 64) {
+                fprintf(stderr, "error: --entries must be >= 64\n");
+                return 1;
+            }
+            break;
+        case 'b':
+            nb_bk = (unsigned)strtoul(optarg, NULL, 0);
+            if (nb_bk != 0 && (nb_bk & (nb_bk - 1)) != 0) {
+                fprintf(stderr, "error: --buckets must be a power of 2\n");
+                return 1;
+            }
+            break;
+        case 'r':
+            repeat = (unsigned)strtoul(optarg, NULL, 0);
+            break;
+        case 'h':
+            usage(argv[0]);
+            return 0;
+        default:
+            usage(argv[0]);
             return 1;
         }
-    }
-    if (argc > 2) {
-        nb_bk = (unsigned)strtoul(argv[2], NULL, 0);
-        if (nb_bk != 0 && (nb_bk & (nb_bk - 1)) != 0) {
-            fprintf(stderr, "nb_bk must be a power of 2 (0 = auto)\n");
-            return 1;
-        }
-    }
-    if (argc > 3) {
-        repeat = (unsigned)strtoul(argv[3], NULL, 0);
     }
 
     /* auto-size buckets: target ~50% fill (16 slots per bucket) */
@@ -710,10 +748,10 @@ main(int argc, char **argv)
     printf("  max_entries   = %u\n", max_entries);
     printf("  nb_bk      = %u  (slots = %u)\n",
            nb_bk, nb_bk * RIX_HASH_BUCKET_ENTRY_SZ);
-    printf("  bucket mem = %.1f MB\n", bk_size / 1e6);
-    printf("  pool4 mem  = %.1f MB\n", pool4_size / 1e6);
-    printf("  pool6 mem  = %.1f MB\n", pool6_size / 1e6);
-    printf("  poolu mem  = %.1f MB\n", poolu_size / 1e6);
+    printf("  bucket mem = %.1f MB\n", (double)bk_size   / 1e6);
+    printf("  pool4 mem  = %.1f MB\n", (double)pool4_size / 1e6);
+    printf("  pool6 mem  = %.1f MB\n", (double)pool6_size / 1e6);
+    printf("  poolu mem  = %.1f MB\n", (double)poolu_size / 1e6);
     printf("  repeat     = %u\n", repeat);
     printf("\n");
 
@@ -724,51 +762,60 @@ main(int argc, char **argv)
 
     /* --- IPv4 correctness tests --- */
     printf("--- IPv4 ---\n");
-    flow4_test_struct_sizes();
-    flow4_test_init_insert_find(buckets, nb_bk, pool4, max_entries);
-    flow4_test_expire(buckets, nb_bk, pool4, max_entries);
-    flow4_test_batch_lookup(buckets, nb_bk, pool4, max_entries);
-    flow4_test_insert_exhaustion(buckets, nb_bk, pool4, max_entries);
+    FCT_CALL(flow4, test_struct_sizes)();
+    flow4_test_init_insert_find(buckets, nb_bk, pool4, max_entries); /* IPv4-specific */
+    FCT_CALL(flow4, test_find)(buckets, nb_bk, pool4, max_entries);
+    FCT_CALL(flow4, test_remove)(buckets, nb_bk, pool4, max_entries);
+    FCT_CALL(flow4, test_flush)(buckets, nb_bk, pool4, max_entries);
+    FCT_CALL(flow4, test_expire)(buckets, nb_bk, pool4, max_entries);
+    FCT_CALL(flow4, test_batch_lookup)(buckets, nb_bk, pool4, max_entries);
+    flow4_test_insert_exhaustion(buckets, nb_bk, pool4, max_entries); /* IPv4-specific */
     printf("\nALL IPv4 TESTS PASSED\n");
 
     /* --- IPv6 correctness tests --- */
     printf("\n--- IPv6 ---\n");
-    flow6_test_struct_sizes();
-    flow6_test_init_insert_find(buckets, nb_bk, pool6, max_entries);
-    flow6_test_expire(buckets, nb_bk, pool6, max_entries);
-    flow6_test_batch_lookup(buckets, nb_bk, pool6, max_entries);
+    FCT_CALL(flow6, test_struct_sizes)();
+    flow6_test_init_insert_find(buckets, nb_bk, pool6, max_entries); /* IPv6-specific */
+    FCT_CALL(flow6, test_find)(buckets, nb_bk, pool6, max_entries);
+    FCT_CALL(flow6, test_remove)(buckets, nb_bk, pool6, max_entries);
+    FCT_CALL(flow6, test_flush)(buckets, nb_bk, pool6, max_entries);
+    FCT_CALL(flow6, test_expire)(buckets, nb_bk, pool6, max_entries);
+    FCT_CALL(flow6, test_batch_lookup)(buckets, nb_bk, pool6, max_entries);
     printf("\nALL IPv6 TESTS PASSED\n");
 
     /* --- Unified correctness tests --- */
     printf("\n--- Unified ---\n");
-    flowu_test_struct_sizes();
-    flowu_test_expire(buckets, nb_bk, poolu, max_entries);
-    flowu_test_batch_lookup(buckets, nb_bk, poolu, max_entries);
-    flowu_test_mixed(buckets, nb_bk, poolu, max_entries);
+    FCT_CALL(flowu, test_struct_sizes)();
+    FCT_CALL(flowu, test_find)(buckets, nb_bk, poolu, max_entries);
+    FCT_CALL(flowu, test_remove)(buckets, nb_bk, poolu, max_entries);
+    FCT_CALL(flowu, test_flush)(buckets, nb_bk, poolu, max_entries);
+    FCT_CALL(flowu, test_expire)(buckets, nb_bk, poolu, max_entries);
+    FCT_CALL(flowu, test_batch_lookup)(buckets, nb_bk, poolu, max_entries);
+    flowu_test_mixed(buckets, nb_bk, poolu, max_entries); /* Unified-specific */
     printf("\nALL Unified TESTS PASSED\n");
 
     /* --- IPv4 benchmarks --- */
     printf("\n========== IPv4 benchmarks ==========\n");
-    flow4_bench_insert(buckets, nb_bk, pool4, max_entries);
-    flow4_bench_lookup(buckets, nb_bk, pool4, max_entries, repeat);
-    flow4_bench_single_find(buckets, nb_bk, pool4, max_entries, repeat);
-    flow4_bench_expire(buckets, nb_bk, pool4, max_entries);
-    flow4_bench_pkt_loop(buckets, nb_bk, pool4, max_entries, repeat);
-    flow4_bench_bk0_rate(buckets, nb_bk, pool4, max_entries);
+    FCT_CALL(flow4, bench_insert)(buckets, nb_bk, pool4, max_entries);
+    FCT_CALL(flow4, bench_lookup)(buckets, nb_bk, pool4, max_entries, repeat);
+    flow4_bench_single_find(buckets, nb_bk, pool4, max_entries, repeat); /* IPv4-specific */
+    FCT_CALL(flow4, bench_expire)(buckets, nb_bk, pool4, max_entries);
+    FCT_CALL(flow4, bench_pkt_loop)(buckets, nb_bk, pool4, max_entries, repeat);
+    flow4_bench_bk0_rate(buckets, nb_bk, pool4, max_entries); /* IPv4-specific */
 
     /* --- IPv6 benchmarks --- */
     printf("\n========== IPv6 benchmarks ==========\n");
-    flow6_bench_insert(buckets, nb_bk, pool6, max_entries);
-    flow6_bench_lookup(buckets, nb_bk, pool6, max_entries, repeat);
-    flow6_bench_expire(buckets, nb_bk, pool6, max_entries);
-    flow6_bench_pkt_loop(buckets, nb_bk, pool6, max_entries, repeat);
+    FCT_CALL(flow6, bench_insert)(buckets, nb_bk, pool6, max_entries);
+    FCT_CALL(flow6, bench_lookup)(buckets, nb_bk, pool6, max_entries, repeat);
+    FCT_CALL(flow6, bench_expire)(buckets, nb_bk, pool6, max_entries);
+    FCT_CALL(flow6, bench_pkt_loop)(buckets, nb_bk, pool6, max_entries, repeat);
 
     /* --- Unified benchmarks --- */
     printf("\n========== Unified benchmarks ==========\n");
-    flowu_bench_insert(buckets, nb_bk, poolu, max_entries);
-    flowu_bench_lookup(buckets, nb_bk, poolu, max_entries, repeat);
-    flowu_bench_expire(buckets, nb_bk, poolu, max_entries);
-    flowu_bench_pkt_loop(buckets, nb_bk, poolu, max_entries, repeat);
+    FCT_CALL(flowu, bench_insert)(buckets, nb_bk, poolu, max_entries);
+    FCT_CALL(flowu, bench_lookup)(buckets, nb_bk, poolu, max_entries, repeat);
+    FCT_CALL(flowu, bench_expire)(buckets, nb_bk, poolu, max_entries);
+    FCT_CALL(flowu, bench_pkt_loop)(buckets, nb_bk, poolu, max_entries, repeat);
 
     printf("\n");
 

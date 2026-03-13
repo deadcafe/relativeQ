@@ -4,7 +4,7 @@
  * Copyright (c) 2026 deadcafe.beef@gmail.com
  * All rights reserved.
  *
- * flow_cache_common.h — Macro-templated flow cache declarations.
+ * flow_cache_common.h - Macro-templated flow cache declarations.
  *
  * Before including this file, define:
  *   FC_PREFIX        e.g. flow4
@@ -18,7 +18,7 @@
  * must already be defined before including this file.
  */
 
-#include "flow_cache.h"
+#include "flow_cache_defs.h"
 
 /* token-paste helpers */
 #define _FCC_CAT(a, b)   a ## b
@@ -56,7 +56,40 @@ struct FC_CACHE {
 
 /*===========================================================================
  * API declarations
+ *
+ * Typical packet processing loop:
+ *
+ *   uint64_t now = flow_cache_rdtsc();
+ *
+ *   // 1. Pipelined batch lookup (DRAM-latency hiding)
+ *   PREFIX_cache_lookup_batch(&fc, keys, nb_pkts, results);
+ *
+ *   // 2. Per-packet post-processing
+ *   unsigned misses = 0;
+ *   for (unsigned i = 0; i < nb_pkts; i++) {
+ *       if (results[i]) {
+ *           PREFIX_cache_touch(results[i], now, pkt_len[i]);  // hit
+ *       } else {
+ *           struct ENTRY *e = PREFIX_cache_insert(&fc, &keys[i], now); // miss
+ *           if (e) { e->action = slow_path(&keys[i]); }
+ *           misses++;
+ *       }
+ *   }
+ *
+ *   // 3. Adaptive timeout adjustment (call every batch)
+ *   PREFIX_cache_adjust_timeout(&fc, misses);
+ *
+ *   // 4. Aging eviction (call every batch or every N batches)
+ *   PREFIX_cache_expire(&fc, now);
+ *
+ *   // 5. Explicit remove (e.g., TCP FIN/RST, admin teardown)
+ *   PREFIX_cache_remove(&fc, entry);
+ *
+ *   // 6. Bulk clear (e.g., VRF delete, interface down)
+ *   PREFIX_cache_flush(&fc);
  *===========================================================================*/
+
+/* Lifecycle */
 void FCC_FN(_cache_init)(struct FC_CACHE *fc,
                          struct rix_hash_bucket_s *buckets,
                          unsigned nb_bk,
@@ -64,27 +97,54 @@ void FCC_FN(_cache_init)(struct FC_CACHE *fc,
                          unsigned max_entries,
                          uint64_t timeout_ms);
 
+void FCC_FN(_cache_flush)(struct FC_CACHE *fc);
+
+/* Lookup */
 void FCC_FN(_cache_lookup_batch)(struct FC_CACHE *fc,
                                  const struct FC_KEY *keys,
                                  unsigned nb_pkts,
                                  struct FC_ENTRY **results);
 
+struct FC_ENTRY *FCC_FN(_cache_find)(struct FC_CACHE *fc,
+                                     const struct FC_KEY *key);
+
+/* Mutation */
 struct FC_ENTRY *FCC_FN(_cache_insert)(struct FC_CACHE *fc,
                                        const struct FC_KEY *key,
                                        uint64_t now);
 
-void FCC_FN(_cache_expire)(struct FC_CACHE *fc,
-                           uint64_t now);
+void FCC_FN(_cache_remove)(struct FC_CACHE *fc,
+                            struct FC_ENTRY *entry);
 
-void FCC_FN(_cache_expire_2stage)(struct FC_CACHE *fc,
-                                   uint64_t now);
+/* Aging */
+void FCC_FN(_cache_expire)(struct FC_CACHE *fc, uint64_t now);
 
+/*
+ * expire_2stage: bucket-prefetch variant of expire.
+ *
+ * Adds a mid-distance stage that prefetches the hash bucket before
+ * _remove(), warming it when the pool >> LLC or eviction rate is high.
+ * Has extra overhead (stage-1 check) that hurts when buckets are already
+ * warm (small pool) or eviction is rare.  Prefer expire() by default.
+ */
+void FCC_FN(_cache_expire_2stage)(struct FC_CACHE *fc, uint64_t now);
+
+/* Statistics */
 void FCC_FN(_cache_stats)(const struct FC_CACHE *fc,
                           struct flow_cache_stats *out);
 
 /*===========================================================================
  * Inline helpers
  *===========================================================================*/
+
+/* Current number of active entries. */
+static inline unsigned
+FCC_FN(_cache_nb_entries)(const struct FC_CACHE *fc)
+{
+    return fc->ht_head.rhh_nb;
+}
+
+/* Update cached slow-path result for a hit entry. */
 static inline void
 FCC_FN(_cache_update_action)(struct FC_ENTRY *entry,
                              uint32_t action,
@@ -94,6 +154,7 @@ FCC_FN(_cache_update_action)(struct FC_ENTRY *entry,
     entry->qos_class = qos_class;
 }
 
+/* Record a packet hit: refresh timestamp and accumulate counters. */
 static inline void
 FCC_FN(_cache_touch)(struct FC_ENTRY *entry, uint64_t now,
                      uint32_t pkt_len)
@@ -104,76 +165,28 @@ FCC_FN(_cache_touch)(struct FC_ENTRY *entry, uint64_t now,
 }
 
 /*
- * Adaptive expire: scan from fill-rate level, timeout from miss-rate.
- *
- * Scan count: fill-rate-driven (level 0..15, scan 64→1024).
- * Timeout:    miss-rate-driven smooth adjustment (no oscillation).
- *
- * Scan level computation uses shifts (max_entries is power of 2):
- *   excess = nb - max/2
- *   level  = excess >> (log2(max) - 4)
- *   level 0-3: scan  64..512,  level >= 4: scan 1024
- */
-static inline unsigned
-FCC_FN(_cache_expire_level)(const struct FC_CACHE *fc)
-{
-    unsigned nb   = fc->ht_head.rhh_nb;
-    unsigned max  = fc->max_entries;
-    unsigned half = max >> 1;
-
-    if (nb <= half)
-        return 0;
-
-    unsigned excess = nb - half;
-    unsigned shift  = (unsigned)__builtin_ctz(max) - 4; /* max >= 64 */
-    unsigned level  = excess >> shift;
-
-    return (level > 15) ? 15 : level;
-}
-
-static inline unsigned
-FCC_FN(_cache_expire_scan)(const struct FC_CACHE *fc)
-{
-    unsigned level = FCC_FN(_cache_expire_level)(fc);
-
-    if (level >= 4)
-        return FLOW_CACHE_EXPIRE_SCAN_MAX;
-
-    return FLOW_CACHE_EXPIRE_SCAN_MIN << level;
-}
-
-/*
  * Miss-rate-driven timeout adjustment.
  *
- * Called after each batch with the number of misses (new flows).
- * - Each miss decays eff_timeout by misses/(batch*16) fraction.
- * - Recovery: eff_timeout slowly restores toward base timeout.
- * - At steady state: decay == recovery → stable timeout.
+ * Call once per batch, passing the number of misses (new flows) in that
+ * batch.  High miss rate shortens eff_timeout_tsc (more aggressive aging);
+ * quiet periods let it recover toward the configured base timeout.
  *
  * All shift/multiply, no division.
- *
- * FLOW_CACHE_TIMEOUT_DECAY_SHIFT controls decay sensitivity.
- *   batch=256 → log2(256)+4 = 12.  Larger = gentler.
- * FLOW_CACHE_TIMEOUT_RECOVER_SHIFT controls recovery speed.
- *   8 = recover 1/256 of gap per batch.  Larger = slower.
+ *   FLOW_CACHE_TIMEOUT_DECAY_SHIFT   controls decay sensitivity (larger = gentler).
+ *   FLOW_CACHE_TIMEOUT_RECOVER_SHIFT controls recovery speed    (larger = slower).
  */
 static inline void
-FCC_FN(_cache_adjust_timeout)(struct FC_CACHE *fc,
-                               unsigned misses)
+FCC_FN(_cache_adjust_timeout)(struct FC_CACHE *fc, unsigned misses)
 {
-    uint64_t eff = fc->eff_timeout_tsc;
-    uint64_t base = fc->timeout_tsc;
+    uint64_t eff    = fc->eff_timeout_tsc;
+    uint64_t base   = fc->timeout_tsc;
     uint64_t min_to = fc->min_timeout_tsc;
 
-    /* decay: proportional to miss count */
     if (misses > 0) {
         uint64_t decay = (eff * misses) >> FLOW_CACHE_TIMEOUT_DECAY_SHIFT;
         if (decay == 0)
             decay = 1;
-        if (eff > min_to + decay)
-            eff -= decay;
-        else
-            eff = min_to;
+        eff = (eff > min_to + decay) ? eff - decay : min_to;
     }
 
     /* recovery: slowly restore toward base */

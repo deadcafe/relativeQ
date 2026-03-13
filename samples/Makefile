@@ -4,8 +4,34 @@
 
 TOPDIR := $(shell cd .. && pwd)
 
-CFLAGS       = -std=gnu11 -g -O2 -mavx2 -msse4.2 -Wall -Wextra -I$(TOPDIR)
-BENCH_CFLAGS = -std=gnu11 -O3 -mavx2 -msse4.2 -Wall -Wextra -I$(TOPDIR)
+# Detect GCC vs Clang: adjust flags that differ between the two
+CC_IS_CLANG  := $(shell $(CC) --version 2>&1 | grep -c "clang")
+
+WARN_COMMON  = -Wall -Wextra \
+               -Wshadow \
+               -Wstrict-prototypes \
+               -Wmissing-prototypes \
+               -Wcast-qual \
+               -Wconversion \
+               -Wsign-conversion \
+               -Wundef \
+               -Wformat=2 \
+               -Wnull-dereference \
+               -Wdouble-promotion \
+               -Wredundant-decls \
+               -Werror
+
+ifeq ($(CC_IS_CLANG),0)
+# GCC: supports =strict / =2 level suffixes
+WARN_EXTRA   = -Wcast-align=strict -Wstrict-aliasing=2
+else
+# Clang: same flags without level suffixes
+WARN_EXTRA   = -Wcast-align -Wstrict-aliasing
+endif
+
+WARN         = $(WARN_COMMON) $(WARN_EXTRA)
+CFLAGS       = -std=gnu11 -g -O2 -mavx2 -msse4.2 $(WARN) -I$(TOPDIR)/include
+BENCH_CFLAGS = -std=gnu11 -O3 -mavx2 -msse4.2 $(WARN) -I$(TOPDIR)/include
 
 COMMON_SRC   = flow4_cache.c flow6_cache.c flow_unified_cache.c
 COMMON_HDR   = flow4_cache.h flow6_cache.h flow_unified_cache.h \

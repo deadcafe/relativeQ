@@ -4,7 +4,7 @@
  * Copyright (c) 2026 deadcafe.beef@gmail.com
  * All rights reserved.
  *
- * flow_unified_cache.h — Unified IPv4/IPv6 flow cache.
+ * flow_unified_cache.h - Unified IPv4/IPv6 flow cache.
  *
  * Single hash table handles both address families.
  * Key includes family field so v4/v6 entries never collide.
@@ -17,6 +17,7 @@
 #include <rix/rix_defs.h>
 #include <rix/rix_queue.h>
 #include <rix/rix_hash.h>
+#include "flow_cache_defs.h"
 
 /*===========================================================================
  * Unified flow key: 5-tuple + vrfid + family (44 bytes)
@@ -46,7 +47,7 @@ struct flowu_key {
             uint8_t  dst[16];
         } v6;
     } addr;
-};  /* 44B total */
+} __attribute__((packed));  /* 44B total */
 
 /*===========================================================================
  * Key construction helpers
@@ -92,35 +93,35 @@ flowu_key_v6(const uint8_t *src_ip, const uint8_t *dst_ip,
  * CL1 (64-127): counters & management
  *===========================================================================*/
 struct flowu_entry {
-    /* --- CL0: lookup + expire hot path (64 bytes) --- */
+    FLOW_CACHE_CL(0);                   /* lookup + expire hot path */
     struct flowu_key     key;           /* 44B */
     uint32_t             cur_hash;      /*  4B: hash_field for O(1) remove */
     uint64_t             last_ts;       /*  8B: last access TSC (0 = invalid) */
     RIX_SLIST_ENTRY(struct flowu_entry) free_link;  /* 4B: free list */
     uint8_t              reserved0[4];  /*  4B: pad to 64B */
 
-    /* --- CL1: counters & hit-path data (64 bytes) --- */
+    FLOW_CACHE_CL(1);                   /* counters & management */
     uint32_t             action;        /*  4B: cached ACL result */
     uint32_t             qos_class;     /*  4B: cached QoS class */
     uint64_t             packets;       /*  8B */
     uint64_t             bytes;         /*  8B */
     uint8_t              reserved1[40]; /* 40B: pad to 64B */
-} __attribute__((aligned(64)));
+} __attribute__((aligned(FLOW_CACHE_LINE_SIZE)));
 
 /*===========================================================================
  * Key comparison: full 44-byte memcmp (family included)
  *===========================================================================*/
-static inline int
+static inline int __attribute__((nonnull(1,2)))
 flowu_cmp(const void *a, const void *b)
 {
     return memcmp(a, b, sizeof(struct flowu_key)) == 0;
 }
 
 /*===========================================================================
- * Generate hash table functions: flowu_ht_*
+ * Hash table head type: flowu_ht
+ * RIX_HASH_GENERATE is expanded in each *.c that needs the implementations.
  *===========================================================================*/
 RIX_HASH_HEAD(flowu_ht);
-RIX_HASH_GENERATE(flowu_ht, flowu_entry, key, cur_hash, flowu_cmp)
 
 /*===========================================================================
  * Cache struct, API declarations, and inline helpers

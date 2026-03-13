@@ -7,6 +7,8 @@
 
 #include "flow4_cache.h"
 
+RIX_HASH_GENERATE_STATIC(flow4_ht, flow4_entry, key, cur_hash, flow4_cmp)
+
 #define FC_PREFIX       flow4
 #define FC_ENTRY        flow4_entry
 #define FC_KEY          flow4_key

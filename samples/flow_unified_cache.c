@@ -7,6 +7,8 @@
 
 #include "flow_unified_cache.h"
 
+RIX_HASH_GENERATE_STATIC(flowu_ht, flowu_entry, key, cur_hash, flowu_cmp)
+
 #define FC_PREFIX       flowu
 #define FC_ENTRY        flowu_entry
 #define FC_KEY          flowu_key

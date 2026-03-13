@@ -7,6 +7,8 @@
 
 #include "flow6_cache.h"
 
+RIX_HASH_GENERATE_STATIC(flow6_ht, flow6_entry, key, cur_hash, flow6_cmp)
+
 #define FC_PREFIX       flow6
 #define FC_ENTRY        flow6_entry
 #define FC_KEY          flow6_key

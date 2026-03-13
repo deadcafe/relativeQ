@@ -9,5 +9,5 @@ IndentPPDirectives: None
 AlignEscapedNewlines: Right
 ContinuationIndentWidth: 4
 
-# マクロを勝手に折り返して \ の位置を壊さない
+# Do not auto-wrap macros and break backslash positions
 ColumnLimit: 0
