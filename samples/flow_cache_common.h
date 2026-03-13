@@ -21,9 +21,9 @@
 #include "flow_cache_defs.h"
 
 /* token-paste helpers */
-#define _FCC_CAT(a, b)   a ## b
-#define FCC_CAT(a, b)    _FCC_CAT(a, b)
-#define FCC_FN(suffix)   FCC_CAT(FC_PREFIX, suffix)
+#define _FCC_CAT(a, b, c)      a ## b ## c
+#define FCC_CAT(a, b, c)       _FCC_CAT(a, b, c)
+#define FCC_FN(prefix, suffix) FCC_CAT(prefix, _, suffix)
 
 /*===========================================================================
  * Free list head + cache struct
@@ -90,34 +90,34 @@ struct FC_CACHE {
  *===========================================================================*/
 
 /* Lifecycle */
-void FCC_FN(_cache_init)(struct FC_CACHE *fc,
+void FCC_FN(FC_PREFIX, cache_init)(struct FC_CACHE *fc,
                          struct rix_hash_bucket_s *buckets,
                          unsigned nb_bk,
                          struct FC_ENTRY *pool,
                          unsigned max_entries,
                          uint64_t timeout_ms);
 
-void FCC_FN(_cache_flush)(struct FC_CACHE *fc);
+void FCC_FN(FC_PREFIX, cache_flush)(struct FC_CACHE *fc);
 
 /* Lookup */
-void FCC_FN(_cache_lookup_batch)(struct FC_CACHE *fc,
+void FCC_FN(FC_PREFIX, cache_lookup_batch)(struct FC_CACHE *fc,
                                  const struct FC_KEY *keys,
                                  unsigned nb_pkts,
                                  struct FC_ENTRY **results);
 
-struct FC_ENTRY *FCC_FN(_cache_find)(struct FC_CACHE *fc,
+struct FC_ENTRY *FCC_FN(FC_PREFIX, cache_find)(struct FC_CACHE *fc,
                                      const struct FC_KEY *key);
 
 /* Mutation */
-struct FC_ENTRY *FCC_FN(_cache_insert)(struct FC_CACHE *fc,
+struct FC_ENTRY *FCC_FN(FC_PREFIX, cache_insert)(struct FC_CACHE *fc,
                                        const struct FC_KEY *key,
                                        uint64_t now);
 
-void FCC_FN(_cache_remove)(struct FC_CACHE *fc,
+void FCC_FN(FC_PREFIX, cache_remove)(struct FC_CACHE *fc,
                             struct FC_ENTRY *entry);
 
 /* Aging */
-void FCC_FN(_cache_expire)(struct FC_CACHE *fc, uint64_t now);
+void FCC_FN(FC_PREFIX, cache_expire)(struct FC_CACHE *fc, uint64_t now);
 
 /*
  * expire_2stage: bucket-prefetch variant of expire.
@@ -127,10 +127,10 @@ void FCC_FN(_cache_expire)(struct FC_CACHE *fc, uint64_t now);
  * Has extra overhead (stage-1 check) that hurts when buckets are already
  * warm (small pool) or eviction is rare.  Prefer expire() by default.
  */
-void FCC_FN(_cache_expire_2stage)(struct FC_CACHE *fc, uint64_t now);
+void FCC_FN(FC_PREFIX, cache_expire_2stage)(struct FC_CACHE *fc, uint64_t now);
 
 /* Statistics */
-void FCC_FN(_cache_stats)(const struct FC_CACHE *fc,
+void FCC_FN(FC_PREFIX, cache_stats)(const struct FC_CACHE *fc,
                           struct flow_cache_stats *out);
 
 /*===========================================================================
@@ -139,14 +139,14 @@ void FCC_FN(_cache_stats)(const struct FC_CACHE *fc,
 
 /* Current number of active entries. */
 static inline unsigned
-FCC_FN(_cache_nb_entries)(const struct FC_CACHE *fc)
+FCC_FN(FC_PREFIX, cache_nb_entries)(const struct FC_CACHE *fc)
 {
     return fc->ht_head.rhh_nb;
 }
 
 /* Update cached slow-path result for a hit entry. */
 static inline void
-FCC_FN(_cache_update_action)(struct FC_ENTRY *entry,
+FCC_FN(FC_PREFIX, cache_update_action)(struct FC_ENTRY *entry,
                              uint32_t action,
                              uint32_t qos_class)
 {
@@ -156,7 +156,7 @@ FCC_FN(_cache_update_action)(struct FC_ENTRY *entry,
 
 /* Record a packet hit: refresh timestamp and accumulate counters. */
 static inline void
-FCC_FN(_cache_touch)(struct FC_ENTRY *entry, uint64_t now,
+FCC_FN(FC_PREFIX, cache_touch)(struct FC_ENTRY *entry, uint64_t now,
                      uint32_t pkt_len)
 {
     entry->last_ts = now;
@@ -176,7 +176,7 @@ FCC_FN(_cache_touch)(struct FC_ENTRY *entry, uint64_t now,
  *   FLOW_CACHE_TIMEOUT_RECOVER_SHIFT controls recovery speed    (larger = slower).
  */
 static inline void
-FCC_FN(_cache_adjust_timeout)(struct FC_CACHE *fc, unsigned misses)
+FCC_FN(FC_PREFIX, cache_adjust_timeout)(struct FC_CACHE *fc, unsigned misses)
 {
     uint64_t eff    = fc->eff_timeout_tsc;
     uint64_t base   = fc->timeout_tsc;

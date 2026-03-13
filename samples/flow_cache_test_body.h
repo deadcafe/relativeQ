@@ -22,13 +22,13 @@
 /* token-paste helpers */
 #define _FCT_CAT(a, b, c)   a ## b ## c
 #define FCT_CAT(a, b, c)    _FCT_CAT(a, b, c)
-#define FCT_FN(suffix)      FCT_CAT(FCT_PREFIX, _, suffix)
+#define FCT_FN(prefix, suffix) FCT_CAT(prefix, _, suffix)
 
 /*===========================================================================
  * Test: structure sizes and alignment
  *===========================================================================*/
 static void
-FCT_FN(test_struct_sizes)(void)
+FCT_FN(FCT_PREFIX,test_struct_sizes)(void)
 {
     printf("[T-%s] struct sizes\n", FCT_LABEL);
     printf("    key:   %zu bytes\n", sizeof(struct FCT_KEY));
@@ -47,7 +47,7 @@ FCT_FN(test_struct_sizes)(void)
  * Test: find (non-pipelined single lookup)
  *===========================================================================*/
 static void
-FCT_FN(test_find)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+FCT_FN(FCT_PREFIX,test_find)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
                    struct FCT_ENTRY *pool, unsigned max_entries)
 {
     printf("[T-%s] find\n", FCT_LABEL);
@@ -79,7 +79,7 @@ FCT_FN(test_find)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
  * Test: explicit remove
  *===========================================================================*/
 static void
-FCT_FN(test_remove)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+FCT_FN(FCT_PREFIX,test_remove)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
                      struct FCT_ENTRY *pool, unsigned max_entries)
 {
     printf("[T-%s] remove\n", FCT_LABEL);
@@ -123,7 +123,7 @@ FCT_FN(test_remove)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
  * Test: flush (bulk remove)
  *===========================================================================*/
 static void
-FCT_FN(test_flush)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+FCT_FN(FCT_PREFIX,test_flush)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
                     struct FCT_ENTRY *pool, unsigned max_entries)
 {
     printf("[T-%s] flush\n", FCT_LABEL);
@@ -173,7 +173,7 @@ FCT_FN(test_flush)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
  * Test: expire
  *===========================================================================*/
 static void
-FCT_FN(test_expire)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+FCT_FN(FCT_PREFIX,test_expire)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
                      struct FCT_ENTRY *pool, unsigned max_entries)
 {
     printf("[T-%s] expire\n", FCT_LABEL);
@@ -217,7 +217,7 @@ FCT_FN(test_expire)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
  * Test: batch lookup
  *===========================================================================*/
 static void
-FCT_FN(test_batch_lookup)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+FCT_FN(FCT_PREFIX,test_batch_lookup)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
                            struct FCT_ENTRY *pool, unsigned max_entries)
 {
     printf("[T-%s] batch lookup\n", FCT_LABEL);
@@ -252,7 +252,7 @@ FCT_FN(test_batch_lookup)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
  * Fill cache with N random keys
  *===========================================================================*/
 static struct FCT_KEY *
-FCT_FN(fill_cache)(struct FCT_CACHE *fc, unsigned count, unsigned *actual_out)
+FCT_FN(FCT_PREFIX,fill_cache)(struct FCT_CACHE *fc, unsigned count, unsigned *actual_out)
 {
     struct FCT_KEY *keys = malloc((size_t)count * sizeof(*keys));
     assert(keys);
@@ -271,7 +271,7 @@ FCT_FN(fill_cache)(struct FCT_CACHE *fc, unsigned count, unsigned *actual_out)
  * Bench: insert throughput
  *===========================================================================*/
 static void
-FCT_FN(bench_insert)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+FCT_FN(FCT_PREFIX,bench_insert)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
                       struct FCT_ENTRY *pool, unsigned max_entries)
 {
     printf("\n[B-%s] insert (max_entries=%u, nb_bk=%u)\n",
@@ -308,7 +308,7 @@ FCT_FN(bench_insert)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
  * Bench: pipelined batch lookup - hit-rate sweep (DRAM-cold)
  *===========================================================================*/
 static void
-FCT_FN(bench_lookup)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+FCT_FN(FCT_PREFIX,bench_lookup)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
                       struct FCT_ENTRY *pool, unsigned max_entries,
                       unsigned repeat)
 {
@@ -323,7 +323,7 @@ FCT_FN(bench_lookup)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     unsigned fill_target = max_entries * 3 / 4;
     unsigned actual_fill;
     double t_fill0 = now_sec();
-    struct FCT_KEY *hit_keys = FCT_FN(fill_cache)(&fc, fill_target,
+    struct FCT_KEY *hit_keys = FCT_FN(FCT_PREFIX,fill_cache)(&fc, fill_target,
                                                     &actual_fill);
     double t_fill1 = now_sec();
     printf("    filled: %u entries (%.1f%% of slots) in %.1f s\n",
@@ -400,7 +400,7 @@ FCT_FN(bench_lookup)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
  * Bench: expire
  *===========================================================================*/
 static void
-FCT_FN(bench_expire)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+FCT_FN(FCT_PREFIX,bench_expire)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
                       struct FCT_ENTRY *pool, unsigned max_entries)
 {
     printf("\n[B-%s] expire (max_entries=%u)\n", FCT_LABEL, max_entries);
@@ -409,7 +409,7 @@ FCT_FN(bench_expire)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 1 /* 1 ms */);
 
     unsigned filled;
-    struct FCT_KEY *keys = FCT_FN(fill_cache)(&fc, max_entries, &filled);
+    struct FCT_KEY *keys = FCT_FN(FCT_PREFIX,fill_cache)(&fc, max_entries, &filled);
     printf("    filled: %u entries\n", filled);
 
     struct timespec delay = { .tv_sec = 0, .tv_nsec = 10000000 };
@@ -434,7 +434,7 @@ FCT_FN(bench_expire)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
  * Bench: packet processing loop - lookup + insert + expire
  *===========================================================================*/
 static void
-FCT_FN(run_pkt_loop)(struct rix_hash_bucket_s *buckets, unsigned nb_bk_use,
+FCT_FN(FCT_PREFIX,run_pkt_loop)(struct rix_hash_bucket_s *buckets, unsigned nb_bk_use,
                       struct FCT_ENTRY *pool, unsigned max_entries,
                       unsigned repeat, const char *label)
 {
@@ -451,7 +451,7 @@ FCT_FN(run_pkt_loop)(struct rix_hash_bucket_s *buckets, unsigned nb_bk_use,
     if (prefill > max_entries)
         prefill = max_entries * 70 / 100;
     unsigned filled;
-    struct FCT_KEY *prefill_keys = FCT_FN(fill_cache)(&fc, prefill, &filled);
+    struct FCT_KEY *prefill_keys = FCT_FN(FCT_PREFIX,fill_cache)(&fc, prefill, &filled);
     printf("    pre-filled: %u entries (%.1f%% fill)\n",
            filled, 100.0 * filled / total_slots);
 
@@ -542,11 +542,11 @@ FCT_FN(run_pkt_loop)(struct rix_hash_bucket_s *buckets, unsigned nb_bk_use,
 }
 
 static void
-FCT_FN(bench_pkt_loop)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+FCT_FN(FCT_PREFIX,bench_pkt_loop)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
                         struct FCT_ENTRY *pool, unsigned max_entries,
                         unsigned repeat)
 {
-    FCT_FN(run_pkt_loop)(buckets, nb_bk, pool, max_entries, repeat,
+    FCT_FN(FCT_PREFIX,run_pkt_loop)(buckets, nb_bk, pool, max_entries, repeat,
                           "standard sizing (pool ~ 50% fill)");
 
     unsigned nb_bk_tight = next_pow2((max_entries + RIX_HASH_BUCKET_ENTRY_SZ - 1)
@@ -555,7 +555,7 @@ FCT_FN(bench_pkt_loop)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
            max_entries < ((uint64_t)nb_bk_tight * RIX_HASH_BUCKET_ENTRY_SZ * 3 >> 2))
         nb_bk_tight >>= 1;
     if (nb_bk_tight <= nb_bk)
-        FCT_FN(run_pkt_loop)(buckets, nb_bk_tight, pool, max_entries, repeat,
+        FCT_FN(FCT_PREFIX,run_pkt_loop)(buckets, nb_bk_tight, pool, max_entries, repeat,
                               "tight sizing (pool ~ 100% slots)");
 }
 

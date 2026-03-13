@@ -18,10 +18,10 @@
 #include <assert.h>
 #include <string.h>
 
-/* token-paste helpers */
-#define _FC_CAT(a, b)    a ## b
-#define FC_CAT(a, b)     _FC_CAT(a, b)
-#define FC_FN(suffix)    FC_CAT(FC_PREFIX, suffix)
+/* token-paste helpers (definitions only; calls use FC_CALL from flow_cache_defs.h) */
+#define _FC_FN_CAT(a, b, c)  a ## b ## c
+#define FC_FN_CAT(a, b, c)   _FC_FN_CAT(a, b, c)
+#define FC_FN(prefix, suffix) FC_FN_CAT(prefix, _, suffix)
 
 /*===========================================================================
  * Internal: fill-rate-driven expire pressure
@@ -35,7 +35,7 @@
  *   level 0-3: scan 64..512,  level >= 4: scan 1024
  *===========================================================================*/
 static inline unsigned
-FC_FN(_cache_expire_level)(const struct FC_CACHE *fc)
+FC_FN(FC_PREFIX, cache_expire_level)(const struct FC_CACHE *fc)
 {
     unsigned nb   = fc->ht_head.rhh_nb;
     unsigned max  = fc->max_entries;
@@ -52,9 +52,9 @@ FC_FN(_cache_expire_level)(const struct FC_CACHE *fc)
 }
 
 static inline unsigned
-FC_FN(_cache_expire_scan)(const struct FC_CACHE *fc)
+FC_FN(FC_PREFIX, cache_expire_scan)(const struct FC_CACHE *fc)
 {
-    unsigned level = FC_FN(_cache_expire_level)(fc);
+    unsigned level = FC_CALL(FC_PREFIX, cache_expire_level)(fc);
 
     if (level >= 4)
         return FLOW_CACHE_EXPIRE_SCAN_MAX;
@@ -66,7 +66,7 @@ FC_FN(_cache_expire_scan)(const struct FC_CACHE *fc)
  * Init
  *===========================================================================*/
 void
-FC_FN(_cache_init)(struct FC_CACHE *fc,
+FC_FN(FC_PREFIX, cache_init)(struct FC_CACHE *fc,
                    struct rix_hash_bucket_s *buckets,
                    unsigned nb_bk,
                    struct FC_ENTRY *pool,
@@ -77,7 +77,7 @@ FC_FN(_cache_init)(struct FC_CACHE *fc,
 
     rix_hash_arch_init();
 
-    FC_CAT(FC_HT_PREFIX, _init)(&fc->ht_head, nb_bk);
+    FC_CALL(FC_HT_PREFIX, init)(&fc->ht_head, nb_bk);
     fc->buckets = buckets;
     fc->nb_bk   = nb_bk;
     memset(buckets, 0, nb_bk * sizeof(*buckets));
@@ -114,7 +114,7 @@ FC_FN(_cache_init)(struct FC_CACHE *fc,
  * caller falls through to evict_bucket_oldest.
  *===========================================================================*/
 static struct FC_ENTRY *
-FC_FN(_cache_evict_one)(struct FC_CACHE *fc, uint64_t now)
+FC_FN(FC_PREFIX, cache_evict_one)(struct FC_CACHE *fc, uint64_t now)
 {
     uint64_t timeout = fc->eff_timeout_tsc;
     const unsigned pf_dist = FLOW_CACHE_EXPIRE_PF_DIST;
@@ -132,7 +132,7 @@ FC_FN(_cache_evict_one)(struct FC_CACHE *fc, uint64_t now)
         if (now - entry->last_ts <= timeout)
             continue;
 
-        FC_CAT(FC_HT_PREFIX, _remove)(&fc->ht_head, fc->buckets,
+        FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
                                        fc->pool, entry);
         entry->last_ts = 0;
         fc->stats.evictions++;
@@ -150,7 +150,7 @@ FC_FN(_cache_evict_one)(struct FC_CACHE *fc, uint64_t now)
  * ht_insert (fast path, no cuckoo needed).
  *===========================================================================*/
 static struct FC_ENTRY *
-FC_FN(_cache_evict_bucket_oldest)(struct FC_CACHE *fc,
+FC_FN(FC_PREFIX, cache_evict_bucket_oldest)(struct FC_CACHE *fc,
                                    const struct FC_KEY *key)
 {
     unsigned mask = fc->ht_head.rhh_mask;
@@ -171,7 +171,7 @@ FC_FN(_cache_evict_bucket_oldest)(struct FC_CACHE *fc,
             if (nidx == (unsigned)RIX_NIL)
                 continue;
             struct FC_ENTRY *e =
-                FC_CAT(FC_HT_PREFIX, _hptr)(fc->pool, nidx);
+                FC_CALL(FC_HT_PREFIX, hptr)(fc->pool, nidx);
             if (e->last_ts == 0)
                 continue;
             if (e->last_ts < oldest_ts) {
@@ -184,7 +184,7 @@ FC_FN(_cache_evict_bucket_oldest)(struct FC_CACHE *fc,
     if (oldest == NULL)
         return NULL;
 
-    FC_CAT(FC_HT_PREFIX, _remove)(&fc->ht_head, fc->buckets,
+    FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
                                    fc->pool, oldest);
     oldest->last_ts = 0;
     fc->stats.evictions++;
@@ -199,18 +199,18 @@ FC_FN(_cache_evict_bucket_oldest)(struct FC_CACHE *fc,
  * ht_insert always finds an empty slot in the fast path.
  *===========================================================================*/
 struct FC_ENTRY *
-FC_FN(_cache_insert)(struct FC_CACHE *fc,
+FC_FN(FC_PREFIX, cache_insert)(struct FC_CACHE *fc,
                      const struct FC_KEY *key,
                      uint64_t now)
 {
     struct FC_ENTRY *entry = RIX_SLIST_FIRST(&fc->free_head, fc->pool);
 
     if (entry == NULL) {
-        entry = FC_FN(_cache_evict_one)(fc, now);
+        entry = FC_CALL(FC_PREFIX, cache_evict_one)(fc, now);
         if (entry == NULL) {
             /* Pool exhausted, no expired entry found.
              * Force-evict the oldest entry in the target bucket. */
-            entry = FC_FN(_cache_evict_bucket_oldest)(fc, key);
+            entry = FC_CALL(FC_PREFIX, cache_evict_bucket_oldest)(fc, key);
             if (entry == NULL)
                 return NULL;  /* both buckets empty - shouldn't happen */
         }
@@ -226,7 +226,7 @@ FC_FN(_cache_insert)(struct FC_CACHE *fc,
     entry->bytes     = 0;
 
     struct FC_ENTRY *dup =
-        FC_CAT(FC_HT_PREFIX, _insert)(&fc->ht_head, fc->buckets,
+        FC_CALL(FC_HT_PREFIX, insert)(&fc->ht_head, fc->buckets,
                                        fc->pool, entry);
     if (dup == NULL) {
         fc->stats.inserts++;
@@ -250,7 +250,7 @@ FC_FN(_cache_insert)(struct FC_CACHE *fc,
  * Pipelined batch lookup
  *===========================================================================*/
 void
-FC_FN(_cache_lookup_batch)(struct FC_CACHE *fc,
+FC_FN(FC_PREFIX, cache_lookup_batch)(struct FC_CACHE *fc,
                            const struct FC_KEY *keys,
                            unsigned nb_pkts,
                            struct FC_ENTRY **results)
@@ -265,7 +265,7 @@ FC_FN(_cache_lookup_batch)(struct FC_CACHE *fc,
         if (i < nb_pkts) {
             unsigned n = (i + BATCH <= nb_pkts) ? BATCH : (nb_pkts - i);
             for (unsigned j = 0; j < n; j++)
-                FC_CAT(FC_HT_PREFIX, _hash_key)(&ctx[i + j],
+                FC_CALL(FC_HT_PREFIX, hash_key)(&ctx[i + j],
                                                   &fc->ht_head, fc->buckets,
                                                   &keys[i + j]);
         }
@@ -274,7 +274,7 @@ FC_FN(_cache_lookup_batch)(struct FC_CACHE *fc,
             unsigned base = i - DIST;
             unsigned n = (base + BATCH <= nb_pkts) ? BATCH : (nb_pkts - base);
             for (unsigned j = 0; j < n; j++)
-                FC_CAT(FC_HT_PREFIX, _scan_bk)(&ctx[base + j],
+                FC_CALL(FC_HT_PREFIX, scan_bk)(&ctx[base + j],
                                                 &fc->ht_head, fc->buckets);
         }
 
@@ -282,7 +282,7 @@ FC_FN(_cache_lookup_batch)(struct FC_CACHE *fc,
             unsigned base = i - 2 * DIST;
             unsigned n = (base + BATCH <= nb_pkts) ? BATCH : (nb_pkts - base);
             for (unsigned j = 0; j < n; j++)
-                FC_CAT(FC_HT_PREFIX, _prefetch_node)(&ctx[base + j],
+                FC_CALL(FC_HT_PREFIX, prefetch_node)(&ctx[base + j],
                                                       fc->pool);
         }
 
@@ -291,7 +291,7 @@ FC_FN(_cache_lookup_batch)(struct FC_CACHE *fc,
             unsigned n = (base + BATCH <= nb_pkts) ? BATCH : (nb_pkts - base);
             for (unsigned j = 0; j < n; j++)
                 results[base + j] =
-                    FC_CAT(FC_HT_PREFIX, _cmp_key)(&ctx[base + j],
+                    FC_CALL(FC_HT_PREFIX, cmp_key)(&ctx[base + j],
                                                     fc->pool);
         }
     }
@@ -313,13 +313,13 @@ FC_FN(_cache_lookup_batch)(struct FC_CACHE *fc,
  *
  * Prefetches entry CL0 ahead; bucket access on remove is unpipelined.
  * Suitable when pool fits in LLC or eviction rate is low.
- * See FC_FN(_cache_expire_2stage) for bucket-prefetch variant.
+ * See FC_FN(FC_PREFIX, cache_expire_2stage) for bucket-prefetch variant.
  *===========================================================================*/
 void
-FC_FN(_cache_expire)(struct FC_CACHE *fc,
+FC_FN(FC_PREFIX, cache_expire)(struct FC_CACHE *fc,
                      uint64_t now)
 {
-    unsigned max_scan = FC_CAT(FC_PREFIX, _cache_expire_scan)(fc);
+    unsigned max_scan = FC_CALL(FC_PREFIX, cache_expire_scan)(fc);
     uint64_t timeout  = fc->eff_timeout_tsc;
     const unsigned pf_dist = FLOW_CACHE_EXPIRE_PF_DIST;
     const unsigned mask = fc->entries_mask;
@@ -337,7 +337,7 @@ FC_FN(_cache_expire)(struct FC_CACHE *fc,
         if (now - entry->last_ts <= timeout)
             continue;
 
-        FC_CAT(FC_HT_PREFIX, _remove)(&fc->ht_head, fc->buckets,
+        FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
                                        fc->pool, entry);
         entry->last_ts = 0;
 
@@ -366,10 +366,10 @@ FC_FN(_cache_expire)(struct FC_CACHE *fc,
  * pool) or eviction is rare.
  *===========================================================================*/
 void
-FC_FN(_cache_expire_2stage)(struct FC_CACHE *fc,
+FC_FN(FC_PREFIX, cache_expire_2stage)(struct FC_CACHE *fc,
                             uint64_t now)
 {
-    unsigned max_scan = FC_CAT(FC_PREFIX, _cache_expire_scan)(fc);
+    unsigned max_scan = FC_CALL(FC_PREFIX, cache_expire_scan)(fc);
     uint64_t timeout  = fc->eff_timeout_tsc;
     const unsigned pf_dist    = FLOW_CACHE_EXPIRE_PF_DIST;
     const unsigned bk_pf_dist = pf_dist / 2;
@@ -398,7 +398,7 @@ FC_FN(_cache_expire_2stage)(struct FC_CACHE *fc,
         if (now - entry->last_ts <= timeout)
             continue;
 
-        FC_CAT(FC_HT_PREFIX, _remove)(&fc->ht_head, fc->buckets,
+        FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
                                        fc->pool, entry);
         entry->last_ts = 0;
 
@@ -416,14 +416,14 @@ FC_FN(_cache_expire_2stage)(struct FC_CACHE *fc,
  * Use lookup_batch() for high-throughput packet processing.
  *===========================================================================*/
 struct FC_ENTRY *
-FC_FN(_cache_find)(struct FC_CACHE *fc,
+FC_FN(FC_PREFIX, cache_find)(struct FC_CACHE *fc,
                    const struct FC_KEY *key)
 {
     struct rix_hash_find_ctx_s ctx;
-    FC_CAT(FC_HT_PREFIX, _hash_key)(&ctx, &fc->ht_head, fc->buckets, key);
-    FC_CAT(FC_HT_PREFIX, _scan_bk)(&ctx, &fc->ht_head, fc->buckets);
-    FC_CAT(FC_HT_PREFIX, _prefetch_node)(&ctx, fc->pool);
-    return FC_CAT(FC_HT_PREFIX, _cmp_key)(&ctx, fc->pool);
+    FC_CALL(FC_HT_PREFIX, hash_key)(&ctx, &fc->ht_head, fc->buckets, key);
+    FC_CALL(FC_HT_PREFIX, scan_bk)(&ctx, &fc->ht_head, fc->buckets);
+    FC_CALL(FC_HT_PREFIX, prefetch_node)(&ctx, fc->pool);
+    return FC_CALL(FC_HT_PREFIX, cmp_key)(&ctx, fc->pool);
 }
 
 /*===========================================================================
@@ -436,10 +436,10 @@ FC_FN(_cache_find)(struct FC_CACHE *fc,
  * Use cases: TCP FIN/RST, admin teardown, policy invalidation.
  *===========================================================================*/
 void
-FC_FN(_cache_remove)(struct FC_CACHE *fc,
+FC_FN(FC_PREFIX, cache_remove)(struct FC_CACHE *fc,
                      struct FC_ENTRY *entry)
 {
-    FC_CAT(FC_HT_PREFIX, _remove)(&fc->ht_head, fc->buckets,
+    FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
                                    fc->pool, entry);
     entry->last_ts = 0;
     RIX_SLIST_INSERT_HEAD(&fc->free_head, fc->pool, entry, free_link);
@@ -455,11 +455,11 @@ FC_FN(_cache_remove)(struct FC_CACHE *fc,
  * Use cases: VRF delete, interface down, graceful shutdown.
  *===========================================================================*/
 void
-FC_FN(_cache_flush)(struct FC_CACHE *fc)
+FC_FN(FC_PREFIX, cache_flush)(struct FC_CACHE *fc)
 {
     unsigned flushed = fc->ht_head.rhh_nb;
 
-    FC_CAT(FC_HT_PREFIX, _init)(&fc->ht_head, fc->nb_bk);
+    FC_CALL(FC_HT_PREFIX, init)(&fc->ht_head, fc->nb_bk);
     memset(fc->buckets, 0, fc->nb_bk * sizeof(*fc->buckets));
     memset(fc->pool, 0, fc->max_entries * sizeof(*fc->pool));
 
@@ -476,7 +476,7 @@ FC_FN(_cache_flush)(struct FC_CACHE *fc)
  * Statistics
  *===========================================================================*/
 void
-FC_FN(_cache_stats)(const struct FC_CACHE *fc,
+FC_FN(FC_PREFIX, cache_stats)(const struct FC_CACHE *fc,
                     struct flow_cache_stats *out)
 {
     *out = fc->stats;
@@ -486,8 +486,8 @@ FC_FN(_cache_stats)(const struct FC_CACHE *fc,
 
 /* clean up local macros */
 #undef FC_FN
-#undef FC_CAT
-#undef _FC_CAT
+#undef FC_FN_CAT
+#undef _FC_FN_CAT
 
 /*
  * Local Variables:
