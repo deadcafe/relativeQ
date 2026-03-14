@@ -8,7 +8,6 @@
 #ifndef _FLOW4_CACHE_H_
 #define _FLOW4_CACHE_H_
 
-#include <rix/rix_defs.h>
 #include <rix/rix_queue.h>
 #include <rix/rix_hash.h>
 #include "flow_cache_defs.h"

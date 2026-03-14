@@ -9,7 +9,6 @@
 #define _FLOW6_CACHE_H_
 
 #include <string.h>
-#include <rix/rix_defs.h>
 #include <rix/rix_queue.h>
 #include <rix/rix_hash.h>
 #include "flow_cache_defs.h"
