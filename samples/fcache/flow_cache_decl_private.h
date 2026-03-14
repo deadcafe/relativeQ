@@ -20,7 +20,7 @@
  * Typical usage in a variant header (e.g. flow4_cache.h):
  *
  *   // Early include: Section 1 only (FC_PREFIX not yet defined)
- *   #include "flow_cache_decl.h"
+ *   #include "flow_cache_decl_private.h"
  *
  *   struct flow4_entry { FLOW_CACHE_CL(0); ... };  // uses Section 1 macros
  *   ...
@@ -29,7 +29,7 @@
  *   #define FC_PREFIX    flow4
  *   #define FC_ENTRY     flow4_entry
  *   ...
- *   #include "flow_cache_decl.h"
+ *   #include "flow_cache_decl_private.h"
  *   #undef FC_PREFIX
  *   ...
  *

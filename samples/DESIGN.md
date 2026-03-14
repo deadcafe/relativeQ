@@ -507,7 +507,7 @@ is defined in each variant's header.  Everything else is generated.
 
 | File | Generates | Used by |
 |---|---|---|
-| `flow_cache_common.h` | Cache struct, API declarations, inline helpers | `.h` files |
+| `flow_cache_decl_private.h` | Cache struct, API declarations, inline helpers | `.h` files |
 | `flow_cache_body_private.h` | init, insert, lookup_batch, expire, stats | `.c` files |
 | `flow_cache_test_body.h` | Test + benchmark functions | test `.c` |
 
@@ -517,7 +517,7 @@ To add a new flow cache variant (e.g., MPLS):
 
 1. Define key struct, entry struct, comparison function
 2. `RIX_HASH_HEAD` / `RIX_HASH_GENERATE`
-3. Set `FC_*` macros, `#include "flow_cache_common.h"` in header
+3. Set `FC_*` macros, `#include "flow_cache_decl_private.h"` in header (twice: once before structs, once after)
 4. Set `FC_*` macros, `#include "flow_cache_body_private.h"` in source
 5. Set `FCT_*` macros, `#include "flow_cache_test_body.h"` in test
 
@@ -528,35 +528,81 @@ No other code changes needed — all logic is in the templates.
 ```
 samples/
   DESIGN.md                this document
+  Makefile                 top-level: delegates to fcache/ and test/
 
-  flow_cache.h             common definitions (TSC, stats, pipeline params)
-  flow_cache_common.h      template: cache struct + API declarations
-  flow_cache_body_private.h        template: implementation (init/insert/lookup/expire)
-  flow_cache_test_body.h   template: test + benchmark functions
+  fcache/                  library (builds libfcache.a and libfcache.so)
+    Makefile
+    -- public headers --
+    flow_cache.h             umbrella: includes all three variant headers
+    flow4_cache.h            IPv4: key, entry, cmp, hash generate, template expand
+    flow6_cache.h            IPv6: key, entry, cmp, hash generate, template expand
+    flow_unified_cache.h     Unified: key (family+union), entry, cmp, template expand
+    -- private headers --
+    flow_cache_decl_private.h  template: base defs (Section 1) + cache struct/API decls (Section 2)
+    flow_cache_body_private.h  template: implementation (init/insert/lookup/expire)
+    -- sources --
+    flow4_cache.c            IPv4: template expand (~33 lines)
+    flow6_cache.c            IPv6: template expand (~33 lines)
+    flow_unified_cache.c     Unified: template expand (~33 lines)
 
-  flow4_cache.h            IPv4: key, entry, cmp, hash generate, template expand
-  flow4_cache.c            IPv4: template expand (33 lines)
-  flow6_cache.h            IPv6: key, entry, cmp, hash generate, template expand
-  flow6_cache.c            IPv6: template expand (33 lines)
-  flow_unified_cache.h     Unified: key (family+union), entry, cmp, template expand
-  flow_unified_cache.c     Unified: template expand (33 lines)
-
-  flow_cache_test.c        correctness tests + benchmarks (all 3 variants)
-  Makefile
+  test/                    test and benchmark binary
+    Makefile
+    flow_cache_test.c        correctness tests + benchmarks (all 3 variants)
+    flow_cache_test_body.h   template: test + benchmark functions
 ```
 
 ## 13. Build Dependencies
 
 ```
-rix/rix_defs.h       index macros, utilities
-rix/rix_queue.h      SLIST (free list)
-rix/rix_hash.h       fingerprint hash table (SIMD dispatch)
+rix/rix_defs_private.h  index macros, utilities (private: included by rix headers)
+rix/rix_queue.h         SLIST (free list)
+rix/rix_hash.h          fingerprint hash table (SIMD dispatch)
 ```
 
 No TAILQ dependency (LRU replaced by timestamp-only approach).
 Requires `-mavx2` or `-mavx512f` for SIMD-accelerated hash operations.
 
-## 14. Competitive Analysis
+## 14. Thread Safety
+
+The flow cache is designed for a **per-thread, lock-free** model.
+
+### Model
+
+| Aspect | Detail |
+|---|---|
+| Instance ownership | One `flow4_cache` / `flow6_cache` per thread |
+| Synchronization | None — no locks, no atomics, no RCU |
+| Shared state | None between threads |
+| age_cursor | Per-cache; incremented only by owning thread |
+
+### Rationale
+
+In the target environment (VPP plugin, DPDK poll-mode):
+
+- Each worker thread owns a private packet queue and processes it exclusively.
+- The flow cache holds thread-local state (per-flow counters, action cache).
+- No inter-thread sharing means no false sharing, no contention, and no cache-line bouncing.
+- This matches VPP's "no global mutable state" architecture.
+
+### Implications for users
+
+- **Do not share** a single cache instance between threads.
+- **Do not call** any flow cache API from two threads concurrently on the same instance.
+- To process traffic across multiple cores, allocate one cache per worker thread.
+- If cross-thread access to flow statistics is required, read them from a safe point
+  (e.g., control-plane thread reading counters after a quiescent period) or copy to a
+  separate stats structure with appropriate memory ordering.
+
+### Shared memory usage
+
+librix data structures (hash table, free list) store **indices, not pointers**.
+This makes the raw data relocatable — valid across processes mapping the same
+shared memory region at different virtual addresses.  However, concurrent
+modification still requires external coordination (e.g., per-shard locks or
+RCU) when multiple processes share the same `flow_cache` instance.
+The single-writer model above removes this requirement entirely.
+
+## 15. Competitive Analysis
 
 | System | Key storage | Remove | Bucket | Index-based |
 |---|---|---|---|---|
@@ -577,7 +623,7 @@ librix advantages:
 
 librix is a header-only C11 library providing index-based data structures
 for shared memory and mmapped regions.  This appendix explains the core
-concepts and API patterns.  The flow cache (§1-14) is a real-world
+concepts and API patterns.  The flow cache (§1-15) is a real-world
 application built on top of these primitives.
 
 ### A.1 Core concept: indices instead of pointers

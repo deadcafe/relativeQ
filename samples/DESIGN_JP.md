@@ -720,7 +720,7 @@ struct flowu_key flowu_key_v6(const uint8_t *src_ip, const uint8_t *dst_ip,
 
 | ファイル | 生成内容 | 使用箇所 |
 |---|---|---|
-| `flow_cache_common.h` | キャッシュ構造体、API宣言、インラインヘルパー | `.h` ファイル |
+| `flow_cache_decl_private.h` | キャッシュ構造体、API宣言、インラインヘルパー | `.h` ファイル |
 | `flow_cache_body_private.h` | init、insert、lookup_batch、expire、stats | `.c` ファイル |
 | `flow_cache_test_body.h` | テスト+ベンチマーク関数 | テスト `.c` |
 
@@ -730,7 +730,7 @@ struct flowu_key flowu_key_v6(const uint8_t *src_ip, const uint8_t *dst_ip,
 
 1. キー構造体、エントリ構造体、比較関数を定義
 2. `RIX_HASH_HEAD` / `RIX_HASH_GENERATE`
-3. `FC_*` マクロを設定し、ヘッダで `#include "flow_cache_common.h"`
+3. `FC_*` マクロを設定せずに `#include "flow_cache_decl_private.h"` を早期インクルード（Section 1のみ）し、構造体定義の後に `FC_*` マクロを設定して再度 `#include "flow_cache_decl_private.h"`（Section 2）
 4. `FC_*` マクロを設定し、ソースで `#include "flow_cache_body_private.h"`
 5. `FCT_*` マクロを設定し、テストで `#include "flow_cache_test_body.h"`
 
@@ -743,34 +743,77 @@ samples/
   DESIGN.md                本文書（英語版）
   DESIGN_JP.md             本文書（日本語版）
 
-  flow_cache.h             共通定義（TSC、stats、パイプラインパラメータ）
-  flow_cache_common.h      テンプレート: キャッシュ構造体 + API宣言
-  flow_cache_body_private.h        テンプレート: 実装（init/insert/lookup/expire）
-  flow_cache_test_body.h   テンプレート: テスト + ベンチマーク関数
+  fcache/                  ライブラリ（libfcache.a / libfcache.so）
+    Makefile
 
-  flow4_cache.h            IPv4: キー、エントリ、cmp、ハッシュ生成、テンプレート展開
-  flow4_cache.c            IPv4: テンプレート展開（33行）
-  flow6_cache.h            IPv6: キー、エントリ、cmp、ハッシュ生成、テンプレート展開
-  flow6_cache.c            IPv6: テンプレート展開（33行）
-  flow_unified_cache.h     統合: キー（family+union）、エントリ、cmp、テンプレート展開
-  flow_unified_cache.c     統合: テンプレート展開（33行）
+    # 公開ヘッダ（ユーザーが直接 include する）
+    flow_cache.h             共通定義（TSC、stats、パイプラインパラメータ）
+    flow4_cache.h            IPv4: キー、エントリ、cmp、ハッシュ生成、テンプレート展開
+    flow4_cache.c            IPv4: テンプレート展開
+    flow6_cache.h            IPv6: キー、エントリ、cmp、ハッシュ生成、テンプレート展開
+    flow6_cache.c            IPv6: テンプレート展開
+    flow_unified_cache.h     統合: キー（family+union）、エントリ、cmp、テンプレート展開
+    flow_unified_cache.c     統合: テンプレート展開
 
-  flow_cache_test.c        正当性テスト + ベンチマーク（全3バリアント）
-  Makefile
+    # 内部専用ヘッダ（ライブラリ内部のみ; _private サフィックス）
+    flow_cache_decl_private.h  テンプレート: キャッシュ構造体 + API宣言（Section 1: 一度のみ / Section 2: FC_PREFIX 毎）
+    flow_cache_body_private.h  テンプレート: 実装（init/insert/lookup/expire）
+
+  test/                    テストバイナリ
+    Makefile
+    flow_cache_test.c        正当性テスト + ベンチマーク（全3バリアント）
+    flow_cache_test_body.h   テンプレート: テスト + ベンチマーク関数
 ```
 
 ## 13. ビルド依存関係
 
 ```
-rix/rix_defs.h       インデックスマクロ、ユーティリティ
-rix/rix_queue.h      SLIST（フリーリスト）
-rix/rix_hash.h       フィンガープリントハッシュテーブル（SIMDディスパッチ）
+rix/rix_defs_private.h  インデックスマクロ、ユーティリティ（内部専用）
+rix/rix_queue.h         SLIST（フリーリスト）
+rix/rix_hash.h          フィンガープリントハッシュテーブル（SIMDディスパッチ）
 ```
 
 TAILQ依存なし（LRUをタイムスタンプのみのアプローチに置換）。
 SIMD高速化ハッシュ操作には `-mavx2` または `-mavx512f` が必要。
 
-## 14. 競合分析と総合評価
+## 14. スレッド安全性
+
+フローキャッシュは **per-thread（スレッド専有）、lock-free** モデルで設計されている。
+
+### モデル
+
+| 項目 | 詳細 |
+|---|---|
+| インスタンス所有 | 1スレッドにつき1つの `flow4_cache` / `flow6_cache` |
+| 同期 | なし — ロック・アトミック・RCU 不使用 |
+| スレッド間共有状態 | なし |
+| age_cursor | キャッシュごと; 所有スレッドのみが更新 |
+
+### 設計根拠
+
+対象環境（VPPプラグイン、DPDKポールモード）では:
+
+- 各ワーカースレッドは専用のパケットキューを持ち、排他的に処理する。
+- フローキャッシュはスレッドローカル状態（フローごとのカウンタ、アクションキャッシュ）を保持する。
+- スレッド間の共有がないため、フォルス・シェアリング・コンテンション・キャッシュライン競合が発生しない。
+- VPPの「グローバル可変状態なし」アーキテクチャに適合する。
+
+### ユーザーへの指針
+
+- 1つのキャッシュインスタンスを複数スレッドで **共有しない**。
+- 同一インスタンスに対して2スレッドから同時に **APIを呼び出さない**。
+- 複数コアでトラフィックを処理する場合は、ワーカースレッドごとに1つのキャッシュを確保する。
+- スレッドをまたいだフロー統計アクセスが必要な場合は、静止点（例: コントロールプレーンスレッドがquiescent期間後に読み取る）か、適切なメモリ順序付きのコピーで対応する。
+
+### 共有メモリでの利用
+
+librixデータ構造（ハッシュテーブル、フリーリスト）は **インデックス（ポインタなし）** を格納する。
+これにより、異なる仮想アドレスに同じ共有メモリ領域をマップする複数プロセス間で
+データを再配置できる。ただし、同一の `flow_cache` インスタンスを複数プロセスが同時に変更する場合は、
+外部での調停（シャードごとのロック・RCUなど）が必要になる。
+前述のシングルライタモデルではこの要件を完全に排除できる。
+
+## 15. 競合分析と総合評価
 
 ### 14.1 機能比較
 

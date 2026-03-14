@@ -429,6 +429,6 @@ main(void)
     test_staged_x4();
     test_remove_all();
 
-    printf("=== All tests passed ===\n");
+    printf("ALL RIX_HASH32 TESTS PASSED\n");
     return 0;
 }

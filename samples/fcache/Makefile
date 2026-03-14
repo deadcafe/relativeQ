@@ -46,7 +46,7 @@ SRCS         = flow4_cache.c flow6_cache.c flow_unified_cache.c
 OBJS         = $(SRCS:.c=.o)
 
 # Public headers installed alongside the library
-PUB_HDRS     = flow_cache.h flow_cache_defs.h \
+PUB_HDRS     = flow_cache.h \
                flow4_cache.h flow6_cache.h flow_unified_cache.h
 
 LIB_STATIC   = libfcache.a

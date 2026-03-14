@@ -5,7 +5,11 @@ SUBDIRS  := $(TESTDIRS) samples
 HTAGS_PORT   ?= 8000
 HTAGS_BIND   ?= 127.0.0.1
 
-.PHONY: all build test bench clean htags htags-serve
+PREFIX       ?= /usr/local
+
+RIX_PUB_HDRS := $(filter-out %_private.h, $(wildcard include/rix/*.h))
+
+.PHONY: all build test bench clean install htags htags-serve
 all: test
 
 build:
@@ -32,6 +36,11 @@ clean:
 	  $(MAKE) -C $$d clean; \
 	done
 	rm -rf HTML
+
+install:
+	install -d $(PREFIX)/include/rix $(PREFIX)/lib
+	install -m 644 $(RIX_PUB_HDRS) $(PREFIX)/include/rix/
+	$(MAKE) -C samples/fcache install PREFIX=$(PREFIX)
 
 htags:
 	mkdir -p HTML
