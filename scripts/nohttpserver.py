@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""
+Simple HTTP server that disables browser caching.
+
+Used by 'make htags-serve' so that htags-regenerated HTML is always
+fetched fresh from disk, without stale-cache issues.
+
+Usage:
+    python3 scripts/nohttpserver.py [port] [bind]
+
+Defaults: port=8000, bind=127.0.0.1
+"""
+
+import http.server
+import sys
+
+
+class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        super().end_headers()
+
+    def log_message(self, fmt, *args):
+        # Suppress per-request noise; keep error output.
+        if args and str(args[1]) >= "400":
+            super().log_message(fmt, *args)
+
+
+if __name__ == "__main__":
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
+    bind = sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1"
+    http.server.test(HandlerClass=NoCacheHandler, port=port, bind=bind)
