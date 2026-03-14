@@ -32,6 +32,11 @@
  *   #include "flow_cache_decl.h"
  *   #undef FC_PREFIX
  *   ...
+ *
+ * INTERNAL USE ONLY.
+ * This is a private implementation header of the fcache library.
+ * Do not include it directly; use flow_cache.h (or a variant header
+ * such as flow4_cache.h) instead.
  */
 
 /*===========================================================================

@@ -13,6 +13,11 @@
  *   FC_CACHE         e.g. flow4_cache
  *   FC_HT_PREFIX     e.g. flow4_ht
  *   FC_FREE_HEAD     e.g. flow4_free_head
+ *
+ * INTERNAL USE ONLY.
+ * This is a private implementation header of the fcache library.
+ * Do not include it directly; it is included by flow4_cache.c,
+ * flow6_cache.c, and flow_unified_cache.c only.
  */
 
 #include <assert.h>

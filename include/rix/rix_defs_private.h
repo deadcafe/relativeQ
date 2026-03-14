@@ -5,6 +5,14 @@
  * All rights reserved.
  *
  */
+
+/*
+ * INTERNAL USE ONLY.
+ * This is a private implementation header of the rix library.
+ * Do not include it directly; it is pulled in automatically by
+ * rix_queue.h, rix_hash.h, rix_tree.h, and rix_hash_key.h.
+ */
+
 #ifndef _RIX_DEFS_H_
 #  define _RIX_DEFS_H_
 
