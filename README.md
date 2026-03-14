@@ -71,7 +71,7 @@ RIX_PTR_FROM_IDX(base, i)   /* base + (i-1)    (0 -> NULL)        */
 include/
   librix.h          umbrella header (includes all subsystems)
   rix/
-    rix_defs.h      common macros, index helpers
+    rix_defs_private.h  common macros, index helpers  (internal; auto-included)
     rix_queue.h     SLIST / LIST / STAILQ / TAILQ / CIRCLEQ
     rix_tree.h      Red-Black tree
     rix_hash.h      cuckoo hash -- fingerprint variant (variable-length key)
@@ -133,7 +133,7 @@ RIX_TAILQ_REMOVE(&h, base, &base[0], link);
 
 ## Common helpers
 
-Defined in `rix/rix_defs.h` (included by all subsystems):
+Available via any rix public header (defined internally in `rix_defs_private.h`):
 
 ```c
 RIX_NIL                          /* 0 -- null index */

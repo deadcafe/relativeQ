@@ -972,7 +972,7 @@ Index n = base[n-1]
 — `base` がどこにマッピングされていても有効。
 
 ```c
-#include <rix/rix_defs.h>
+#include <rix/rix_queue.h>   /* または任意の rix 公開ヘッダ */
 
 struct item pool[1024];
 

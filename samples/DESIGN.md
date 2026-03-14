@@ -649,7 +649,7 @@ indices to pointers at call time.  The stored indices are position-
 independent — valid regardless of where `base` is mapped.
 
 ```c
-#include <rix/rix_defs.h>
+#include <rix/rix_queue.h>   /* or any other rix public header */
 
 struct item pool[1024];
 

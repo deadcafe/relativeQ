@@ -72,7 +72,7 @@ RIX_PTR_FROM_IDX(base, i)   /* base + (i-1)    (0 -> NULL)        */
 include/
   librix.h          傘ヘッダ (全サブシステムをインクルード)
   rix/
-    rix_defs.h      共通マクロ、インデックスヘルパー
+    rix_defs_private.h  共通マクロ、インデックスヘルパー  (内部用; 自動インクルード)
     rix_queue.h     SLIST / LIST / STAILQ / TAILQ / CIRCLEQ
     rix_tree.h      Red-Black ツリー
     rix_hash.h      カッコーハッシュ -- フィンガープリント版 (可変長キー)
@@ -134,7 +134,7 @@ RIX_TAILQ_REMOVE(&h, base, &base[0], link);
 
 ## 共通ヘルパー
 
-`rix/rix_defs.h` で定義 (全サブシステムがインクルード済み):
+任意の rix 公開ヘッダ経由で利用可能 (内部では `rix_defs_private.h` で定義):
 
 ```c
 RIX_NIL                          /* 0 -- ヌルインデックス */

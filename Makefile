@@ -39,7 +39,8 @@ clean:
 
 install:
 	install -d $(PREFIX)/include/rix $(PREFIX)/lib
-	install -m 644 $(RIX_PUB_HDRS) $(PREFIX)/include/rix/
+	install -m 644 include/librix.h   $(PREFIX)/include/
+	install -m 644 $(RIX_PUB_HDRS)   $(PREFIX)/include/rix/
 	$(MAKE) -C samples/fcache install PREFIX=$(PREFIX)
 
 htags:

@@ -13,8 +13,8 @@
  * rix_queue.h, rix_hash.h, rix_tree.h, and rix_hash_key.h.
  */
 
-#ifndef _RIX_DEFS_H_
-#  define _RIX_DEFS_H_
+#ifndef _RIX_DEFS_PRIVATE_H_
+#  define _RIX_DEFS_PRIVATE_H_
 
 #  include <assert.h>
 #  include <limits.h>
@@ -163,7 +163,7 @@ RIX_STATIC_ASSERT(sizeof(ptrdiff_t) >= sizeof(void *), "ptrdiff_t must be >= poi
 }
 #  endif
 
-#endif /* _RIX_DEFS_H_ */
+#endif /* _RIX_DEFS_PRIVATE_H_ */
 
 /*
  * Local Variables:

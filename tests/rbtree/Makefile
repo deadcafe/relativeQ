@@ -20,7 +20,7 @@ DEPENDS = .depend
 TARGET = rbtree_test
 
 .SUFFIXES:	.o .c
-.PHONY:	all clean depend
+.PHONY:	all clean depend test
 all:	depend $(TARGET)
 test:
 	./$(TARGET)

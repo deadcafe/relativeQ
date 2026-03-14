@@ -23,7 +23,7 @@
 #include <assert.h>
 #include <string.h>
 
-/* token-paste helpers (definitions only; calls use FC_CALL from flow_cache_defs.h) */
+/* token-paste helpers (definitions only; calls use FC_CALL from flow_cache_decl_private.h) */
 #define _FC_FN_CAT(a, b, c)  a ## b ## c
 #define FC_FN_CAT(a, b, c)   _FC_FN_CAT(a, b, c)
 #define FC_FN(prefix, suffix) FC_FN_CAT(prefix, _, suffix)
