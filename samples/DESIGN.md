@@ -48,7 +48,7 @@ All variants share the same implementation via macro templates
 | Header | `flow4_cache.h` | `flow6_cache.h` |
 | Key struct | `flow4_key` (20B) | `flow6_key` (44B) |
 | Entry size | 128B (2 CL) | 128B (2 CL) |
-| Key comparison | 6-field equality | memcmp×2 + 4-field |
+| Key comparison | `memcmp(a, b, 20)` | `memcmp(a, b, 44)` |
 | Use case | IPv4-only environments | IPv6-only environments |
 
 Rationale for separate tables:
@@ -156,28 +156,25 @@ All three variants use the same 128-byte (2 CL) entry layout.
 
 ### 4.1 Design principles
 
-- CL0 (bytes 0-63): fields accessed during pipelined lookup (hot)
-- CL1 (bytes 64-127): fields accessed only on hit (warm) or eviction (cold)
+- CL0 (bytes 0-63): fields accessed during pipelined lookup and expire scan (hot)
+- CL1 (bytes 64-127): user payload — managed entirely by caller via callbacks
 - Node aligned to 64 bytes (`__attribute__((aligned(64)))`)
-- `free_link` in CL1 — entry is either in hash table or on free list
+- `last_ts` and `free_link` both in CL0 — expire scan and free-list ops stay in one CL
 
 ### 4.2 Entry layout (all variants)
 
 ```
-CL0 (64 bytes):
+CL0 (64 bytes) — lookup + expire hot path:
   key           20B (v4) / 44B (v6, unified)
   cur_hash       4B   hash_field for O(1) remove
-  action         4B   cached ACL result
-  qos_class      4B   cached QoS class
-  flags          4B   VALID, etc.
+  last_ts        8B   last access TSC (0 = invalid / free)
+  free_link      4B   SLIST entry (free list index)
   reserved      28B (v4) / 4B (v6, unified)   pad to 64B
 
-CL1 (64 bytes):
-  last_ts        8B   last access TSC
-  packets        8B   packet counter
-  bytes          8B   byte counter
-  free_link      4B   SLIST entry (free list index)
-  reserved      36B   pad to 64B
+CL1 (64 bytes) — user payload:
+  userdata      64B   caller-defined
+                      union { uint8_t u8[64]; uint64_t u64[8]; }
+                      init_cb initializes on insert; fini_cb cleans up on eviction
 ```
 
 Total: 128 bytes = 2 cache lines, for all three variants.
@@ -185,6 +182,18 @@ Total: 128 bytes = 2 cache lines, for all three variants.
 IPv6 key (44B) fits in CL0 with 4B reserved.
 IPv4 key (20B) fits in CL0 with 28B reserved — more padding but
 same entry size, so pool memory is identical.
+
+#### CL0/CL1 placement rationale
+
+- **`last_ts` in CL0**: expire scan reads only `last_ts` to decide expiry.
+  Having it in CL0 means non-expired entries never touch CL1, and SW
+  prefetch can pipeline CL0 reads efficiently.
+- **`free_link` in CL0**: an entry is either in the hash table or on the
+  free list, never both.  `free_link` is used only during free-list push/pop,
+  which already accesses CL0 for `last_ts = 0` clearing — one CL for both.
+- **`userdata` in CL1**: the library never reads or writes CL1.  Callers
+  access it via `init_cb` (after insert) and `fini_cb` (before eviction),
+  or directly after a cache hit.  This keeps CL1 cold on the lookup hot path.
 
 ## 5. Hash Table Configuration
 
@@ -265,18 +274,19 @@ for (i = 0; i < nb_pkts + 3 * DIST; i += BATCH) {
 
 ## 7. Hit / Miss Processing
 
-### 7.1 Miss-on-find: immediate insert with empty action
+### 7.1 Miss-on-find: immediate insert, init_cb initializes userdata
 
 On cache miss, insert a new entry **immediately** (not deferred to
-slow path).  The entry is created with `action = FLOW_ACTION_NONE`.
+slow path).  After a successful insert, `init_cb(entry, cb_arg)` is
+called to initialize `entry->userdata`.
 
 Rationale:
 - The lookup just ran; bucket cache lines are still in L2 (~5 cy
   access vs ~200 cy DRAM).  Insert cost drops significantly.
 - The flow is now in the cache.  Subsequent packets for the same
-  flow will hit immediately (even before ACL fills in the action).
-- The slow-path ACL/QoS lookup runs later and **updates** the
-  existing entry's action/qos_class fields in-place.
+  flow will hit immediately.
+- Payload layout (counters, action, QoS class, etc.) is defined
+  entirely by the caller — the library imposes no schema on CL1.
 
 ### 7.2 Processing flow
 
@@ -289,34 +299,50 @@ process_vector(pkts[256]):
     cache_lookup_batch(keys, results)
 
   Phase 2: process results                  // sequential
+    misses = 0
     for each pkt:
       if hit:
-        cache_touch(entry, now, len)        // ~10 cy (CL1 warm)
-        if entry->action != NONE:
-          apply cached action/qos           // fast path
-        else:
-          enqueue to slow-path              // action not yet filled
+        cache_touch(entry, now)             // ~10 cy (CL0 write only)
+        // update entry->userdata directly (e.g. MY_PAYLOAD(entry)->packets++)
       if miss:
         cache_insert(fc, key, now)          // ~60 cy (bucket L2 warm)
-        enqueue to slow-path                // ACL/QoS lookup needed
+        // init_cb called automatically; enqueue to slow-path
+        misses++
 
-  Phase 3: threshold expire                 // ~8-12 cy/pkt amortized
-    if cache_over_threshold(fc):            // shift-based 75% check
-      cache_expire(fc, now, nb_pkts)
-
-  (slow path: ACL/QoS lookup, then update entry->action/qos_class)
+  Phase 3: timeout adjust + expire          // ~13-40 cy/pkt amortized
+    cache_adjust_timeout(fc, misses)        // miss-rate-driven timeout tuning
+    cache_expire(fc, now)                   // adaptive scan (always runs)
 ```
 
-### 7.3 Slow-path update
+Phase 3 runs unconditionally every batch.  Scan depth auto-scales
+with fill level (§8.2).  At low fill (≤50%), only 64 entries are
+scanned — minimal cost.
 
-After ACL/QoS lookup completes, the existing cache entry is
-updated in-place:
+### 7.3 User payload management
+
+CL1 (`userdata`) is fully caller-owned.  Two callbacks manage its
+lifecycle:
 
 ```c
-cache_update_action(entry, action, qos_class);
+/* Called after successful insert — initialize userdata here */
+void init_cb(struct PREFIX_entry *entry, void *arg);
+
+/* Called before every eviction/remove/flush — save or release userdata */
+void fini_cb(struct PREFIX_entry *entry,
+             flow_cache_fini_reason_t reason, void *arg);
 ```
 
-This is a CL0 write.  No hash table manipulation needed.
+Passing `NULL` for either callback assigns a built-in no-op —
+no conditional branches at call sites.
+
+```c
+typedef enum {
+    FLOW_CACHE_FINI_TIMEOUT,   /* removed by aging expire */
+    FLOW_CACHE_FINI_EVICTED,   /* forced eviction (pool full) */
+    FLOW_CACHE_FINI_REMOVED,   /* explicit cache_remove() call */
+    FLOW_CACHE_FINI_FLUSHED,   /* cache_flush() bulk clear */
+} flow_cache_fini_reason_t;
+```
 
 ## 8. Eviction Strategy
 
@@ -328,81 +354,92 @@ destroying pipeline efficiency.
 
 Instead: **timestamp-only approach**.
 
-- Hit: write `last_ts = now` to the hit node's CL1 (already warm)
+- Hit: write `last_ts = now` to the hit node's CL0 (already warm from lookup)
 - No linked-list manipulation on hit path
 - Eviction finds victims by scanning
 
-### 8.2 Two-tier eviction
+### 8.2 Adaptive expire (unconditional, fill-level-driven)
 
-#### Tier 1: Threshold expire (post-batch)
+`cache_expire()` runs unconditionally every batch.  Scan depth and
+effective timeout auto-scale with workload — no threshold check needed.
 
-After each 256-packet batch, check if hash table fill exceeds ~75%:
+#### Fill-level-driven scan depth (16 levels)
 
 ```c
-static inline int
-cache_over_threshold(const struct cache *fc)
+static inline unsigned
+cache_expire_scan(const struct cache *fc)
 {
-    unsigned total_slots = (fc->ht_head.rhh_mask + 1u) << 4;
-    return fc->ht_head.rhh_nb >= total_slots - (total_slots >> 2);
+    unsigned nb   = fc->ht_head.rhh_nb;
+    unsigned half = fc->max_entries >> 1;
+    if (nb <= half) return FLOW_CACHE_EXPIRE_SCAN_MIN;  /* 64 */
+    unsigned excess = nb - half;
+    unsigned shift  = __builtin_ctz(fc->max_entries) - 4;
+    unsigned level  = excess >> shift;
+    if (level >= 4) return FLOW_CACHE_EXPIRE_SCAN_MAX;  /* 1024 */
+    return FLOW_CACHE_EXPIRE_SCAN_MIN << level;         /* 64..512 */
 }
 ```
 
-If over threshold, call `cache_expire(fc, now, nb_pkts)` to scan
-up to nb_pkts pool entries and remove expired ones.
+| Fill | Level | Scan/batch |
+|---|---|---|
+| ≤ 50% | 0 | 64 |
+| 50–56% | 1 | 128 |
+| 56–62% | 2 | 256 |
+| 62–69% | 3 | 512 |
+| ≥ 69% | 4+ | 1024 |
 
-Properties:
-- Shift-based check (no division): `total_slots - (total_slots >> 2)`
-  = 3/4 × total_slots
-- Only fires when fill ≥ 75% — in standard sizing (~50% fill), this
-  never triggers
-- Bounded to 256 entries per call — amortized cost: ~8-12 cy/pkt
-- Keeps bk[0] placement rate at 98%+ (see §5.2)
+At low fill (≤50%), only 64 entries are scanned — minimal cost.
+As fill rises, scan increases exponentially to reclaim entries faster.
 
-#### Tier 2: Evict-one on free-list exhaustion
+#### Miss-rate-driven timeout adjustment
 
-When free list is empty (all pool entries in use) and insert is needed:
+Call `cache_adjust_timeout(fc, misses)` once per batch.  High miss
+rate (many new flows) shortens the effective timeout; quiet periods
+let it recover toward the configured base.
 
 ```c
-static struct entry *
-cache_evict_one(struct cache *fc, uint64_t now)
-{
-    for (i = 0; i < fc->max_entries; i++) {
-        entry = &pool[fc->age_cursor % fc->max_entries];
-        fc->age_cursor++;
-        if (entry is VALID && now - entry->last_ts > timeout_tsc) {
-            hash_remove(entry);
-            return entry;   /* reuse for new flow */
-        }
-    }
-    return NULL;  /* all entries live, insert fails */
-}
+/* All shifts, no division */
+decay = (eff_timeout * misses) >> FLOW_CACHE_TIMEOUT_DECAY_SHIFT;
+eff_timeout -= decay;                             /* accelerate eviction */
+eff_timeout += (base - eff) >> FLOW_CACHE_TIMEOUT_RECOVER_SHIFT; /* recover */
 ```
 
-This is slow path — rare when threshold expire is active.
+Floor: `FLOW_CACHE_TIMEOUT_MIN_MS` (default 1000 ms).
 
-#### Both tiers share
+#### Sweep coverage
 
-- Same `age_cursor` (per-thread, lock-free)
-- Same `timeout_tsc` parameter
-- Same `cache_expire()` / `hash_remove()` functions
+- Cursor advances by `scan` entries per call regardless of eviction count
+- Full pool traversal period = max_entries / (scan × batches/s)
+- At 2 Mpps, batch=256:
+  - Level 0 (scan=64): 1M pool → full sweep in ~2.0 s
+  - Level 4 (scan=1024): 1M pool → full sweep in ~0.13 s
+- Minimum timeout 1.0 s — level-0 sweep always covers it.
 
-### 8.3 Why no unconditional expire per vector
+### 8.3 Insert guarantee: three-tier fallback
 
-In standard sizing (pool ≈ 50% fill), fill never reaches 75%,
-so threshold expire never fires.  Unconditional expire would waste
-cycles scanning entries that are all live.  The threshold check
-(`cache_over_threshold`) is a single comparison — zero cost when
-not needed.
+`cache_insert()` always succeeds (never returns NULL).  Three tiers
+ensure a free entry is always available:
 
-### 8.4 Sweep coverage
+```
+1. Free list       → O(1) SLIST_FIRST pop
+2. evict_one       → cursor scan up to 1/8 of pool for expired entries
+3. evict_bucket_oldest → force-evict the oldest entry in the target bucket
+```
 
-- Cursor advances by max_expire per call (even if fewer expired)
-- Full pool traversal period = max_entries / max_expire calls
-- At 256 pkts/vector, 10 Gbps, ~20-50 us/vector:
-  - 1M pool: full sweep in 4096 vectors ~ 80-200 ms
-  - 10M pool: full sweep in ~40K vectors ~ 0.8-2 s
+`evict_bucket_oldest` scans both candidate buckets (bk0, bk1, up to 32
+slots) and evicts the entry with the smallest `last_ts`.  It simultaneously
+frees a pool entry and a bucket slot, so the subsequent `ht_insert` takes
+the fast path (no cuckoo displacement needed).
+
+This is the last resort — only fires when evict_one finds no expired entry
+in its 1/8-pool scan.
+
+### 8.4 Sweep coverage and timeout sizing
+
+- Cursor advances by `scan` per call (independent of eviction count)
+- Full pool sweep period = max_entries / (scan × batches_per_second)
 - For timeout N seconds, sweep period must be < N.
-  At typical sizes, any timeout >= 1 s is fine.
+  At typical sizes and `timeout_ms` ≥ 1000, coverage is sufficient.
 
 ### 8.5 Timeout parameter
 
@@ -422,8 +459,8 @@ Appropriate value depends on workload:
 - At init: all entries pushed to SLIST free list
 - insert: pop from free list → if empty, evict_one
 - expire/evict: push back to free list
-- `free_link` field in CL1 (entry is either in hash table or on
-  free list, never both)
+- `free_link` field in CL0 (entry is either in hash table or on
+  free list, never both; CL0 covers both last_ts and free_link)
 
 ## 10. API
 
@@ -431,13 +468,27 @@ All three variants expose the same API shape via macro templates.
 Function names use the variant prefix: `flow4_`, `flow6_`, or `flowu_`.
 
 ```c
-/* Initialization — caller provides pre-allocated memory */
+/* Initialization — caller provides pre-allocated memory.
+ * init_cb: called after each successful insert (NULL → no-op).
+ * fini_cb: called before every eviction/remove/flush (NULL → no-op). */
 void PREFIX_cache_init(struct PREFIX_cache *fc,
                        struct rix_hash_bucket_s *buckets,
                        unsigned nb_bk,
                        struct PREFIX_entry *pool,
                        unsigned max_entries,
-                       uint64_t timeout_ms);
+                       uint64_t timeout_ms,
+                       void (*init_cb)(struct PREFIX_entry *entry, void *arg),
+                       void (*fini_cb)(struct PREFIX_entry *entry,
+                                       flow_cache_fini_reason_t reason,
+                                       void *arg),
+                       void *cb_arg);
+
+/* Flush — remove all entries, fini_cb called for each */
+void PREFIX_cache_flush(struct PREFIX_cache *fc);
+
+/* Single-key lookup (non-pipelined) */
+struct PREFIX_entry *PREFIX_cache_find(struct PREFIX_cache *fc,
+                                       const struct PREFIX_key *key);
 
 /* Batch lookup — pipelined hot path */
 void PREFIX_cache_lookup_batch(struct PREFIX_cache *fc,
@@ -445,28 +496,34 @@ void PREFIX_cache_lookup_batch(struct PREFIX_cache *fc,
                                unsigned nb_pkts,
                                struct PREFIX_entry **results);
 
-/* Insert — called on miss, bucket L2 warm from lookup */
+/* Insert — called on miss, bucket L2 warm; always succeeds (3-tier fallback).
+ * init_cb(entry, cb_arg) is called after successful insert. */
 struct PREFIX_entry *PREFIX_cache_insert(struct PREFIX_cache *fc,
                                          const struct PREFIX_key *key,
                                          uint64_t now);
 
-/* Update action — called after slow-path ACL/QoS lookup */
+/* Explicit remove — fini_cb called with FLOW_CACHE_FINI_REMOVED */
+void PREFIX_cache_remove(struct PREFIX_cache *fc,
+                         struct PREFIX_entry *entry);
+
+/* Touch — refresh timestamp (inline, ~10 cy).
+ * Update entry->userdata directly after returning. */
 static inline void
-PREFIX_cache_update_action(struct PREFIX_entry *entry,
-                           uint32_t action, uint32_t qos_class);
+PREFIX_cache_touch(struct PREFIX_entry *entry, uint64_t now);
 
-/* Touch — update timestamp + counters (inline, per hit) */
+/* Miss-rate-driven timeout adjustment (inline, call once per batch) */
 static inline void
-PREFIX_cache_touch(struct PREFIX_entry *entry,
-                   uint64_t now, uint32_t pkt_len);
+PREFIX_cache_adjust_timeout(struct PREFIX_cache *fc, unsigned misses);
 
-/* Threshold check — shift-based ~75% fill test */
-static inline int
-PREFIX_cache_over_threshold(const struct PREFIX_cache *fc);
+/* Adaptive expire — scan depth auto-scales with fill level (always call) */
+void PREFIX_cache_expire(struct PREFIX_cache *fc, uint64_t now);
 
-/* Aging expire — bounded to max_expire entries */
-void PREFIX_cache_expire(struct PREFIX_cache *fc,
-                         uint64_t now, unsigned max_expire);
+/* Two-stage expire — adds mid-distance bucket prefetch for DRAM-resident pools */
+void PREFIX_cache_expire_2stage(struct PREFIX_cache *fc, uint64_t now);
+
+/* Entry count (inline) */
+static inline unsigned
+PREFIX_cache_nb_entries(const struct PREFIX_cache *fc);
 
 /* Statistics snapshot */
 void PREFIX_cache_stats(const struct PREFIX_cache *fc,
@@ -499,8 +556,7 @@ is defined in each variant's header.  Everything else is generated.
 | `FC_ENTRY` | `flow4_entry` | Entry struct tag |
 | `FC_KEY` | `flow4_key` | Key struct tag |
 | `FC_CACHE` | `flow4_cache` | Cache struct tag |
-| `FC_FLAG_VALID` | `FLOW4_FLAG_VALID` | Valid flag constant |
-| `FC_HT` / `FC_HT_PREFIX` | `flow4_ht` | Hash table name |
+| `FC_HT` | `flow4_ht` | Hash table head struct tag |
 | `FC_FREE_HEAD` | `flow4_free_head` | Free list head tag |
 
 ### 11.2 Template files

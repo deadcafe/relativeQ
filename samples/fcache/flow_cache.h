@@ -75,7 +75,6 @@
  * When the prefix is a macro token, it is fully expanded first:
  *   #define MY_FC flow4
  *   FC_CALL(MY_FC, cache_init)(&fc, ...);   // → flow4_cache_init(&fc, ...)
-
  *
  * Typical packet processing loop (using FC_CALL):
  *

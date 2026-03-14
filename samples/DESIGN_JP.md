@@ -63,7 +63,7 @@
 | ヘッダ | `flow4_cache.h` | `flow6_cache.h` |
 | キー構造体 | `flow4_key` (20B) | `flow6_key` (44B) |
 | エントリサイズ | 128B (2 CL) | 128B (2 CL) |
-| キー比較 | 6フィールド等値比較 | memcmp×2 + 4フィールド |
+| キー比較 | `memcmp(a, b, 20)` | `memcmp(a, b, 44)` |
 | 用途 | IPv4専用環境 | IPv6専用環境 |
 
 分離テーブルの根拠:
@@ -172,7 +172,7 @@ struct flow6_key {
 ### 4.1 設計原則
 
 - CL0（バイト0-63）: パイプラインルックアップ + エクスパイアスキャンでアクセスされるフィールド（ホット）
-- CL1（バイト64-127）: ヒット時 / スローパスでアクセスされるフィールド（ウォーム）
+- CL1（バイト64-127）: ユーザーペイロード — コールバック経由で呼び出し元が完全管理
 - ノードは64バイト境界にアライン（`__attribute__((aligned(64)))`）
 - `last_ts` と `free_link` はCL0に配置 — エクスパイアスキャンとフリーリスト操作が1CL内で完結
 
@@ -186,12 +186,10 @@ CL0 (64 bytes) — lookup + expire ホットパス:
   free_link      4B   SLISTエントリ（フリーリストインデックス）
   reserved      28B (v4) / 4B (v6, unified)   64Bへのパディング
 
-CL1 (64 bytes) — ヒット時 / スローパス:
-  action         4B   キャッシュされたACL結果
-  qos_class      4B   キャッシュされたQoSクラス
-  packets        8B   パケットカウンタ
-  bytes          8B   バイトカウンタ
-  reserved      40B   64Bへのパディング
+CL1 (64 bytes) — ユーザーペイロード:
+  userdata      64B   呼び出し元定義
+                      union { uint8_t u8[64]; uint64_t u64[8]; }
+                      init_cb がinsert後に初期化、fini_cb がエビクション前にクリーンアップ
 ```
 
 合計: 128バイト = 2キャッシュライン（全3バリアント共通）。
@@ -204,9 +202,9 @@ CL1 (64 bytes) — ヒット時 / スローパス:
 - **`free_link` をCL0に配置**: エントリはハッシュテーブルかフリーリストの
   いずれかに存在する。`free_link` はフリーリスト操作時のみ使用され、
   `last_ts` と同じCLにあることで操作が1CL内で完結する。
-- **`action`/`qos_class` をCL1に配置**: ヒット時のアクション適用とスロー
-  パスでの更新はCL1アクセスとなるが、これらはシーケンシャル処理であり
-  パイプラインのボトルネックにはならない。
+- **`userdata` をCL1に配置**: ライブラリはCL1を読み書きしない。呼び出し元が
+  `init_cb`（insert後）と `fini_cb`（エビクション前）、またはヒット後に
+  直接アクセスする。ルックアップホットパスでCL1をコールドに保てる。
 
 IPv6キー（44B）はCL0に4Bのリザーブ付きで収まる。
 IPv4キー（20B）はCL0に28Bのリザーブ付きで収まる — パディングは
@@ -292,18 +290,19 @@ for (i = 0; i < nb_pkts + 3 * DIST; i += BATCH) {
 
 ## 7. ヒット / ミス処理
 
-### 7.1 find時のミス: 空アクションでの即時挿入
+### 7.1 find時のミス: 即時挿入、init_cb がuserdataを初期化
 
 キャッシュミス時、新規エントリを**即座に**挿入する
-（スローパスへの遅延なし）。エントリは `action = FLOW_ACTION_NONE` で作成される。
+（スローパスへの遅延なし）。挿入成功後、`init_cb(entry, cb_arg)` が
+呼び出されて `entry->userdata` を初期化する。
 
 根拠:
 - ルックアップ直後で、バケットのキャッシュラインはまだL2にある
   （約5 cyアクセス vs 約200 cy DRAM）。挿入コストが大幅に低下。
 - フローはキャッシュ内に存在するようになる。同一フローの後続
-  パケットは即座にヒットする（ACLがアクションを設定する前であっても）。
-- スローパスのACL/QoSルックアップは後で実行され、既存エントリの
-  action/qos_classフィールドを**インプレースで更新**する。
+  パケットは即座にヒットする。
+- ペイロードレイアウト（カウンタ、アクション、QoSクラス等）は
+  呼び出し元が自由に定義できる — ライブラリはCL1に何も課さない。
 
 ### 7.2 処理フロー
 
@@ -319,37 +318,47 @@ process_vector(pkts[256]):
     misses = 0
     for each pkt:
       if hit:
-        cache_touch(entry, now, len)        // ~10 cy (CL1 ウォーム)
-        if entry->action != NONE:
-          apply cached action/qos           // ファストパス
-        else:
-          enqueue to slow-path              // アクション未設定
+        cache_touch(entry, now)             // ~10 cy (CL0 書き込みのみ)
+        // entry->userdata を直接更新（例: MY_PAYLOAD(entry)->packets++）
       if miss:
         cache_insert(fc, key, now)          // ~60 cy (バケット L2 ウォーム)
-        misses++                            // 挿入は常に成功（3段フォールバック）
-        enqueue to slow-path                // ACL/QoSルックアップ必要
+        // init_cb が自動呼び出し; スローパスにキューイング
+        misses++
 
   Phase 3: タイムアウト調整 + エクスパイア   // ~13-40 cy/pkt 償却
     cache_adjust_timeout(fc, misses)        // ミスレート駆動タイムアウト調整
     cache_expire(fc, now)                   // 適応的スキャン（常時実行）
-
-  (スローパス: ACL/QoSルックアップ、その後 entry->action/qos_class を更新)
 ```
 
 Phase 3 は無条件で毎バッチ実行する。スキャン量は充填率に応じて
 自動調整される（§8.2参照）。充填率が低い場合はスキャン量も少なく
 （64エントリ/バッチ）、コストは最小限に抑えられる。
 
-### 7.3 スローパス更新
+### 7.3 ユーザーペイロード管理
 
-ACL/QoSルックアップ完了後、既存のキャッシュエントリを
-インプレースで更新:
+CL1（`userdata`）は完全に呼び出し元が所有する。2つのコールバックが
+ライフサイクルを管理する:
 
 ```c
-cache_update_action(entry, action, qos_class);
+/* 挿入成功後に呼び出し — ここで userdata を初期化 */
+void init_cb(struct PREFIX_entry *entry, void *arg);
+
+/* エビクション/remove/flush の前に呼び出し — userdata を保存またはクリーンアップ */
+void fini_cb(struct PREFIX_entry *entry,
+             flow_cache_fini_reason_t reason, void *arg);
 ```
 
-これはCL0への書き込み。ハッシュテーブルの操作は不要。
+いずれかのコールバックに `NULL` を渡すと、組み込みの no-op が割り当てられる —
+呼び出し箇所での条件分岐はゼロ。
+
+```c
+typedef enum {
+    FLOW_CACHE_FINI_TIMEOUT,   /* エージング expire で削除 */
+    FLOW_CACHE_FINI_EVICTED,   /* 強制エビクション（プール満杯） */
+    FLOW_CACHE_FINI_REMOVED,   /* 明示的な cache_remove() 呼び出し */
+    FLOW_CACHE_FINI_FLUSHED,   /* cache_flush() 一括クリア */
+} flow_cache_fini_reason_t;
+```
 
 ## 8. エビクション戦略
 
@@ -632,13 +641,27 @@ void cache_init(..., uint64_t timeout_ms);
 関数名にはバリアントプレフィックスを使用: `flow4_`、`flow6_`、または `flowu_`。
 
 ```c
-/* 初期化 — 呼び出し元が事前割り当てメモリを提供 */
+/* 初期化 — 呼び出し元が事前割り当てメモリを提供。
+ * init_cb: 挿入成功後に呼び出し（NULL → no-op）。
+ * fini_cb: エビクション/remove/flush 前に呼び出し（NULL → no-op）。*/
 void PREFIX_cache_init(struct PREFIX_cache *fc,
                        struct rix_hash_bucket_s *buckets,
                        unsigned nb_bk,
                        struct PREFIX_entry *pool,
                        unsigned max_entries,
-                       uint64_t timeout_ms);
+                       uint64_t timeout_ms,
+                       void (*init_cb)(struct PREFIX_entry *entry, void *arg),
+                       void (*fini_cb)(struct PREFIX_entry *entry,
+                                       flow_cache_fini_reason_t reason,
+                                       void *arg),
+                       void *cb_arg);
+
+/* フラッシュ — 全エントリ削除、各エントリに fini_cb 呼び出し */
+void PREFIX_cache_flush(struct PREFIX_cache *fc);
+
+/* 単一キールックアップ（非パイプライン） */
+struct PREFIX_entry *PREFIX_cache_find(struct PREFIX_cache *fc,
+                                       const struct PREFIX_key *key);
 
 /* バッチルックアップ — パイプラインホットパス */
 void PREFIX_cache_lookup_batch(struct PREFIX_cache *fc,
@@ -646,45 +669,39 @@ void PREFIX_cache_lookup_batch(struct PREFIX_cache *fc,
                                unsigned nb_pkts,
                                struct PREFIX_entry **results);
 
-/* 挿入 — ミス時に呼び出し、常に成功（3段フォールバック） */
+/* 挿入 — ミス時に呼び出し、常に成功（3段フォールバック）。
+ * 成功後 init_cb(entry, cb_arg) が自動呼び出しされる。*/
 struct PREFIX_entry *PREFIX_cache_insert(struct PREFIX_cache *fc,
                                          const struct PREFIX_key *key,
                                          uint64_t now);
 
-/* アクション更新 — スローパスACL/QoSルックアップ後に呼び出し */
-static inline void
-PREFIX_cache_update_action(struct PREFIX_entry *entry,
-                           uint32_t action, uint32_t qos_class);
+/* 明示的削除 — fini_cb を FLOW_CACHE_FINI_REMOVED で呼び出し */
+void PREFIX_cache_remove(struct PREFIX_cache *fc,
+                         struct PREFIX_entry *entry);
 
-/* タッチ — タイムスタンプ+カウンタ更新（インライン、ヒットごと） */
+/* タッチ — タイムスタンプ更新（インライン、~10 cy）。
+ * 返却後、entry->userdata を直接更新すること。*/
 static inline void
-PREFIX_cache_touch(struct PREFIX_entry *entry,
-                   uint64_t now, uint32_t pkt_len);
+PREFIX_cache_touch(struct PREFIX_entry *entry, uint64_t now);
 
 /* ミスレート駆動タイムアウト調整（インライン、バッチごと） */
 static inline void
-PREFIX_cache_adjust_timeout(struct PREFIX_cache *fc,
-                             unsigned misses);
+PREFIX_cache_adjust_timeout(struct PREFIX_cache *fc, unsigned misses);
 
-/* 適応的エクスパイア — スキャン量は充填率で自動調整 */
-void PREFIX_cache_expire(struct PREFIX_cache *fc,
-                         uint64_t now);
+/* 適応的エクスパイア — スキャン量は充填率で自動調整（常時呼び出し） */
+void PREFIX_cache_expire(struct PREFIX_cache *fc, uint64_t now);
 
-/* 2段パイプラインエクスパイア — バケットプリフェッチあり */
-void PREFIX_cache_expire_2stage(struct PREFIX_cache *fc,
-                                 uint64_t now);
+/* 2段パイプラインエクスパイア — DRAM常駐の大規模プール向け */
+void PREFIX_cache_expire_2stage(struct PREFIX_cache *fc, uint64_t now);
 
-/* 充填率レベル（0-15）— デバッグ/統計用 */
+/* エントリ数（インライン） */
 static inline unsigned
-PREFIX_cache_expire_level(const struct PREFIX_cache *fc);
+PREFIX_cache_nb_entries(const struct PREFIX_cache *fc);
 
 /* 統計スナップショット */
 void PREFIX_cache_stats(const struct PREFIX_cache *fc,
                         struct flow_cache_stats *out);
 ```
-
-注: `cache_over_threshold()` と `max_expire` パラメータは廃止。
-エクスパイアは常時実行され、スキャン量は充填率から自動決定される。
 
 ### 統合バリアント専用ヘルパー
 
@@ -712,8 +729,7 @@ struct flowu_key flowu_key_v6(const uint8_t *src_ip, const uint8_t *dst_ip,
 | `FC_ENTRY` | `flow4_entry` | エントリ構造体タグ |
 | `FC_KEY` | `flow4_key` | キー構造体タグ |
 | `FC_CACHE` | `flow4_cache` | キャッシュ構造体タグ |
-| `FC_FLAG_VALID` | `FLOW4_FLAG_VALID` | 有効フラグ定数 |
-| `FC_HT` / `FC_HT_PREFIX` | `flow4_ht` | ハッシュテーブル名 |
+| `FC_HT` | `flow4_ht` | ハッシュテーブルヘッド構造体タグ |
 | `FC_FREE_HEAD` | `flow4_free_head` | フリーリストヘッドタグ |
 
 ### 11.2 テンプレートファイル
