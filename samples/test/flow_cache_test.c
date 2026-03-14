@@ -16,6 +16,30 @@
 
 #include "flow_cache.h"
 
+/*===========================================================================
+ * Test payload overlay: cast entry->userdata to this struct in unit tests.
+ * Demonstrates the caller-defined CL1 usage pattern.
+ *===========================================================================*/
+struct test_flow_payload {
+    uint32_t action;
+    uint32_t qos_class;
+    uint64_t packets;
+    uint64_t bytes;
+} __attribute__((may_alias));
+#define TP(e) ((struct test_flow_payload *)&(e)->userdata)
+
+static void
+flow4_test_init_cb(struct flow4_entry *e, void *arg __attribute__((unused)))
+{
+    memset(&e->userdata, 0, sizeof(e->userdata));
+}
+
+static void
+flow6_test_init_cb(struct flow6_entry *e, void *arg __attribute__((unused)))
+{
+    memset(&e->userdata, 0, sizeof(e->userdata));
+}
+
 /*
  * flow4_ht functions needed by flow4_bench_single_find (ht_find) and
  * flow4_bench_bk0_rate (ht_init, ht_insert) which probe raw hash table
@@ -203,13 +227,14 @@ flow4_test_init_insert_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     struct flow4_cache fc;
     uint64_t now = 1000000;
 
-    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0, NULL, NULL, NULL);
+    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0,
+                     flow4_test_init_cb, NULL, NULL);
 
     struct flow4_key k1 = make_key4(0x0A000001, 0x0A000002,
                                      1234, 80, 6, 100);
     struct flow4_entry *e1 = flow4_cache_insert(&fc, &k1, now);
     assert(e1 != NULL);
-    assert(e1->action == FLOW_ACTION_NONE);
+    assert(TP(e1)->action == 0);
     assert(e1->last_ts != 0);
 
     struct flow4_entry *results[1];
@@ -221,17 +246,17 @@ flow4_test_init_insert_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     flow4_cache_lookup_batch(&fc, &k2, 1, results);
     assert(results[0] == NULL);
 
-    e1->action    = 42;
-    e1->qos_class = 7;
-    assert(e1->action == 42);
-    assert(e1->qos_class == 7);
+    TP(e1)->action    = 42;
+    TP(e1)->qos_class = 7;
+    assert(TP(e1)->action == 42);
+    assert(TP(e1)->qos_class == 7);
 
     flow4_cache_touch(e1, now + 100);
-    e1->packets++;
-    e1->bytes += 64;
+    TP(e1)->packets++;
+    TP(e1)->bytes += 64;
     assert(e1->last_ts == now + 100);
-    assert(e1->packets == 1);
-    assert(e1->bytes == 64);
+    assert(TP(e1)->packets == 1);
+    assert(TP(e1)->bytes == 64);
 
     printf("    PASS\n");
 }
@@ -265,7 +290,6 @@ flow4_test_insert_exhaustion(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     struct flow4_key kn = make_key4(0xDEAD, 0xBEEF, 9999, 8888, 17, 42);
     struct flow4_entry *en = flow4_cache_insert(&fc, &kn, later);
     assert(en != NULL);
-    assert(en->action == FLOW_ACTION_NONE);
 
     struct flow4_entry *results[1];
     flow4_cache_lookup_batch(&fc, &kn, 1, results);
@@ -308,7 +332,8 @@ flow6_test_init_insert_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     struct flow6_cache fc;
     uint64_t now = 1000000;
 
-    flow6_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0, NULL, NULL, NULL);
+    flow6_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0,
+                     flow6_test_init_cb, NULL, NULL);
 
     uint8_t src1[16] = {0,0,0,0,0,0,0,0, 0,0,0,0, 0,0x0a,0,1};
     uint8_t dst1[16] = {0,0,0,0,0,0,0,0, 0,0,0,0, 0,0x0a,0,2};
@@ -320,7 +345,7 @@ flow6_test_init_insert_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
 
     struct flow6_entry *e1 = flow6_cache_insert(&fc, &k1, now);
     assert(e1 != NULL);
-    assert(e1->action == FLOW_ACTION_NONE);
+    assert(TP(e1)->action == 0);
     assert(e1->last_ts != 0);
 
     struct flow6_entry *results[1];
@@ -332,17 +357,17 @@ flow6_test_init_insert_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     flow6_cache_lookup_batch(&fc, &k2, 1, results);
     assert(results[0] == NULL);
 
-    e1->action    = 42;
-    e1->qos_class = 7;
-    assert(e1->action == 42);
-    assert(e1->qos_class == 7);
+    TP(e1)->action    = 42;
+    TP(e1)->qos_class = 7;
+    assert(TP(e1)->action == 42);
+    assert(TP(e1)->qos_class == 7);
 
     flow6_cache_touch(e1, now + 100);
-    e1->packets++;
-    e1->bytes += 64;
+    TP(e1)->packets++;
+    TP(e1)->bytes += 64;
     assert(e1->last_ts == now + 100);
-    assert(e1->packets == 1);
-    assert(e1->bytes == 64);
+    assert(TP(e1)->packets == 1);
+    assert(TP(e1)->bytes == 64);
 
     printf("    PASS\n");
 }

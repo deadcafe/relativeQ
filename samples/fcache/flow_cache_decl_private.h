@@ -197,7 +197,7 @@ flow_cache_ms_to_tsc(uint64_t tsc_hz, uint64_t ms)
  *   FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, max_entries, timeout_ms);
  *   FC_CALL(flow4, cache_lookup_batch)(&fc, keys, nb_pkts, results);
  *   FC_CALL(flow4, cache_insert)(&fc, &key, now);
- *   FC_CALL(flow4, cache_touch)(entry, now);  // then: entry->packets++; entry->bytes += len;
+ *   FC_CALL(flow4, cache_touch)(entry, now);  // then update userdata fields as needed
  *   FC_CALL(flow4, cache_expire)(&fc, now);
  *   FC_CALL(flow4, cache_remove)(&fc, entry);
  *   FC_CALL(flow4, cache_flush)(&fc);
@@ -210,11 +210,6 @@ flow_cache_ms_to_tsc(uint64_t tsc_hz, uint64_t ms)
 #define _FC_CALL_CAT(a, b, c)       a ## b ## c
 #define FC_CALL_CAT(a, b, c)        _FC_CALL_CAT(a, b, c)
 #define FC_CALL(prefix, suffix)     FC_CALL_CAT(prefix, _, suffix)
-
-/*===========================================================================
- * Common constants
- *===========================================================================*/
-#define FLOW_ACTION_NONE   0u   /* action not yet filled by slow path */
 
 /*===========================================================================
  * Statistics
@@ -375,8 +370,7 @@ struct FC_CACHE {
  *       if (results[i]) {
  *           PREFIX_cache_touch(results[i], now, pkt_len[i]);  // hit
  *       } else {
- *           struct ENTRY *e = PREFIX_cache_insert(&fc, &keys[i], now); // miss
- *           if (e) { e->action = slow_path(&keys[i]); }
+ *           PREFIX_cache_insert(&fc, &keys[i], now); // miss: init_cb fills userdata
  *           misses++;
  *       }
  *   }

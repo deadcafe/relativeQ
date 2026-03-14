@@ -89,7 +89,7 @@ flowu_key_v6(const uint8_t *src_ip, const uint8_t *dst_ip,
  * Unified flow entry (128 bytes = 2 cache lines)
  *
  * CL0 (0-63):  lookup hot path
- * CL1 (64-127): counters & management
+ * CL1 (64-127): user payload (caller-defined via init_cb/fini_cb)
  *===========================================================================*/
 struct flowu_entry {
     FLOW_CACHE_CL(0);                   /* lookup + expire hot path */
@@ -99,12 +99,11 @@ struct flowu_entry {
     RIX_SLIST_ENTRY(struct flowu_entry) free_link;  /* 4B: free list */
     uint8_t              reserved0[4];  /*  4B: pad to 64B */
 
-    FLOW_CACHE_CL(1);                   /* counters & management */
-    uint32_t             action;        /*  4B: cached ACL result */
-    uint32_t             qos_class;     /*  4B: cached QoS class */
-    uint64_t             packets;       /*  8B */
-    uint64_t             bytes;         /*  8B */
-    uint8_t              reserved1[40]; /* 40B: pad to 64B */
+    FLOW_CACHE_CL(1);                   /* user payload (64B, caller-defined) */
+    union {
+        uint8_t  u8[64];               /* byte access */
+        uint64_t u64[8];               /* 8B-aligned: cast to user struct safely */
+    }                    userdata;
 } __attribute__((aligned(FLOW_CACHE_LINE_SIZE)));
 
 /*===========================================================================

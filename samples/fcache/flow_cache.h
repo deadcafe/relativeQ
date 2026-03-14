@@ -26,7 +26,8 @@
  * where <variant> is one of:  flow4  flow6  flowu
  *
  *   Lifecycle
- *     flow4_cache_init(fc, buckets, nb_bk, pool, max_entries, timeout_ms)
+ *     flow4_cache_init(fc, buckets, nb_bk, pool, max_entries, timeout_ms,
+ *                      init_cb, fini_cb, cb_arg)
  *     flow4_cache_flush(fc)
  *
  *   Sizing (compute nb_bk from max_entries, ~50% fill)
@@ -41,8 +42,7 @@
  *     flow4_cache_remove(fc, entry)
  *
  *   Hit processing
- *     flow4_cache_touch(entry, now, pkt_len)
- *     flow4_cache_update_action(entry, action, qos_class)
+ *     flow4_cache_touch(entry, now)   -- refresh timestamp; update userdata after
  *
  *   Aging (call every batch)
  *     flow4_cache_expire(fc, now)
@@ -64,16 +64,18 @@
  * FC_CALL(prefix, suffix) expands to prefix##_##suffix after full macro
  * expansion of both arguments.  The underscore is inserted automatically.
  *
- *   FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, max_entries, timeout_ms);
+ *   FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, max_entries, timeout_ms,
+ *                              init_cb, fini_cb, cb_arg);
  *   FC_CALL(flow4, cache_lookup_batch)(&fc, keys, nb_pkts, results);
  *   FC_CALL(flow4, cache_insert)(&fc, &key, now);
- *   FC_CALL(flow4, cache_touch)(entry, now, pkt_len);
+ *   FC_CALL(flow4, cache_touch)(entry, now);
  *   FC_CALL(flow4, cache_adjust_timeout)(&fc, misses);
  *   FC_CALL(flow4, cache_expire)(&fc, now);
  *
  * When the prefix is a macro token, it is fully expanded first:
  *   #define MY_FC flow4
  *   FC_CALL(MY_FC, cache_init)(&fc, ...);   // → flow4_cache_init(&fc, ...)
+
  *
  * Typical packet processing loop (using FC_CALL):
  *
@@ -85,10 +87,10 @@
  *   unsigned misses = 0;
  *   for (unsigned i = 0; i < nb_pkts; i++) {
  *       if (results[i]) {
- *           FC_CALL(MY_FC, cache_touch)(results[i], now, pkt_len[i]);
+ *           FC_CALL(MY_FC, cache_touch)(results[i], now);
+ *           // update userdata directly (e.g. MY_PAYLOAD(results[i])->packets++)
  *       } else {
- *           struct flow4_entry *e = FC_CALL(MY_FC, cache_insert)(&fc, &keys[i], now);
- *           if (e) e->action = slow_path(&keys[i]);
+ *           FC_CALL(MY_FC, cache_insert)(&fc, &keys[i], now); // init_cb fills userdata
  *           misses++;
  *       }
  *   }

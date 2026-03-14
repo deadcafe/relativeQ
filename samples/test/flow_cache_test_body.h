@@ -503,8 +503,8 @@ FCT_FN(FCT_PREFIX,run_pkt_loop)(struct rix_hash_bucket_s *buckets, unsigned nb_b
         for (unsigned i = 0; i < BENCH_BATCH; i++) {
             if (results[i] != NULL) {
                 FC_CALL(FCT_PREFIX, cache_touch)(results[i], now);
-                results[i]->packets++;
-                results[i]->bytes += 64;
+                TP(results[i])->packets++;  /* demonstration: update via userdata overlay */
+                TP(results[i])->bytes += 64;
                 total_hits++;
             } else {
                 struct FCT_ENTRY *e =
