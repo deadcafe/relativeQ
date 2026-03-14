@@ -16,7 +16,7 @@
 #include <string.h>
 #include <rix/rix_queue.h>
 #include <rix/rix_hash.h>
-#include "flow_cache_defs.h"
+#include "flow_cache_decl.h"
 
 /*===========================================================================
  * Unified flow key: 5-tuple + vrfid + family (44 bytes)
@@ -131,7 +131,7 @@ RIX_HASH_HEAD(flowu_ht);
 #define FC_CACHE        flowu_cache
 #define FC_HT           flowu_ht
 #define FC_FREE_HEAD    flowu_free_head
-#include "flow_cache_common.h"
+#include "flow_cache_decl.h"
 #undef FC_PREFIX
 #undef FC_ENTRY
 #undef FC_KEY

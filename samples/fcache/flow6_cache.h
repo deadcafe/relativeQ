@@ -11,7 +11,7 @@
 #include <string.h>
 #include <rix/rix_queue.h>
 #include <rix/rix_hash.h>
-#include "flow_cache_defs.h"
+#include "flow_cache_decl.h"
 
 /*===========================================================================
  * IPv6 flow key: 5-tuple + vrfid (44 bytes)
@@ -81,7 +81,7 @@ RIX_HASH_HEAD(flow6_ht);
 #define FC_CACHE        flow6_cache
 #define FC_HT           flow6_ht
 #define FC_FREE_HEAD    flow6_free_head
-#include "flow_cache_common.h"
+#include "flow_cache_decl.h"
 #undef FC_PREFIX
 #undef FC_ENTRY
 #undef FC_KEY
