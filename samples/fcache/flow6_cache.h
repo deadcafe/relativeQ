@@ -22,7 +22,7 @@ struct flow6_key {
     uint16_t src_port;
     uint16_t dst_port;
     uint8_t  proto;
-    uint8_t  pad[3];
+    uint8_t  pad[3];    /* must be zero-initialised; included in memcmp */
     uint32_t vrfid;
 } __attribute__((packed));
 
@@ -49,20 +49,17 @@ struct flow6_entry {
 } __attribute__((aligned(FLOW_CACHE_LINE_SIZE)));
 
 /*===========================================================================
- * Key comparison function for RIX_HASH_GENERATE
+ * Key comparison: full 44-byte memcmp.
+ *
+ * Correct because the struct is packed (no implicit padding) and pad[3]
+ * is always zero-initialised by callers before setting any field.
+ * The compiler inlines this as five 8-byte and one 4-byte comparisons,
+ * or as two 256-bit SIMD loads when AVX2 is available.
  *===========================================================================*/
 static inline int __attribute__((nonnull(1,2)))
 flow6_cmp(const void *a, const void *b)
 {
-    const struct flow6_key *ka = (const struct flow6_key *)a;
-    const struct flow6_key *kb = (const struct flow6_key *)b;
-
-    return (memcmp(ka->src_ip, kb->src_ip, 16) == 0 &&
-            memcmp(ka->dst_ip, kb->dst_ip, 16) == 0 &&
-            ka->src_port == kb->src_port &&
-            ka->dst_port == kb->dst_port &&
-            ka->proto    == kb->proto    &&
-            ka->vrfid    == kb->vrfid);
+    return memcmp(a, b, sizeof(struct flow6_key)) == 0;
 }
 
 /*===========================================================================
