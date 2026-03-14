@@ -15,7 +15,7 @@ RIX_HASH_GENERATE_STATIC(flow6_ht, flow6_entry, key, cur_hash, flow6_cmp)
 #define FC_CACHE        flow6_cache
 #define FC_HT_PREFIX    flow6_ht
 #define FC_FREE_HEAD    flow6_free_head
-#include "flow_cache_body.h"
+#include "flow_cache_body_private.h"
 #undef FC_PREFIX
 #undef FC_ENTRY
 #undef FC_KEY

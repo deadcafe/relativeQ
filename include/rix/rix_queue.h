@@ -8,7 +8,7 @@
 #ifndef _RIX_QUEUE_H_
 #  define _RIX_QUEUE_H_
 
-#  include "rix_defs.h"
+#  include "rix_defs_private.h"
 
 /*
  * Single List

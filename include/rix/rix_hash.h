@@ -45,7 +45,7 @@
 #ifndef _RIX_HASH_H_
 #  define _RIX_HASH_H_
 
-#  include "rix_defs.h"
+#  include "rix_defs_private.h"
 
 #  include <stdint.h>
 #  include <string.h>

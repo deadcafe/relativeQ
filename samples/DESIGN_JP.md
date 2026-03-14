@@ -721,7 +721,7 @@ struct flowu_key flowu_key_v6(const uint8_t *src_ip, const uint8_t *dst_ip,
 | ファイル | 生成内容 | 使用箇所 |
 |---|---|---|
 | `flow_cache_common.h` | キャッシュ構造体、API宣言、インラインヘルパー | `.h` ファイル |
-| `flow_cache_body.h` | init、insert、lookup_batch、expire、stats | `.c` ファイル |
+| `flow_cache_body_private.h` | init、insert、lookup_batch、expire、stats | `.c` ファイル |
 | `flow_cache_test_body.h` | テスト+ベンチマーク関数 | テスト `.c` |
 
 ### 11.3 新バリアントの追加
@@ -731,7 +731,7 @@ struct flowu_key flowu_key_v6(const uint8_t *src_ip, const uint8_t *dst_ip,
 1. キー構造体、エントリ構造体、比較関数を定義
 2. `RIX_HASH_HEAD` / `RIX_HASH_GENERATE`
 3. `FC_*` マクロを設定し、ヘッダで `#include "flow_cache_common.h"`
-4. `FC_*` マクロを設定し、ソースで `#include "flow_cache_body.h"`
+4. `FC_*` マクロを設定し、ソースで `#include "flow_cache_body_private.h"`
 5. `FCT_*` マクロを設定し、テストで `#include "flow_cache_test_body.h"`
 
 他のコード変更は不要 — すべてのロジックはテンプレート内にある。
@@ -745,7 +745,7 @@ samples/
 
   flow_cache.h             共通定義（TSC、stats、パイプラインパラメータ）
   flow_cache_common.h      テンプレート: キャッシュ構造体 + API宣言
-  flow_cache_body.h        テンプレート: 実装（init/insert/lookup/expire）
+  flow_cache_body_private.h        テンプレート: 実装（init/insert/lookup/expire）
   flow_cache_test_body.h   テンプレート: テスト + ベンチマーク関数
 
   flow4_cache.h            IPv4: キー、エントリ、cmp、ハッシュ生成、テンプレート展開

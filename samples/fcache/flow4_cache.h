@@ -10,7 +10,7 @@
 
 #include <rix/rix_queue.h>
 #include <rix/rix_hash.h>
-#include "flow_cache_decl.h"
+#include "flow_cache_decl_private.h"
 
 /*===========================================================================
  * IPv4 flow key: 5-tuple + vrfid (20 bytes)
@@ -80,7 +80,7 @@ RIX_HASH_HEAD(flow4_ht);
 #define FC_CACHE        flow4_cache
 #define FC_HT           flow4_ht
 #define FC_FREE_HEAD    flow4_free_head
-#include "flow_cache_decl.h"
+#include "flow_cache_decl_private.h"
 #undef FC_PREFIX
 #undef FC_ENTRY
 #undef FC_KEY

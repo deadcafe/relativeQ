@@ -508,7 +508,7 @@ is defined in each variant's header.  Everything else is generated.
 | File | Generates | Used by |
 |---|---|---|
 | `flow_cache_common.h` | Cache struct, API declarations, inline helpers | `.h` files |
-| `flow_cache_body.h` | init, insert, lookup_batch, expire, stats | `.c` files |
+| `flow_cache_body_private.h` | init, insert, lookup_batch, expire, stats | `.c` files |
 | `flow_cache_test_body.h` | Test + benchmark functions | test `.c` |
 
 ### 11.3 Adding a new variant
@@ -518,7 +518,7 @@ To add a new flow cache variant (e.g., MPLS):
 1. Define key struct, entry struct, comparison function
 2. `RIX_HASH_HEAD` / `RIX_HASH_GENERATE`
 3. Set `FC_*` macros, `#include "flow_cache_common.h"` in header
-4. Set `FC_*` macros, `#include "flow_cache_body.h"` in source
+4. Set `FC_*` macros, `#include "flow_cache_body_private.h"` in source
 5. Set `FCT_*` macros, `#include "flow_cache_test_body.h"` in test
 
 No other code changes needed — all logic is in the templates.
@@ -531,7 +531,7 @@ samples/
 
   flow_cache.h             common definitions (TSC, stats, pipeline params)
   flow_cache_common.h      template: cache struct + API declarations
-  flow_cache_body.h        template: implementation (init/insert/lookup/expire)
+  flow_cache_body_private.h        template: implementation (init/insert/lookup/expire)
   flow_cache_test_body.h   template: test + benchmark functions
 
   flow4_cache.h            IPv4: key, entry, cmp, hash generate, template expand
