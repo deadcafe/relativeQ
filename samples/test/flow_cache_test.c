@@ -203,7 +203,7 @@ flow4_test_init_insert_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     struct flow4_cache fc;
     uint64_t now = 1000000;
 
-    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0);
+    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0, NULL, NULL, NULL);
 
     struct flow4_key k1 = make_key4(0x0A000001, 0x0A000002,
                                      1234, 80, 6, 100);
@@ -221,11 +221,14 @@ flow4_test_init_insert_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     flow4_cache_lookup_batch(&fc, &k2, 1, results);
     assert(results[0] == NULL);
 
-    flow4_cache_update_action(e1, 42, 7);
+    e1->action    = 42;
+    e1->qos_class = 7;
     assert(e1->action == 42);
     assert(e1->qos_class == 7);
 
-    flow4_cache_touch(e1, now + 100, 64);
+    flow4_cache_touch(e1, now + 100);
+    e1->packets++;
+    e1->bytes += 64;
     assert(e1->last_ts == now + 100);
     assert(e1->packets == 1);
     assert(e1->bytes == 64);
@@ -240,7 +243,7 @@ flow4_test_insert_exhaustion(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     printf("[T-IPv4] insert on free-list exhaustion\n");
 
     struct flow4_cache fc;
-    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, 1 /* 1 ms */);
+    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, 1 /* 1 ms */, NULL, NULL, NULL);
 
     uint64_t now = flow_cache_rdtsc();
     unsigned filled = 0;
@@ -274,7 +277,7 @@ flow4_test_insert_exhaustion(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     printf("    evictions: %" PRIu64 "\n", st.evictions);
 
     /* all live, no expiry - insert must still succeed (forced bucket eviction) */
-    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0);
+    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0, NULL, NULL, NULL);
     now = flow_cache_rdtsc();
     for (unsigned i = 0; i < max_entries; i++) {
         struct flow4_key k = make_key4(i + 1, i + 10001,
@@ -305,7 +308,7 @@ flow6_test_init_insert_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     struct flow6_cache fc;
     uint64_t now = 1000000;
 
-    flow6_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0);
+    flow6_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0, NULL, NULL, NULL);
 
     uint8_t src1[16] = {0,0,0,0,0,0,0,0, 0,0,0,0, 0,0x0a,0,1};
     uint8_t dst1[16] = {0,0,0,0,0,0,0,0, 0,0,0,0, 0,0x0a,0,2};
@@ -329,11 +332,14 @@ flow6_test_init_insert_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     flow6_cache_lookup_batch(&fc, &k2, 1, results);
     assert(results[0] == NULL);
 
-    flow6_cache_update_action(e1, 42, 7);
+    e1->action    = 42;
+    e1->qos_class = 7;
     assert(e1->action == 42);
     assert(e1->qos_class == 7);
 
-    flow6_cache_touch(e1, now + 100, 64);
+    flow6_cache_touch(e1, now + 100);
+    e1->packets++;
+    e1->bytes += 64;
     assert(e1->last_ts == now + 100);
     assert(e1->packets == 1);
     assert(e1->bytes == 64);
@@ -352,7 +358,7 @@ flow4_bench_single_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     printf("\n[B-IPv4] single find (no pipeline) - hit vs miss latency\n");
 
     struct flow4_cache fc;
-    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0);
+    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0, NULL, NULL, NULL);
 
     unsigned actual_fill;
     struct flow4_key *hit_keys;
@@ -592,7 +598,7 @@ flowu_test_mixed(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
 
     struct flowu_cache fc;
     uint64_t now = 1000000;
-    flowu_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0);
+    flowu_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0, NULL, NULL, NULL);
 
     /* insert an IPv4 flow */
     struct flowu_key k4 = flowu_key_v4(0x0A000001, 0x0A000002,

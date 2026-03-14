@@ -54,7 +54,8 @@ FCT_FN(FCT_PREFIX,test_find)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
 
     struct FCT_CACHE fc;
     uint64_t now = 1000000;
-    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 0);
+    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 0,
+                                    NULL, NULL, NULL);
 
     struct FCT_KEY k1;
     FCT_MAKE_RANDOM_KEY(&k1);
@@ -86,7 +87,8 @@ FCT_FN(FCT_PREFIX,test_remove)(struct rix_hash_bucket_s *buckets, unsigned nb_bk
 
     struct FCT_CACHE fc;
     uint64_t now = 1000000;
-    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 0);
+    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 0,
+                                    NULL, NULL, NULL);
 
     struct FCT_KEY k1;
     FCT_MAKE_RANDOM_KEY(&k1);
@@ -130,7 +132,8 @@ FCT_FN(FCT_PREFIX,test_flush)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
 
     struct FCT_CACHE fc;
     uint64_t now = 1000000;
-    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 0);
+    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 0,
+                                    NULL, NULL, NULL);
 
     unsigned n = (max_entries < 64u) ? max_entries / 2u : 32u;
     struct FCT_KEY *keys = malloc(n * sizeof(*keys));
@@ -182,7 +185,8 @@ FCT_FN(FCT_PREFIX,test_expire)(struct rix_hash_bucket_s *buckets, unsigned nb_bk
     struct FCT_KEY k1;
     FCT_MAKE_RANDOM_KEY(&k1);
 
-    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 1 /* 1 ms */);
+    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 1 /* 1 ms */,
+                                    NULL, NULL, NULL);
 
     uint64_t now = flow_cache_rdtsc();
     struct FCT_ENTRY *e1 = FC_CALL(FCT_PREFIX, cache_insert)(&fc, &k1, now);
@@ -223,7 +227,8 @@ FCT_FN(FCT_PREFIX,test_batch_lookup)(struct rix_hash_bucket_s *buckets, unsigned
     printf("[T-%s] batch lookup\n", FCT_LABEL);
 
     struct FCT_CACHE fc;
-    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 0);
+    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 0,
+                                    NULL, NULL, NULL);
 
     unsigned n = (max_entries < 128) ? max_entries / 2 : 128;
     struct FCT_KEY *keys = malloc(n * sizeof(*keys));
@@ -278,7 +283,8 @@ FCT_FN(FCT_PREFIX,bench_insert)(struct rix_hash_bucket_s *buckets, unsigned nb_b
            FCT_LABEL, max_entries, nb_bk);
 
     struct FCT_CACHE fc;
-    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 0);
+    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 0,
+                                    NULL, NULL, NULL);
 
     unsigned total = max_entries;
     struct FCT_KEY *keys = malloc((size_t)total * sizeof(*keys));
@@ -318,7 +324,8 @@ FCT_FN(FCT_PREFIX,bench_lookup)(struct rix_hash_bucket_s *buckets, unsigned nb_b
            max_entries, nb_bk, BENCH_BATCH, repeat);
 
     struct FCT_CACHE fc;
-    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 0);
+    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 0,
+                                    NULL, NULL, NULL);
 
     unsigned fill_target = max_entries * 3 / 4;
     unsigned actual_fill;
@@ -406,7 +413,8 @@ FCT_FN(FCT_PREFIX,bench_expire)(struct rix_hash_bucket_s *buckets, unsigned nb_b
     printf("\n[B-%s] expire (max_entries=%u)\n", FCT_LABEL, max_entries);
 
     struct FCT_CACHE fc;
-    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 1 /* 1 ms */);
+    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries, 1 /* 1 ms */,
+                                    NULL, NULL, NULL);
 
     unsigned filled;
     struct FCT_KEY *keys = FCT_FN(FCT_PREFIX,fill_cache)(&fc, max_entries, &filled);
@@ -445,7 +453,8 @@ FCT_FN(FCT_PREFIX,run_pkt_loop)(struct rix_hash_bucket_s *buckets, unsigned nb_b
            max_entries, nb_bk_use, total_slots, BENCH_BATCH, repeat);
 
     struct FCT_CACHE fc;
-    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk_use, pool, max_entries, 1);
+    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk_use, pool, max_entries, 1,
+                                    NULL, NULL, NULL);
 
     unsigned prefill = total_slots - (total_slots >> 2) - BENCH_BATCH;
     if (prefill > max_entries)
@@ -493,7 +502,9 @@ FCT_FN(FCT_PREFIX,run_pkt_loop)(struct rix_hash_bucket_s *buckets, unsigned nb_b
         unsigned batch_misses = 0;
         for (unsigned i = 0; i < BENCH_BATCH; i++) {
             if (results[i] != NULL) {
-                FC_CALL(FCT_PREFIX, cache_touch)(results[i], now, 64);
+                FC_CALL(FCT_PREFIX, cache_touch)(results[i], now);
+                results[i]->packets++;
+                results[i]->bytes += 64;
                 total_hits++;
             } else {
                 struct FCT_ENTRY *e =

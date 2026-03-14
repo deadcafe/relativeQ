@@ -197,7 +197,7 @@ flow_cache_ms_to_tsc(uint64_t tsc_hz, uint64_t ms)
  *   FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, max_entries, timeout_ms);
  *   FC_CALL(flow4, cache_lookup_batch)(&fc, keys, nb_pkts, results);
  *   FC_CALL(flow4, cache_insert)(&fc, &key, now);
- *   FC_CALL(flow4, cache_touch)(entry, now, pkt_len);
+ *   FC_CALL(flow4, cache_touch)(entry, now);  // then: entry->packets++; entry->bytes += len;
  *   FC_CALL(flow4, cache_expire)(&fc, now);
  *   FC_CALL(flow4, cache_remove)(&fc, entry);
  *   FC_CALL(flow4, cache_flush)(&fc);
@@ -289,6 +289,16 @@ flow_cache_nb_bk_hint(unsigned max_entries)
 #define FLOW_CACHE_TIMEOUT_RECOVER_SHIFT   8  /* recovery speed: 1/256 per batch */
 #define FLOW_CACHE_TIMEOUT_MIN_MS       1000  /* min timeout = 1.0 second */
 
+/*===========================================================================
+ * Entry lifecycle reason codes (passed to fini_cb)
+ *===========================================================================*/
+typedef enum {
+    FLOW_CACHE_FINI_TIMEOUT,    /* removed by aging expire */
+    FLOW_CACHE_FINI_EVICTED,    /* forced eviction (pool full, no expired entry) */
+    FLOW_CACHE_FINI_REMOVED,    /* explicit cache_remove() call */
+    FLOW_CACHE_FINI_FLUSHED,    /* cache_flush() bulk clear */
+} flow_cache_fini_reason_t;
+
 #endif /* _FLOW_CACHE_DECL_ONCE_H_ */
 
 /*===========================================================================
@@ -341,6 +351,12 @@ struct FC_CACHE {
 
     /* stats */
     struct flow_cache_stats      stats;
+
+    /* entry lifecycle callbacks (never NULL after cache_init) */
+    void    (*init_cb)(struct FC_ENTRY *entry, void *arg);
+    void    (*fini_cb)(struct FC_ENTRY *entry,
+                        flow_cache_fini_reason_t reason, void *arg);
+    void    *cb_arg;
 };
 
 /*===========================================================================
@@ -384,7 +400,12 @@ void FCC_FN(FC_PREFIX, cache_init)(struct FC_CACHE *fc,
                          unsigned nb_bk,
                          struct FC_ENTRY *pool,
                          unsigned max_entries,
-                         uint64_t timeout_ms);
+                         uint64_t timeout_ms,
+                         void (*init_cb)(struct FC_ENTRY *entry, void *arg),
+                         void (*fini_cb)(struct FC_ENTRY *entry,
+                                         flow_cache_fini_reason_t reason,
+                                         void *arg),
+                         void *cb_arg);
 
 void FCC_FN(FC_PREFIX, cache_flush)(struct FC_CACHE *fc);
 
@@ -433,24 +454,15 @@ FCC_FN(FC_PREFIX, cache_nb_entries)(const struct FC_CACHE *fc)
     return fc->ht_head.rhh_nb;
 }
 
-/* Update cached slow-path result for a hit entry. */
+/*
+ * Record a packet hit: refresh the entry's timestamp.
+ * Payload counters (packets, bytes, ...) are managed entirely by the caller;
+ * update them directly after cache_touch() returns.
+ */
 static inline void
-FCC_FN(FC_PREFIX, cache_update_action)(struct FC_ENTRY *entry,
-                             uint32_t action,
-                             uint32_t qos_class)
-{
-    entry->action    = action;
-    entry->qos_class = qos_class;
-}
-
-/* Record a packet hit: refresh timestamp and accumulate counters. */
-static inline void
-FCC_FN(FC_PREFIX, cache_touch)(struct FC_ENTRY *entry, uint64_t now,
-                     uint32_t pkt_len)
+FCC_FN(FC_PREFIX, cache_touch)(struct FC_ENTRY *entry, uint64_t now)
 {
     entry->last_ts = now;
-    entry->packets++;
-    entry->bytes += pkt_len;
 }
 
 /*

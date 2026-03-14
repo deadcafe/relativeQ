@@ -29,6 +29,26 @@
 #define FC_FN(prefix, suffix) FC_FN_CAT(prefix, _, suffix)
 
 /*===========================================================================
+ * Default no-op lifecycle callbacks
+ *
+ * Assigned to fc->init_cb / fc->fini_cb when the caller passes NULL to
+ * cache_init().  Using actual function pointers instead of NULL checks
+ * eliminates all conditional branches at every call site.
+ *===========================================================================*/
+static void
+FC_FN(FC_PREFIX, default_init_cb)(struct FC_ENTRY *entry __attribute__((unused)),
+                                   void *arg __attribute__((unused)))
+{
+}
+
+static void
+FC_FN(FC_PREFIX, default_fini_cb)(struct FC_ENTRY *entry __attribute__((unused)),
+                                   flow_cache_fini_reason_t reason __attribute__((unused)),
+                                   void *arg __attribute__((unused)))
+{
+}
+
+/*===========================================================================
  * Internal: fill-rate-driven expire pressure
  *
  * expire_level: 0-15 based on how far nb_entries exceeds 50% of max_entries.
@@ -76,7 +96,11 @@ FC_FN(FC_PREFIX, cache_init)(struct FC_CACHE *fc,
                    unsigned nb_bk,
                    struct FC_ENTRY *pool,
                    unsigned max_entries,
-                   uint64_t timeout_ms)
+                   uint64_t timeout_ms,
+                   void (*init_cb)(struct FC_ENTRY *entry, void *arg),
+                   void (*fini_cb)(struct FC_ENTRY *entry,
+                                   flow_cache_fini_reason_t reason, void *arg),
+                   void *cb_arg)
 {
     memset(fc, 0, sizeof(*fc));
 
@@ -109,6 +133,12 @@ FC_FN(FC_PREFIX, cache_init)(struct FC_CACHE *fc,
         fc->min_timeout_tsc = UINT64_MAX;
     }
     fc->eff_timeout_tsc = fc->timeout_tsc;
+
+    /* Assign default no-op callbacks when caller passes NULL.
+     * fc->init_cb / fini_cb are guaranteed non-NULL after this point. */
+    fc->init_cb = init_cb ? init_cb : FC_FN(FC_PREFIX, default_init_cb);
+    fc->fini_cb = fini_cb ? fini_cb : FC_FN(FC_PREFIX, default_fini_cb);
+    fc->cb_arg  = cb_arg;
 }
 
 /*===========================================================================
@@ -139,6 +169,7 @@ FC_FN(FC_PREFIX, cache_evict_one)(struct FC_CACHE *fc, uint64_t now)
 
         FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
                                        fc->pool, entry);
+        fc->fini_cb(entry, FLOW_CACHE_FINI_TIMEOUT, fc->cb_arg);
         entry->last_ts = 0;
         fc->stats.evictions++;
         return entry;
@@ -191,6 +222,7 @@ FC_FN(FC_PREFIX, cache_evict_bucket_oldest)(struct FC_CACHE *fc,
 
     FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
                                    fc->pool, oldest);
+    fc->fini_cb(oldest, FLOW_CACHE_FINI_EVICTED, fc->cb_arg);
     oldest->last_ts = 0;
     fc->stats.evictions++;
     return oldest;
@@ -223,17 +255,15 @@ FC_FN(FC_PREFIX, cache_insert)(struct FC_CACHE *fc,
         RIX_SLIST_REMOVE_HEAD(&fc->free_head, fc->pool, free_link);
     }
 
-    entry->key       = *key;
-    entry->action    = FLOW_ACTION_NONE;
-    entry->qos_class = 0;
-    entry->last_ts   = now;
-    entry->packets   = 0;
-    entry->bytes     = 0;
+    entry->key     = *key;
+    entry->last_ts = now;
 
     struct FC_ENTRY *dup =
         FC_CALL(FC_HT_PREFIX, insert)(&fc->ht_head, fc->buckets,
                                        fc->pool, entry);
     if (dup == NULL) {
+        /* New entry placed successfully - let caller initialize payload. */
+        fc->init_cb(entry, fc->cb_arg);
         fc->stats.inserts++;
         return entry;
     }
@@ -344,6 +374,7 @@ FC_FN(FC_PREFIX, cache_expire)(struct FC_CACHE *fc,
 
         FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
                                        fc->pool, entry);
+        fc->fini_cb(entry, FLOW_CACHE_FINI_TIMEOUT, fc->cb_arg);
         entry->last_ts = 0;
 
         RIX_SLIST_INSERT_HEAD(&fc->free_head, fc->pool, entry, free_link);
@@ -405,6 +436,7 @@ FC_FN(FC_PREFIX, cache_expire_2stage)(struct FC_CACHE *fc,
 
         FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
                                        fc->pool, entry);
+        fc->fini_cb(entry, FLOW_CACHE_FINI_TIMEOUT, fc->cb_arg);
         entry->last_ts = 0;
 
         RIX_SLIST_INSERT_HEAD(&fc->free_head, fc->pool, entry, free_link);
@@ -446,6 +478,7 @@ FC_FN(FC_PREFIX, cache_remove)(struct FC_CACHE *fc,
 {
     FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
                                    fc->pool, entry);
+    fc->fini_cb(entry, FLOW_CACHE_FINI_REMOVED, fc->cb_arg);
     entry->last_ts = 0;
     RIX_SLIST_INSERT_HEAD(&fc->free_head, fc->pool, entry, free_link);
     fc->stats.removes++;
@@ -462,6 +495,12 @@ FC_FN(FC_PREFIX, cache_remove)(struct FC_CACHE *fc,
 void
 FC_FN(FC_PREFIX, cache_flush)(struct FC_CACHE *fc)
 {
+    /* Notify caller for each active entry before wiping the pool. */
+    for (unsigned i = 0; i < fc->max_entries; i++) {
+        if (fc->pool[i].last_ts != 0)
+            fc->fini_cb(&fc->pool[i], FLOW_CACHE_FINI_FLUSHED, fc->cb_arg);
+    }
+
     unsigned flushed = fc->ht_head.rhh_nb;
 
     FC_CALL(FC_HT_PREFIX, init)(&fc->ht_head, fc->nb_bk);
