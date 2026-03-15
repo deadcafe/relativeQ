@@ -30,8 +30,10 @@
  *                      init_cb, fini_cb, cb_arg)
  *     flow4_cache_flush(fc)
  *
- *   Sizing (compute nb_bk from max_entries, ~50% fill)
- *     flow_cache_nb_bk_hint(max_entries)
+ *   Sizing
+ *     flow_cache_pool_count(max_entries)              -- pool element count for cache_init (rounded to 2^n, min 64)
+ *     flow_cache_pool_size(max_entries, entry_size)   -- pool byte count for aligned_alloc (size_t)
+ *     flow_cache_nb_bk_hint(max_entries)              -- bucket count for ~50% fill
  *
  *   Lookup
  *     flow4_cache_lookup_batch(fc, keys, nb_pkts, results)

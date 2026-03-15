@@ -167,20 +167,6 @@ make_random_keyu(struct flowu_key *k)
     }
 }
 
-/*===========================================================================
- * next_pow2: round up to power-of-two
- *===========================================================================*/
-static unsigned
-next_pow2(unsigned v)
-{
-    v--;
-    v |= v >> 1;
-    v |= v >> 2;
-    v |= v >> 4;
-    v |= v >> 8;
-    v |= v >> 16;
-    return v + 1;
-}
 
 /*===========================================================================
  * Allocate aligned memory via mmap + hugepage hint
@@ -487,8 +473,7 @@ static void
 flow4_bench_bk0_rate(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
                      struct flow4_entry *pool, unsigned max_entries)
 {
-    unsigned nb_bk_local = next_pow2((max_entries + RIX_HASH_BUCKET_ENTRY_SZ - 1)
-                                     / RIX_HASH_BUCKET_ENTRY_SZ);
+    unsigned nb_bk_local = rix_hash_nb_bk_hint(max_entries);
     if (nb_bk_local > nb_bk)
         nb_bk_local = nb_bk;
     unsigned total_slots = nb_bk_local * RIX_HASH_BUCKET_ENTRY_SZ;
@@ -724,11 +709,7 @@ main(int argc, char **argv)
     while ((opt = getopt_long(argc, argv, "n:b:r:h", long_opts, NULL)) != -1) {
         switch (opt) {
         case 'n':
-            max_entries = next_pow2((unsigned)strtoul(optarg, NULL, 0));
-            if (max_entries < 64) {
-                fprintf(stderr, "error: --entries must be >= 64\n");
-                return 1;
-            }
+            max_entries = flow_cache_pool_count((unsigned)strtoul(optarg, NULL, 0));
             break;
         case 'b':
             nb_bk = (unsigned)strtoul(optarg, NULL, 0);
@@ -749,14 +730,9 @@ main(int argc, char **argv)
         }
     }
 
-    /* auto-size buckets: target ~50% fill (16 slots per bucket) */
-    if (nb_bk == 0) {
-        unsigned slots_needed = max_entries * 2;
-        nb_bk = next_pow2((slots_needed + RIX_HASH_BUCKET_ENTRY_SZ - 1)
-                          / RIX_HASH_BUCKET_ENTRY_SZ);
-        if (nb_bk < 16)
-            nb_bk = 16;
-    }
+    /* auto-size buckets: target ~50% fill */
+    if (nb_bk == 0)
+        nb_bk = flow_cache_nb_bk_hint(max_entries);
 
     /* auto repeat: fewer for large tables */
     if (repeat == 0) {
@@ -771,9 +747,9 @@ main(int argc, char **argv)
     }
 
     size_t bk_size    = (size_t)nb_bk * sizeof(struct rix_hash_bucket_s);
-    size_t pool4_size = (size_t)max_entries * sizeof(struct flow4_entry);
-    size_t pool6_size = (size_t)max_entries * sizeof(struct flow6_entry);
-    size_t poolu_size = (size_t)max_entries * sizeof(struct flowu_entry);
+    size_t pool4_size = flow_cache_pool_size(max_entries, sizeof(struct flow4_entry));
+    size_t pool6_size = flow_cache_pool_size(max_entries, sizeof(struct flow6_entry));
+    size_t poolu_size = flow_cache_pool_size(max_entries, sizeof(struct flowu_entry));
 
     printf("=== flow cache test & bench (IPv4 / IPv6 / Unified) ===\n");
     printf("  max_entries   = %u\n", max_entries);

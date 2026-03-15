@@ -15,7 +15,7 @@
  *   FCT_KEY_BYTES     e.g. 20
  *   FCT_MAKE_RANDOM_KEY(kp)  - macro or function to fill *kp randomly
  *
- * Also requires: tsc_start/end, xorshift64, next_pow2, alloc_aligned,
+ * Also requires: tsc_start/end, xorshift64, alloc_aligned,
  *                now_sec, BENCH_BATCH, BENCH_WARMUP, flow_cache_rdtsc
  */
 
@@ -560,8 +560,8 @@ FCT_FN(FCT_PREFIX,bench_pkt_loop)(struct rix_hash_bucket_s *buckets, unsigned nb
     FCT_FN(FCT_PREFIX,run_pkt_loop)(buckets, nb_bk, pool, max_entries, repeat,
                           "standard sizing (pool ~ 50% fill)");
 
-    unsigned nb_bk_tight = next_pow2((max_entries + RIX_HASH_BUCKET_ENTRY_SZ - 1)
-                                     / RIX_HASH_BUCKET_ENTRY_SZ);
+    /* tight sizing: minimum nb_bk to hold max_entries at ~100% fill */
+    unsigned nb_bk_tight = rix_hash_nb_bk_hint(max_entries / 2u);
     while (nb_bk_tight > 1 &&
            max_entries < ((uint64_t)nb_bk_tight * RIX_HASH_BUCKET_ENTRY_SZ * 3 >> 2))
         nb_bk_tight >>= 1;

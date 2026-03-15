@@ -226,8 +226,51 @@ struct flow_cache_stats {
 };
 
 /*===========================================================================
- * Sizing helper
+ * Sizing helpers
  *===========================================================================*/
+
+/*
+ * flow_cache_pool_count - pool element count to pass to cache_init.
+ *
+ * cache_init requires max_entries to be a power of 2 (entries_mask
+ * optimisation).  This function rounds up max_entries to the next power
+ * of 2 and enforces the minimum of 64 (required by the expire_level
+ * computation: log2(max_entries) >= 6).
+ */
+static inline unsigned
+flow_cache_pool_count(unsigned max_entries)
+{
+    if (max_entries < 64u)
+        max_entries = 64u;
+    /* round up to next power of 2 */
+    max_entries--;
+    max_entries |= max_entries >> 1;
+    max_entries |= max_entries >> 2;
+    max_entries |= max_entries >> 4;
+    max_entries |= max_entries >> 8;
+    max_entries |= max_entries >> 16;
+    return max_entries + 1u;
+}
+
+/*
+ * flow_cache_pool_size - pool memory size in bytes to pass to aligned_alloc.
+ *
+ * Returns flow_cache_pool_count(max_entries) * entry_size.
+ * entry_size is sizeof(struct flow4_entry), sizeof(struct flow6_entry), etc.
+ *
+ * Usage:
+ *   unsigned pool_n  = flow_cache_pool_count(desired_entries);
+ *   size_t   pool_sz = flow_cache_pool_size(desired_entries, sizeof(struct flow4_entry));
+ *   unsigned nb_bk   = flow_cache_nb_bk_hint(pool_n);
+ *   struct flow4_entry       *pool    = aligned_alloc(64, pool_sz);
+ *   struct rix_hash_bucket_s *buckets = aligned_alloc(64, nb_bk * sizeof(*buckets));
+ *   flow4_cache_init(&fc, buckets, nb_bk, pool, pool_n, timeout_ms, ...);
+ */
+static inline size_t
+flow_cache_pool_size(unsigned max_entries, size_t entry_size)
+{
+    return (size_t)flow_cache_pool_count(max_entries) * entry_size;
+}
 
 /*
  * flow_cache_nb_bk_hint - recommended nb_bk for a target ~50% slot fill.

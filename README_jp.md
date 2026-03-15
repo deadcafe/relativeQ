@@ -80,11 +80,18 @@ include/
     rix_hash64.h    カッコーハッシュ -- uint64_t キー版
     rix_hash_key.h  組み込みハッシュ関数 (CRC32c, identity, ...)
 samples/
-  flow_cache.h      3 バリアント全体の傘ヘッダ
-  flow4_cache.h/c   IPv4 5 タプルフローキャッシュ (20 バイトキー)
-  flow6_cache.h/c   IPv6 5 タプルフローキャッシュ (44 バイトキー)
-  flow_unified_cache.h/c  IPv4+IPv6 統合テーブル (44 バイトキー、family フィールド)
-  flow_cache_test.c テスト + ベンチマークドライバ
+  DESIGN.md         設計ドキュメント
+  DESIGN_JP.md      設計ドキュメント (日本語)
+  fcache/           ライブラリ (libfcache.a / libfcache.so)
+    flow_cache.h            傘ヘッダ: 3 バリアント全体をインクルード
+    flow4_cache.h/.c        IPv4 5 タプルフローキャッシュ (20 バイトキー)
+    flow6_cache.h/.c        IPv6 5 タプルフローキャッシュ (44 バイトキー)
+    flow_unified_cache.h/.c IPv4+IPv6 統合テーブル (44 バイトキー、family フィールド)
+    flow_cache_decl_private.h  テンプレート: キャッシュ構造体 + API (内部用)
+    flow_cache_body_private.h  テンプレート: 実装 (内部用)
+  test/
+    flow_cache_test.c       正確性テスト + ベンチマーク (全 3 バリアント)
+    flow_cache_test_body.h  テンプレート: テスト・ベンチマーク関数 (内部用)
 ```
 
 ---
@@ -611,13 +618,15 @@ IPv4 専用・IPv6 専用・IPv4+IPv6 統合の 3 バリアントがあります
 unsigned nb_bk = flow_cache_nb_bk_hint(max_entries); /* ~50% 充填率でのサイジング */
 struct rix_hash_bucket_s *buckets =
     aligned_alloc(64, nb_bk * sizeof(*buckets));
-struct flow4_entry *pool = aligned_alloc(64, max_entries * sizeof(*pool));
+struct flow4_entry *pool =
+    aligned_alloc(64, flow_cache_pool_size(max_entries, sizeof(*pool)));
+unsigned pool_count = flow_cache_pool_count(max_entries); /* 2^n、最小 64 */
 
 /* 初期化 */
 struct flow4_cache fc;
-uint64_t tsc_hz  = flow_cache_calibrate_tsc_hz();
-uint64_t timeout = flow_cache_ms_to_tsc(tsc_hz, 30000); /* 30 秒 */
-flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, timeout);
+flow4_cache_init(&fc, buckets, nb_bk, pool, pool_count,
+                 30000,           /* timeout_ms: 30 秒 */
+                 NULL, NULL, NULL); /* init_cb, fini_cb, cb_arg (NULL = no-op) */
 
 /* 一括クリア (VRF 削除、インターフェースダウンなど) */
 flow4_cache_flush(&fc);
@@ -635,10 +644,10 @@ flow4_cache_lookup_batch(&fc, keys, nb_pkts, results);
 unsigned misses = 0;
 for (unsigned i = 0; i < nb_pkts; i++) {
     if (results[i]) {
-        flow4_cache_touch(results[i], now, pkt_len[i]);   /* ヒット */
+        flow4_cache_touch(results[i], now);   /* ヒット: タイムスタンプを更新 */
+        /* 直接 userdata を更新: MY_PAYLOAD(results[i])->packets++ 等 */
     } else {
-        struct flow4_entry *e = flow4_cache_insert(&fc, &keys[i], now);
-        if (e) e->action = slow_path(&keys[i]);            /* ミス */
+        flow4_cache_insert(&fc, &keys[i], now); /* ミス: init_cb が userdata を初期化 */
         misses++;
     }
 }
@@ -656,11 +665,14 @@ flow4_cache_expire(&fc, now);
 
 ```c
 /* ライフサイクル */
-void     flow4_cache_init (fc, buckets, nb_bk, pool, max_entries, timeout_ms);
+void     flow4_cache_init (fc, buckets, nb_bk, pool, pool_count, timeout_ms,
+                           init_cb, fini_cb, cb_arg);
 void     flow4_cache_flush(fc);
 
 /* サイジングヘルパー */
-unsigned flow_cache_nb_bk_hint(max_entries);   /* ceil(max_entries/8)、2 の冪乗 */
+unsigned flow_cache_pool_count(max_entries);              /* cache_init 用エントリ数 (2^n、最小 64) */
+size_t   flow_cache_pool_size (max_entries, entry_size);  /* aligned_alloc 用バイト数 */
+unsigned flow_cache_nb_bk_hint(max_entries);              /* ~50% 充填率向けバケット数 (2^n) */
 
 /* ルックアップ */
 void                flow4_cache_lookup_batch(fc, keys, nb_pkts, results);
@@ -671,8 +683,7 @@ struct flow4_entry *flow4_cache_insert(fc, key, now);
 void                flow4_cache_remove(fc, entry);
 
 /* ヒット処理 */
-void flow4_cache_touch        (entry, now, pkt_len);
-void flow4_cache_update_action(entry, action, qos_class);
+void flow4_cache_touch(entry, now);   /* タイムスタンプを更新; 後で userdata を更新 */
 
 /* エージング */
 void flow4_cache_expire         (fc, now);
@@ -701,10 +712,11 @@ uint64_t flow_cache_ms_to_tsc(tsc_hz, ms);
 #include "flow_cache.h"
 
 /* FC_CALL(prefix, suffix) は prefix##_##suffix に展開される */
-FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, max_entries, timeout_ms);
+FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, pool_count, timeout_ms,
+                           init_cb, fini_cb, cb_arg);
 FC_CALL(flow4, cache_lookup_batch)(&fc, keys, nb_pkts, results);
 FC_CALL(flow4, cache_insert)(&fc, &keys[i], now);
-FC_CALL(flow4, cache_touch)(results[i], now, pkt_len[i]);
+FC_CALL(flow4, cache_touch)(results[i], now);
 FC_CALL(flow4, cache_adjust_timeout)(&fc, misses);
 FC_CALL(flow4, cache_expire)(&fc, now);
 

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Simple HTTP server that disables browser caching.
+HTTP server with CGI support that disables browser caching.
 
 Used by 'make htags-serve' so that htags-regenerated HTML is always
-fetched fresh from disk, without stale-cache issues.
+fetched fresh from disk, without stale-cache issues.  CGI support is
+required for htags dynamic features: reverse references and symbol search
+(both served via cgi-bin/global.cgi).
 
 Usage:
     python3 scripts/nohttpserver.py [port] [bind]
@@ -15,7 +17,7 @@ import http.server
 import sys
 
 
-class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
+class NoCacheHandler(http.server.CGIHTTPRequestHandler):
     def end_headers(self):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
         self.send_header("Pragma", "no-cache")

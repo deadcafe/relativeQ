@@ -1196,6 +1196,33 @@ name##_walk(struct name *head,                                                \
 }
 
 /*===========================================================================
+ * Sizing helper
+ *
+ * rix_hash_nb_bk_hint - recommended nb_bk for a target ~50% slot fill.
+ *
+ * Each bucket holds RIX_HASH_BUCKET_ENTRY_SZ (16) slots.
+ * For 50% fill: total_slots = nb_bk * 16 = 2 * max_entries
+ *               => nb_bk = ceil(max_entries / 8), rounded up to power of 2.
+ * nb_bk must be a power of 2 (used as a bitmask inside the hash table).
+ * Minimum returned value is 2.
+ *===========================================================================*/
+static inline unsigned
+rix_hash_nb_bk_hint(unsigned max_entries)
+{
+    unsigned n = (max_entries + 7u) / 8u;   /* ceil(max_entries / 8) */
+    if (n < 2u)
+        n = 2u;
+    /* round up to next power of 2 */
+    n--;
+    n |= n >> 1;
+    n |= n >> 2;
+    n |= n >> 4;
+    n |= n >> 8;
+    n |= n >> 16;
+    return n + 1u;
+}
+
+/*===========================================================================
  * Convenience macro API
  *
  * Wraps the generated name##_xxx() functions with BSD queue-style macros

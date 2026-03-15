@@ -79,11 +79,18 @@ include/
     rix_hash64.h    cuckoo hash -- uint64_t key variant
     rix_hash_key.h  built-in hash functions (CRC32c, identity, ...)
 samples/
-  flow_cache.h      umbrella header for all three flow cache variants
-  flow4_cache.h/c   IPv4 5-tuple flow cache  (20-byte key)
-  flow6_cache.h/c   IPv6 5-tuple flow cache  (44-byte key)
-  flow_unified_cache.h/c  IPv4+IPv6 in one table (44-byte key, family field)
-  flow_cache_test.c test + benchmark driver
+  DESIGN.md         design document
+  DESIGN_JP.md      design document (Japanese)
+  fcache/           library (libfcache.a / libfcache.so)
+    flow_cache.h            umbrella: includes all three variant headers
+    flow4_cache.h/.c        IPv4 5-tuple flow cache  (20-byte key)
+    flow6_cache.h/.c        IPv6 5-tuple flow cache  (44-byte key)
+    flow_unified_cache.h/.c IPv4+IPv6 in one table (44-byte key, family field)
+    flow_cache_decl_private.h  template: cache struct + API (internal)
+    flow_cache_body_private.h  template: implementation (internal)
+  test/
+    flow_cache_test.c       correctness tests + benchmarks (all 3 variants)
+    flow_cache_test_body.h  template: test + benchmark functions (internal)
 ```
 
 ---
@@ -611,13 +618,15 @@ traffic in a single table.
 unsigned nb_bk = flow_cache_nb_bk_hint(max_entries); /* ~50% fill sizing */
 struct rix_hash_bucket_s *buckets =
     aligned_alloc(64, nb_bk * sizeof(*buckets));
-struct flow4_entry *pool = aligned_alloc(64, max_entries * sizeof(*pool));
+struct flow4_entry *pool =
+    aligned_alloc(64, flow_cache_pool_size(max_entries, sizeof(*pool)));
+unsigned pool_count = flow_cache_pool_count(max_entries); /* 2^n, min 64 */
 
 /* Initialise */
 struct flow4_cache fc;
-uint64_t tsc_hz   = flow_cache_calibrate_tsc_hz();
-uint64_t timeout  = flow_cache_ms_to_tsc(tsc_hz, 30000); /* 30 s */
-flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, timeout);
+flow4_cache_init(&fc, buckets, nb_bk, pool, pool_count,
+                 30000,           /* timeout_ms: 30 seconds */
+                 NULL, NULL, NULL); /* init_cb, fini_cb, cb_arg (NULL = no-op) */
 
 /* Bulk clear (e.g. VRF delete, interface down) */
 flow4_cache_flush(&fc);
@@ -635,10 +644,10 @@ flow4_cache_lookup_batch(&fc, keys, nb_pkts, results);
 unsigned misses = 0;
 for (unsigned i = 0; i < nb_pkts; i++) {
     if (results[i]) {
-        flow4_cache_touch(results[i], now, pkt_len[i]);   /* hit */
+        flow4_cache_touch(results[i], now);   /* hit: refresh timestamp */
+        /* update userdata directly, e.g. MY_PAYLOAD(results[i])->packets++ */
     } else {
-        struct flow4_entry *e = flow4_cache_insert(&fc, &keys[i], now);
-        if (e) e->action = slow_path(&keys[i]);            /* miss */
+        flow4_cache_insert(&fc, &keys[i], now); /* miss: init_cb fills userdata */
         misses++;
     }
 }
@@ -656,11 +665,14 @@ flow4_cache_expire(&fc, now);
 
 ```c
 /* Lifecycle */
-void     flow4_cache_init (fc, buckets, nb_bk, pool, max_entries, timeout_ms);
+void     flow4_cache_init (fc, buckets, nb_bk, pool, pool_count, timeout_ms,
+                           init_cb, fini_cb, cb_arg);
 void     flow4_cache_flush(fc);
 
-/* Sizing helper */
-unsigned flow_cache_nb_bk_hint(max_entries);   /* ceil(max_entries/8), power of 2 */
+/* Sizing helpers */
+unsigned flow_cache_pool_count(max_entries);              /* element count for cache_init (2^n, min 64) */
+size_t   flow_cache_pool_size (max_entries, entry_size);  /* bytes for aligned_alloc */
+unsigned flow_cache_nb_bk_hint(max_entries);              /* bucket count for ~50% fill (2^n) */
 
 /* Lookup */
 void           flow4_cache_lookup_batch(fc, keys, nb_pkts, results);
@@ -671,8 +683,7 @@ struct flow4_entry *flow4_cache_insert(fc, key, now);
 void                flow4_cache_remove(fc, entry);
 
 /* Hit processing */
-void flow4_cache_touch        (entry, now, pkt_len);
-void flow4_cache_update_action(entry, action, qos_class);
+void flow4_cache_touch(entry, now);   /* refresh timestamp; update userdata after */
 
 /* Aging */
 void flow4_cache_expire         (fc, now);
@@ -698,10 +709,11 @@ All three expose the identical API surface.
 #include "flow_cache.h"
 
 /* FC_CALL(prefix, suffix) expands to prefix##_##suffix */
-FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, max_entries, timeout_ms);
+FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, pool_count, timeout_ms,
+                           init_cb, fini_cb, cb_arg);
 FC_CALL(flow4, cache_lookup_batch)(&fc, keys, nb_pkts, results);
 FC_CALL(flow4, cache_insert)(&fc, &keys[i], now);
-FC_CALL(flow4, cache_touch)(results[i], now, pkt_len[i]);
+FC_CALL(flow4, cache_touch)(results[i], now);
 FC_CALL(flow4, cache_adjust_timeout)(&fc, misses);
 FC_CALL(flow4, cache_expire)(&fc, now);
 

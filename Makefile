@@ -46,7 +46,8 @@ install:
 htags:
 	mkdir -p HTML
 	gtags HTML
-	htags -aDnosF -d HTML
+	htags -aDfnosF -d HTML
+	printf '..' > HTML/GTAGSROOT
 
 htags-serve: htags
 	@echo "Serving htags HTML at http://$(HTAGS_BIND):$(HTAGS_PORT)/ (no-cache)"
