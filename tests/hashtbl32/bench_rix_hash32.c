@@ -595,7 +595,7 @@ main(int argc, char **argv)
             nb_bk <<= 1;
     }
 
-    rix_hash_arch_init();
+    rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
     bench_find(table_n, nb_bk, repeat);
     return 0;
 }

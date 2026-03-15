@@ -57,7 +57,7 @@
  *   #include "librix.h"
  *
  *   // For hash tables, call once at startup:
- *   rix_hash_arch_init();
+ *   rix_hash_arch_init(RIX_HASH_ARCH_AUTO);   /* or 0 to force Generic */
  *
  * -----------------------------------------------------------------------
  * Requirements

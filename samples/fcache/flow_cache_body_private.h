@@ -104,7 +104,7 @@ FC_FN(FC_PREFIX, cache_init)(struct FC_CACHE *fc,
 {
     memset(fc, 0, sizeof(*fc));
 
-    rix_hash_arch_init();
+    rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
 
     FC_CALL(FC_HT_PREFIX, init)(&fc->ht_head, nb_bk);
     fc->buckets = buckets;

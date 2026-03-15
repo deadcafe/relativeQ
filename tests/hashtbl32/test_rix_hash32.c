@@ -412,7 +412,7 @@ test_remove_all(void)
 int
 main(void)
 {
-    rix_hash_arch_init();
+    rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
 
     printf("=== rix_hash32 tests ===\n");
 

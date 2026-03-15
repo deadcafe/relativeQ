@@ -723,7 +723,7 @@ main(int argc, char **argv)
     if (argc >= 4) nb_bk = (unsigned)strtoul(argv[3], NULL, 10);
     if (argc >= 5) ops   = (unsigned)strtoul(argv[4], NULL, 10);
 
-    rix_hash_arch_init();
+    rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
 
     test_init_empty();
     test_insert_find_remove();

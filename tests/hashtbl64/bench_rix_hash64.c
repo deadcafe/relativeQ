@@ -617,7 +617,7 @@ main(int argc, char **argv)
             nb_bk <<= 1;
     }
 
-    rix_hash_arch_init();
+    rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
 
     /* Measure fill rate characteristics first */
     bench_fill_rate();

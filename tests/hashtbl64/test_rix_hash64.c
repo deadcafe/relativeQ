@@ -265,7 +265,7 @@ test_fuzz(unsigned seed, unsigned N, unsigned nb_bk, unsigned ops)
 int
 main(void)
 {
-    rix_hash_arch_init();
+    rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
 
     test_init_empty();
     test_insert_find_remove();

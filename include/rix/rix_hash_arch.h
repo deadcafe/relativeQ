@@ -69,6 +69,21 @@
 #    define RIX_HASH_FOLLOW_DEPTH 8
 
 /*===========================================================================
+ * rix_hash_arch_init() enable-mask bits
+ *
+ *   0                    - force Generic (scalar); useful for benchmarking
+ *   RIX_HASH_ARCH_AVX2   - allow AVX2   if CPU supports it
+ *   RIX_HASH_ARCH_AVX512 - allow AVX-512F if CPU supports it
+ *   RIX_HASH_ARCH_AUTO   - use best available (same as legacy behaviour)
+ *
+ * Higher levels take priority: AVX-512 > AVX2 > Generic.
+ * CPUID is always checked; the mask is a whitelist, not an override.
+ *===========================================================================*/
+#    define RIX_HASH_ARCH_AVX2   (1u << 0)
+#    define RIX_HASH_ARCH_AVX512 (1u << 1)
+#    define RIX_HASH_ARCH_AUTO   (RIX_HASH_ARCH_AVX2 | RIX_HASH_ARCH_AVX512)
+
+/*===========================================================================
  * Hash union
  *===========================================================================*/
 union rix_hash_hash_u {
@@ -201,34 +216,40 @@ static RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_AVX512 = {
 
 /*---------------------------------------------------------------------------
  * rix_hash_arch_init - call once at program startup before any table ops.
- * Detects CPU capabilities and selects the best available arch handler.
+ *
+ * enable: bitmask of RIX_HASH_ARCH_* flags that are allowed.
+ *   0                  → Generic (scalar) — useful for benchmarking
+ *   RIX_HASH_ARCH_AUTO → use best available (recommended default)
+ *
+ * CPUID is always verified; the mask is a whitelist, not a forced override.
  * Must be called in each translation unit that uses hash table operations.
  *---------------------------------------------------------------------------*/
 static RIX_FORCE_INLINE void
-rix_hash_arch_init(void)
+rix_hash_arch_init(uint32_t enable)
 {
 #    if defined(__x86_64__)
     unsigned eax = 0u, ebx = 0u, ecx = 0u, edx = 0u;
 
     rix_hash_arch = &_rix_hash_arch_GEN; /* fallback */
 
-    if (__get_cpuid_count(7u, 0u, &eax, &ebx, &ecx, &edx)) {
+    if (enable && __get_cpuid_count(7u, 0u, &eax, &ebx, &ecx, &edx)) {
 #      if defined(__AVX512F__)
         /* AVX-512F: EBX bit 16 */
-        if (ebx & (1u << 16)) {
+        if ((enable & RIX_HASH_ARCH_AVX512) && (ebx & (1u << 16))) {
             rix_hash_arch = &_rix_hash_arch_AVX512;
             return;
         }
 #      endif
 #      if defined(__AVX2__)
         /* AVX2: EBX bit 5 */
-        if (ebx & (1u << 5)) {
+        if ((enable & RIX_HASH_ARCH_AVX2) && (ebx & (1u << 5))) {
             rix_hash_arch = &_rix_hash_arch_AVX2;
             return;
         }
 #      endif
     }
 #    else /* !__x86_64__ */
+    (void)enable;
     rix_hash_arch = &_rix_hash_arch_GEN;
 #    endif
 }

@@ -691,7 +691,7 @@ usage(const char *prog)
 int
 main(int argc, char **argv)
 {
-    rix_hash_arch_init();
+    rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
 
     unsigned max_entries = 1048576;  /* 2^20 ~= 1M: realistic DRAM-cold benchmark */
     unsigned nb_bk = 0;    /* auto */
