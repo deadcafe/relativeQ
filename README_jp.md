@@ -73,12 +73,13 @@ include/
   librix.h          傘ヘッダ (全サブシステムをインクルード)
   rix/
     rix_defs_private.h  共通マクロ、インデックスヘルパー  (内部用; 自動インクルード)
+    rix_hash_arch.h     アーキテクチャ依存ディスパッチ・SIMD ヘルパー (内部用; 自動インクルード)
     rix_queue.h     SLIST / LIST / STAILQ / TAILQ / CIRCLEQ
     rix_tree.h      Red-Black ツリー
     rix_hash.h      カッコーハッシュ -- フィンガープリント版 (可変長キー)
     rix_hash32.h    カッコーハッシュ -- uint32_t キー版
     rix_hash64.h    カッコーハッシュ -- uint64_t キー版
-    rix_hash_key.h  組み込みハッシュ関数 (CRC32c, identity, ...)
+    rix_hash_key.h  カッコーハッシュ -- uint32_t / uint64_t キー版 (統合)
 samples/
   DESIGN.md         設計ドキュメント
   DESIGN_JP.md      設計ドキュメント (日本語)
@@ -105,11 +106,12 @@ samples/
 必要なものだけインクルードすることも可能:
 
 ```c
-#include "rix/rix_queue.h"   /* キュー構造体のみ */
-#include "rix/rix_tree.h"    /* Red-Black ツリーのみ */
-#include "rix/rix_hash.h"    /* カッコーハッシュ (fp 版) */
-#include "rix/rix_hash32.h"  /* カッコーハッシュ (u32 キー版) */
-#include "rix/rix_hash64.h"  /* カッコーハッシュ (u64 キー版) */
+#include "rix/rix_queue.h"   /* キュー構造体のみ                      */
+#include "rix/rix_tree.h"    /* Red-Black ツリーのみ                  */
+#include "rix/rix_hash.h"    /* カッコーハッシュ (fp 版)              */
+#include "rix/rix_hash32.h"  /* カッコーハッシュ (u32 キー版)         */
+#include "rix/rix_hash64.h"  /* カッコーハッシュ (u64 キー版)         */
+#include "rix/rix_hash_key.h"/* カッコーハッシュ (u32 + u64 統合版)   */
 ```
 
 ### キューの最小サンプル

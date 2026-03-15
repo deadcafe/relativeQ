@@ -72,12 +72,13 @@ include/
   librix.h          umbrella header (includes all subsystems)
   rix/
     rix_defs_private.h  common macros, index helpers  (internal; auto-included)
+    rix_hash_arch.h     arch dispatch, SIMD helpers   (internal; auto-included)
     rix_queue.h     SLIST / LIST / STAILQ / TAILQ / CIRCLEQ
     rix_tree.h      Red-Black tree
     rix_hash.h      cuckoo hash -- fingerprint variant (variable-length key)
     rix_hash32.h    cuckoo hash -- uint32_t key variant
     rix_hash64.h    cuckoo hash -- uint64_t key variant
-    rix_hash_key.h  built-in hash functions (CRC32c, identity, ...)
+    rix_hash_key.h  cuckoo hash -- uint32_t and uint64_t variants combined
 samples/
   DESIGN.md         design document
   DESIGN_JP.md      design document (Japanese)
@@ -104,11 +105,12 @@ samples/
 Or include only what you need:
 
 ```c
-#include "rix/rix_queue.h"   /* queue structures only */
-#include "rix/rix_tree.h"    /* Red-Black tree only   */
-#include "rix/rix_hash.h"    /* cuckoo hash (fp)      */
-#include "rix/rix_hash32.h"  /* cuckoo hash (u32 key) */
-#include "rix/rix_hash64.h"  /* cuckoo hash (u64 key) */
+#include "rix/rix_queue.h"   /* queue structures only              */
+#include "rix/rix_tree.h"    /* Red-Black tree only                */
+#include "rix/rix_hash.h"    /* cuckoo hash (fp)                   */
+#include "rix/rix_hash32.h"  /* cuckoo hash (u32 key)              */
+#include "rix/rix_hash64.h"  /* cuckoo hash (u64 key)              */
+#include "rix/rix_hash_key.h"/* cuckoo hash (u32 + u64, combined)  */
 ```
 
 ### Queue quick start
