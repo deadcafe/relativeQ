@@ -114,48 +114,6 @@ struct rix_hash64_find_ctx_s {
 };
 
 /*===========================================================================
- * Internal hash function for 64-bit keys (CRC32C-based, SSE4.2)
- *
- * Produces two 32-bit hashes h0, h1 such that
- * (h0 & mask) != (h1 & mask) - guaranteed by the retry loop.
- *
- *   h0 = CRC32C(0,   key)
- *   h1 = CRC32C(~h0, key), re-seeded until bucket indices differ.
- *===========================================================================*/
-static RIX_FORCE_INLINE union rix_hash_hash_u
-_rix_hash64_fn(uint64_t key, uint32_t mask)
-{
-    union rix_hash_hash_u r;
-#  if defined(__x86_64__) && defined(__SSE4_2__)
-    uint32_t h0   = (uint32_t)__builtin_ia32_crc32di(0ULL, key);
-    uint32_t bk0  = h0 & mask;
-    uint32_t seed = ~h0;
-    uint32_t h1;
-    do {
-        h1   = (uint32_t)__builtin_ia32_crc32di((uint64_t)seed, key);
-        seed = (uint32_t)__builtin_ia32_crc32di((uint64_t)seed, ~key);
-    } while ((h1 & mask) == bk0);
-    r.val32[0] = h0;
-    r.val32[1] = h1;
-#  else
-    /* Generic fallback: mix 64-bit key into two independent 32-bit hashes */
-    uint32_t lo  = (uint32_t)key;
-    uint32_t hi  = (uint32_t)(key >> 32);
-    uint32_t h0  = (lo ^ (hi * 2654435761u)) * 2246822519u;
-    uint32_t bk0 = h0 & mask;
-    uint32_t h1  = (hi ^ (lo * 2246822519u)) * 2654435761u ^ h0;
-    uint32_t inc = 1u;
-    while ((h1 & mask) == bk0) {
-        h1  = (h1 ^ inc) * 2246822519u;
-        inc++;
-    }
-    r.val32[0] = h0;
-    r.val32[1] = h1;
-#  endif
-    return r;
-}
-
-/*===========================================================================
  * RIX_HASH64_GENERATE(name, type, key_field, invalid_key)
  *
  *   name        - head struct tag AND generated-function prefix (must match
@@ -166,7 +124,7 @@ _rix_hash64_fn(uint64_t key, uint32_t mask)
  *                 removed slots.  Must not equal any key the caller will
  *                 ever insert or search.
  *
- * The hash function (_rix_hash64_fn) is provided internally.
+ * The hash function is provided internally via rix_hash_arch->hash_u64.
  * No hash_field is required in the node struct.
  *
  * Invalid key contract:
@@ -293,7 +251,7 @@ name##_hash_key(struct rix_hash64_find_ctx_s *ctx,                            \
                 uint64_t key)                                                 \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
-    union rix_hash_hash_u _h = _rix_hash64_fn(key, mask);                     \
+    union rix_hash_hash_u _h = rix_hash_arch->hash_u64(key, mask);            \
     ctx->key   = key;                                                         \
     ctx->bk[0] = buckets + (_h.val32[0] & mask);                              \
     ctx->bk[1] = buckets + (_h.val32[1] & mask);                              \
@@ -427,7 +385,7 @@ name##_insert(struct name *head,                                              \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
     union rix_hash_hash_u _h =                                                \
-        _rix_hash64_fn((uint64_t)elm->key_field, mask);                       \
+        rix_hash_arch->hash_u64((uint64_t)elm->key_field, mask);              \
     unsigned _bk0 = _h.val32[0] & mask;                                       \
     unsigned _bk1 = _h.val32[1] & mask;                                       \
                                                                               \
@@ -479,7 +437,7 @@ name##_insert(struct name *head,                                              \
             _bk->idx[_pos] = _new_idx;                                        \
                                                                               \
             /* Re-hash victim to find its two candidate buckets */            \
-            union rix_hash_hash_u _vh = _rix_hash64_fn(_vic_key, mask);       \
+            union rix_hash_hash_u _vh = rix_hash_arch->hash_u64(_vic_key, mask);\
             unsigned _vic_bk0 = _vh.val32[0] & mask;                          \
             unsigned _alt_bk  = (_vic_bk0 == _cur_bk)                         \
                                 ? (_vh.val32[1] & mask)                       \
@@ -523,7 +481,7 @@ name##_remove(struct name *head,                                              \
     unsigned mask     = head->rhh_mask;                                       \
     unsigned node_idx = name##_hidx(base, elm);                               \
     union rix_hash_hash_u _h =                                                \
-        _rix_hash64_fn((uint64_t)elm->key_field, mask);                       \
+        rix_hash_arch->hash_u64((uint64_t)elm->key_field, mask);              \
     unsigned _bk0 = _h.val32[0] & mask;                                       \
     unsigned _bk1 = _h.val32[1] & mask;                                       \
                                                                               \

@@ -400,7 +400,7 @@ RIX_RB_FOREACH_REVERSE(var, name, head, base)   /* 降順 */
 インデックスベースのカッコーハッシュ 3 バリアント。共通特性:
 
 - **バケットあたり 16 スロット** (SIMD 並列スキャン)
-- **実行時 SIMD ディスパッチ** -- `rix_hash_arch_init(enable)` で Generic / AVX2 / AVX-512 を選択
+- **実行時 SIMD ディスパッチ** -- `rix_hash_arch_init(enable)` で Generic / SSE / AVX2 / AVX-512 を選択
 - **XOR 対称性による 2 候補バケット** -- 削除 O(1)、リハッシュ不要
 - **N 段先行パイプラインルックアップ** -- DRAM レイテンシを複数リクエスト間で隠蔽
 - **1-origin インデックス格納** -- `RIX_NIL = 0` が空スロットを示す; 生ポインタなし
@@ -420,6 +420,26 @@ RIX_RB_FOREACH_REVERSE(var, name, head, base)   /* 降順 */
 | `rix_hash32` | ~58-60 |
 | `rix_hash64` | ~62-66 |
 | `rix_hash` (fp) | ~84-88 |
+
+#### バケットスキャン性能 (`find_u32x16`、16 スロット/バケット、L2 ウォーム)
+
+最内ホットパスはバケット内 16 スロットのフィンガープリント / キースキャンです。
+128 バケットが L2 キャッシュに収まった状態でシングルコア測定:
+
+| ビルドフラグ | 実行時レベル | cy/バケット | 備考 |
+|------------|------------|-----------|------|
+| `-msse4.2` のみ       | GEN (enable=0) | 36.0 | 純スカラーループ |
+| `-msse4.2` のみ       | **SSE**        |  6.3 | XMM 128-bit — GEN 比 ×5.7 |
+| `-mavx2 -msse4.2`    | SSE            |  6.0 | XMM 128-bit |
+| `-mavx2 -msse4.2`    | **AVX2**       |  3.3 | YMM 256-bit — SSE 比 ×1.8 |
+| `-mavx2 -msse4.2`    | GEN (enable=0) |  3.8 | コンパイラが AVX2 で自動ベクトル化 * |
+
+\* `-mavx2` ビルドではコンパイラが GEN スカラーループを AVX2 で自動ベクトル化するため、
+`enable=0` (GEN 強制) でも実際には AVX2 命令が実行されます。
+
+**まとめ:** SSE レベルが最も有効なのは SSE4.2 はあるが AVX2 がない CPU
+(Sandy Bridge / Ivy Bridge、2011〜2012 年世代) です。
+AVX2 以降の CPU では AVX2 パスが最適です。
 
 ---
 
@@ -585,6 +605,7 @@ entry64 *ht64_remove(&head, buckets, pool, key_value);
 
 - `rix_hash_arch_init(enable)` はハッシュ操作の前に**必ず 1 度**呼び出すこと。
   `RIX_HASH_ARCH_AUTO` を渡すと利用可能な最良の SIMD を自動選択（推奨）。
+  `RIX_HASH_ARCH_SSE` を渡すと SSE XMM 止まり（SSE4.2、AVX2 不使用）。
   `RIX_HASH_ARCH_AVX2` を渡すと AVX-512 が存在しても AVX2 に制限。
   `0` を渡すと Generic（スカラー）強制 — ベンチマーク比較用。
 - バケット配列は**64 バイトアライメント**必須 (`aligned_alloc(64, ...)` または `posix_memalign`)。

@@ -48,7 +48,6 @@
 #  include "rix_defs_private.h"
 
 #  include <stdint.h>
-#  include <string.h>
 
 #  include "rix_hash_arch.h"
 
@@ -101,74 +100,6 @@ static RIX_FORCE_INLINE void
 rix_hash_prefetch_key(const void *key)
 {
     __builtin_prefetch(key, 0, 0);
-}
-
-/*===========================================================================
- * _rix_hash_crc32_bytes - CRC32C over an arbitrary-length byte buffer.
- *
- * Processes the buffer in 8->4->2->1-byte chunks using the CRC32C hardware
- * instruction (SSE4.2, -msse4.2).  key_bytes may be any value including
- * non-multiples of 8; memcpy is used for safe unaligned partial reads.
- *===========================================================================*/
-static RIX_FORCE_INLINE uint32_t
-_rix_hash_crc32_bytes(uint32_t crc, const void *key, size_t key_bytes)
-{
-    const uint8_t *p   = (const uint8_t *)key;
-    size_t         rem = key_bytes;
-
-    while (rem >= 8u) {
-        uint64_t w;
-        memcpy(&w, p, 8u);
-        crc = (uint32_t)__builtin_ia32_crc32di((uint64_t)crc, w);
-        p += 8u; rem -= 8u;
-    }
-    if (rem >= 4u) {
-        uint32_t w;
-        memcpy(&w, p, 4u);
-        crc = (uint32_t)__builtin_ia32_crc32si(crc, w);
-        p += 4u; rem -= 4u;
-    }
-    if (rem >= 2u) {
-        uint16_t w;
-        memcpy(&w, p, 2u);
-        crc = (uint32_t)__builtin_ia32_crc32hi(crc, (unsigned short)w);
-        p += 2u; rem -= 2u;
-    }
-    if (rem >= 1u) {
-        crc = (uint32_t)__builtin_ia32_crc32qi(crc, (unsigned char)*p);
-    }
-    return crc;
-}
-
-/*===========================================================================
- * Internal hash function (CRC32C-based, hardware-accelerated via SSE4.2)
- *
- * Computes two independent 32-bit hashes from a key such that
- * (h.val32[0] & mask) != (h.val32[1] & mask) is guaranteed.
- *
- *   h.val32[0] = hash_0: CRC32C(0,      key, key_bytes)
- *   h.val32[1] = hash_1: CRC32C(seed,   key, key_bytes); seed = ~hash_0
- *                         re-seeded via CRC32(seed, hash_0) until the two
- *                         bucket indices differ.
- *
- * key_bytes may be any positive value (no alignment constraint).
- *===========================================================================*/
-static RIX_FORCE_INLINE union rix_hash_hash_u
-_rix_hash_fn_crc32(const void *key, size_t key_bytes, uint32_t mask)
-{
-    uint32_t h0   = _rix_hash_crc32_bytes(0u, key, key_bytes);
-    uint32_t bk0  = h0 & mask;
-    uint32_t seed = ~h0;
-    uint32_t h1;
-    do {
-        h1   = _rix_hash_crc32_bytes(seed, key, key_bytes);
-        seed = (uint32_t)__builtin_ia32_crc32di((uint64_t)seed, (uint64_t)h0);
-    } while ((h1 & mask) == bk0);
-
-    union rix_hash_hash_u r;
-    r.val32[0] = h0;
-    r.val32[1] = h1;
-    return r;
 }
 
 /*===========================================================================
@@ -240,8 +171,8 @@ _rix_hash_buckets(const union rix_hash_hash_u h, unsigned mask,
  *                      return memcmp(a, b, sizeof(struct my_key)) == 0;
  *                  }
  *
- * The hash function is CRC32C-based (_rix_hash_fn_crc32) and is provided
- * internally; callers do not supply a hash function.
+ * The hash function is provided internally via rix_hash_arch->hash_bytes
+ * (CRC32C on x86_64+SSE4.2, FNV-1a fallback elsewhere).
  *
  * Generated functions:
  *
@@ -336,8 +267,9 @@ name##_hash_key(struct rix_hash_find_ctx_s *ctx,                              \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
     union rix_hash_hash_u _h =                                                \
-        _rix_hash_fn_crc32((const void *)key,                                 \
-                           sizeof(((struct type *)0)->key_field), mask);      \
+        rix_hash_arch->hash_bytes((const void *)key,                          \
+                                  sizeof(((struct type *)0)->key_field),      \
+                                  mask);                                      \
     unsigned _bk0, _bk1;                                                      \
     uint32_t _fp;                                                             \
     _rix_hash_buckets(_h, mask, &_bk0, &_bk1, &_fp);                          \
@@ -490,8 +422,9 @@ name##_insert(struct name *head,                                              \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
     union rix_hash_hash_u _h =                                                \
-        _rix_hash_fn_crc32((const void *)&elm->key_field,                     \
-                           sizeof(((struct type *)0)->key_field), mask);      \
+        rix_hash_arch->hash_bytes((const void *)&elm->key_field,              \
+                                  sizeof(((struct type *)0)->key_field),      \
+                                  mask);                                      \
     unsigned _bk0, _bk1;                                                      \
     uint32_t _fp;                                                             \
     _rix_hash_buckets(_h, mask, &_bk0, &_bk1, &_fp);                          \
@@ -736,8 +669,9 @@ name##_hash_key(struct rix_hash_find_ctx_s *ctx,                              \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
     union rix_hash_hash_u _h =                                                \
-        _rix_hash_fn_crc32((const void *)key,                                 \
-                           sizeof(((struct type *)0)->key_field), mask);      \
+        rix_hash_arch->hash_bytes((const void *)key,                          \
+                                  sizeof(((struct type *)0)->key_field),      \
+                                  mask);                                      \
     unsigned _bk0, _bk1;                                                      \
     uint32_t _fp;                                                             \
     _rix_hash_buckets(_h, mask, &_bk0, &_bk1, &_fp);                          \
@@ -882,8 +816,9 @@ name##_insert(struct name *head,                                              \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
     union rix_hash_hash_u _h =                                                \
-        _rix_hash_fn_crc32((const void *)&elm->key_field,                     \
-                           sizeof(((struct type *)0)->key_field), mask);      \
+        rix_hash_arch->hash_bytes((const void *)&elm->key_field,              \
+                                  sizeof(((struct type *)0)->key_field),      \
+                                  mask);                                      \
     unsigned _bk0, _bk1;                                                      \
     uint32_t _fp;                                                             \
     _rix_hash_buckets(_h, mask, &_bk0, &_bk1, &_fp);                          \
@@ -926,9 +861,9 @@ name##_insert(struct name *head,                                              \
             _bk->idx [_pos] = _new_idx;                                       \
             /* Re-hash victim's key to find alternate bucket */               \
             union rix_hash_hash_u _vic_h =                                    \
-                _rix_hash_fn_crc32((const void *)&_vic_node->key_field,       \
-                                   sizeof(((struct type *)0)->key_field),     \
-                                   mask);                                     \
+                rix_hash_arch->hash_bytes((const void *)&_vic_node->key_field, \
+                                          sizeof(((struct type *)0)->key_field),\
+                                          mask);                              \
             unsigned _vic_bk0 = _vic_h.val32[0] & mask;                       \
             unsigned _vic_bk1 = _vic_h.val32[1] & mask;                       \
             unsigned _alt_bk  = (_cur_bk == _vic_bk0) ? _vic_bk1 : _vic_bk0;  \
@@ -961,8 +896,9 @@ name##_remove(struct name *head,                                              \
     unsigned node_idx = name##_hidx(base, elm);                               \
     unsigned mask = head->rhh_mask;                                           \
     union rix_hash_hash_u _h =                                                \
-        _rix_hash_fn_crc32((const void *)&elm->key_field,                     \
-                           sizeof(((struct type *)0)->key_field), mask);      \
+        rix_hash_arch->hash_bytes((const void *)&elm->key_field,              \
+                                  sizeof(((struct type *)0)->key_field),      \
+                                  mask);                                      \
     unsigned _bk0, _bk1;                                                      \
     uint32_t _fp;                                                             \
     _rix_hash_buckets(_h, mask, &_bk0, &_bk1, &_fp);                          \

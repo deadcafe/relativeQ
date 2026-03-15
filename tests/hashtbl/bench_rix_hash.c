@@ -230,8 +230,8 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat, int rand_keys)
     for (unsigned i = 0; i < table_n; i++) {
         /* Determine insert path before inserting */
         union rix_hash_hash_u _h =
-            _rix_hash_fn_crc32(&nodes[i].key, sizeof(nodes[i].key),
-                               head.rhh_mask);
+            rix_hash_arch->hash_bytes(&nodes[i].key, sizeof(nodes[i].key),
+                                      head.rhh_mask);
         unsigned _b0 = _h.val32[0] & head.rhh_mask;
         unsigned _b1 = _h.val32[1] & head.rhh_mask;
         uint32_t _nilm0 = rix_hash_arch->find_u32x16(bk[_b0].idx,
@@ -285,7 +285,8 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat, int rand_keys)
                 }
                 /* Determine primary bucket via re-hash */
                 union rix_hash_hash_u h =
-                    _rix_hash_fn_crc32(&node->key, sizeof(node->key), mask);
+                    rix_hash_arch->hash_bytes(&node->key, sizeof(node->key),
+                                              mask);
                 if (b == (h.val32[0] & mask))
                     in_bk0++;
                 else

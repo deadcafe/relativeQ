@@ -191,7 +191,8 @@ FC_FN(FC_PREFIX, cache_evict_bucket_oldest)(struct FC_CACHE *fc,
 {
     unsigned mask = fc->ht_head.rhh_mask;
     union rix_hash_hash_u h =
-        _rix_hash_fn_crc32((const void *)key, sizeof(struct FC_KEY), mask);
+        rix_hash_arch->hash_bytes((const void *)key, sizeof(struct FC_KEY),
+                                  mask);
     unsigned bk0, bk1;
     uint32_t fp;
     _rix_hash_buckets(h, mask, &bk0, &bk1, &fp);

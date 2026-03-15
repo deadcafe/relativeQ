@@ -399,7 +399,7 @@ Comparator signature: `int cmp(const type *a, const type *b)` -- strict weak ord
 Three header-only, index-based cuckoo hash variants.  All share:
 
 - **16 slots per bucket** (SIMD-parallel slot scan)
-- **Runtime SIMD dispatch** -- Generic / AVX2 / AVX-512 selected at startup via `rix_hash_arch_init(enable)`
+- **Runtime SIMD dispatch** -- Generic / SSE / AVX2 / AVX-512 selected at startup via `rix_hash_arch_init(enable)`
 - **Two candidate buckets per key** via XOR symmetry -- O(1) remove, no rehash
 - **N-ahead pipelined lookup** API -- hides DRAM latency across multiple requests
 - **1-origin index storage** -- `RIX_NIL = 0` marks empty slots; no raw pointers
@@ -419,6 +419,26 @@ Performance (DRAM-cold, 10 M entries, pipelined x8):
 | `rix_hash32` | ~58-60 |
 | `rix_hash64` | ~62-66 |
 | `rix_hash` (fp) | ~84-88 |
+
+#### Bucket scan performance (`find_u32x16`, 16 slots/bucket, L2-warm)
+
+The innermost hot path is the fingerprint / key scan across 16 slots per bucket.
+Measured on a single core with 128 buckets resident in L2 cache:
+
+| Build flags | Runtime level | cy/bucket | Notes |
+|-------------|---------------|-----------|-------|
+| `-msse4.2`       | GEN (force 0) | 36.0 | pure scalar loop |
+| `-msse4.2`       | **SSE**       |  6.3 | XMM 128-bit — ×5.7 vs GEN |
+| `-mavx2 -msse4.2`| SSE           |  6.0 | XMM 128-bit |
+| `-mavx2 -msse4.2`| **AVX2**      |  3.3 | YMM 256-bit — ×1.8 vs SSE |
+| `-mavx2 -msse4.2`| GEN (force 0) |  3.8 | compiler auto-vectorizes to AVX2 * |
+
+\* With `-mavx2` the compiler applies AVX2 auto-vectorization to the GEN scalar
+loop itself, so forcing `enable=0` still executes AVX2 instructions.
+
+**Takeaway:** SSE is most beneficial on CPUs with SSE4.2 but without AVX2
+(Sandy Bridge / Ivy Bridge, 2011–2012).  On AVX2 or later CPUs the manual AVX2
+path is the right choice.
 
 ---
 
@@ -584,6 +604,7 @@ Pipelined stages follow the same pattern: `ht64_hash_key4`, `ht64_scan_bk4`,
 
 - `rix_hash_arch_init(enable)` must be called **once** before any hash operation.
   Pass `RIX_HASH_ARCH_AUTO` to use the best available SIMD level (recommended).
+  Pass `RIX_HASH_ARCH_SSE` to cap at SSE XMM (SSE4.2, no AVX2).
   Pass `RIX_HASH_ARCH_AVX2` to cap at AVX2 even if AVX-512 is present.
   Pass `0` to force Generic (scalar) — useful for benchmarking.
 - Bucket arrays must be **64-byte aligned** (`aligned_alloc(64, ...)` or `posix_memalign`).

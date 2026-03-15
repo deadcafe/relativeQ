@@ -262,7 +262,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
 
     for (unsigned i = 0; i < table_n; i++) {
         /* Determine insert path before inserting */
-        union rix_hash_hash_u _h = _rix_hash64_fn(nodes[i].key, head.rhh_mask);
+        union rix_hash_hash_u _h = rix_hash_arch->hash_u64(nodes[i].key, head.rhh_mask);
         unsigned _b0 = _h.val32[0] & head.rhh_mask;
         unsigned _b1 = _h.val32[1] & head.rhh_mask;
         uint32_t _nilm0 = rix_hash_arch->find_u64x16(bk[_b0].key, BENCH_INVALID_KEY);
@@ -297,7 +297,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
                 uint32_t nidx = bk[b].idx[s];
                 if (nidx == (uint32_t)RIX_NIL) continue;
                 uint64_t key = bk[b].key[s];
-                union rix_hash_hash_u h = _rix_hash64_fn(key, mask);
+                union rix_hash_hash_u h = rix_hash_arch->hash_u64(key, mask);
                 if (b == (h.val32[0] & mask)) in_bk0++;
                 else                          in_bk1++;
             }

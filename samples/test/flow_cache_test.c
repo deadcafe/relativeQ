@@ -522,8 +522,8 @@ flow4_bench_bk0_rate(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
             if (e->last_ts == 0)
                 continue;
             union rix_hash_hash_u h =
-                _rix_hash_fn_crc32((const void *)&e->key,
-                                   sizeof(struct flow4_key), mask);
+                rix_hash_arch->hash_bytes((const void *)&e->key,
+                                          sizeof(struct flow4_key), mask);
             unsigned bk0 = h.val32[0] & mask;
             unsigned cur_bk = e->cur_hash & mask;
             if (cur_bk == bk0)
