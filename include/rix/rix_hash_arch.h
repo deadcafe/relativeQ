@@ -241,8 +241,10 @@ rix_hash_arch_init(uint32_t enable)
         }
 #      endif
 #      if defined(__AVX2__)
-        /* AVX2: EBX bit 5 */
-        if ((enable & RIX_HASH_ARCH_AVX2) && (ebx & (1u << 5))) {
+        /* AVX2: EBX bit 5.
+         * RIX_HASH_ARCH_AVX512 implies AVX2 as fallback (AVX-512 ⊃ AVX2). */
+        if ((enable & (RIX_HASH_ARCH_AVX2 | RIX_HASH_ARCH_AVX512)) &&
+            (ebx & (1u << 5))) {
             rix_hash_arch = &_rix_hash_arch_AVX2;
             return;
         }
