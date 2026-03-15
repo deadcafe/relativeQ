@@ -97,7 +97,7 @@ static _RIX_UNUSED const struct rix_hash_arch_s *rix_hash_arch;
 /*---------------------------------------------------------------------------
  * Generic (scalar) implementations
  *---------------------------------------------------------------------------*/
-static RIX_FORCE_INLINE _RIX_UNUSED uint32_t
+static RIX_FORCE_INLINE uint32_t
 _rix_hash_find_u32x16_GEN(const uint32_t *arr, uint32_t val)
 {
     uint32_t mask = 0u;
@@ -107,7 +107,7 @@ _rix_hash_find_u32x16_GEN(const uint32_t *arr, uint32_t val)
     return mask;
 }
 
-static RIX_FORCE_INLINE _RIX_UNUSED uint32_t
+static RIX_FORCE_INLINE uint32_t
 _rix_hash_find_u64x16_GEN(const uint64_t *arr, uint64_t val)
 {
     uint32_t mask = 0u;
@@ -127,7 +127,7 @@ static _RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_GEN = {
  *---------------------------------------------------------------------------*/
 #    if defined(__x86_64__) && defined(__AVX2__)
 
-static RIX_FORCE_INLINE _RIX_UNUSED uint32_t
+static RIX_FORCE_INLINE uint32_t
 _rix_hash_find_u32x16_AVX2(const uint32_t *arr, uint32_t val)
 {
     __m256i vval = _mm256_set1_epi32((int)val);
@@ -142,7 +142,7 @@ _rix_hash_find_u32x16_AVX2(const uint32_t *arr, uint32_t val)
     return lo | (hi << 8);
 }
 
-static RIX_FORCE_INLINE _RIX_UNUSED uint32_t
+static RIX_FORCE_INLINE uint32_t
 _rix_hash_find_u64x16_AVX2(const uint64_t *arr, uint64_t val)
 {
     __m256i vval = _mm256_set1_epi64x((long long)val);
@@ -177,7 +177,7 @@ static _RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_AVX2 = {
  *---------------------------------------------------------------------------*/
 #    if defined(__x86_64__) && defined(__AVX512F__)
 
-static RIX_FORCE_INLINE _RIX_UNUSED uint32_t
+static RIX_FORCE_INLINE uint32_t
 _rix_hash_find_u32x16_AVX512(const uint32_t *arr, uint32_t val)
 {
     __m512i vval = _mm512_set1_epi32((int)val);
@@ -186,7 +186,7 @@ _rix_hash_find_u32x16_AVX512(const uint32_t *arr, uint32_t val)
     return (uint32_t)m;
 }
 
-static RIX_FORCE_INLINE _RIX_UNUSED uint32_t
+static RIX_FORCE_INLINE uint32_t
 _rix_hash_find_u64x16_AVX512(const uint64_t *arr, uint64_t val)
 {
     __m512i vval = _mm512_set1_epi64((long long)val);
@@ -284,7 +284,7 @@ struct rix_hash_find_ctx_s {
  * Since key_field is typically at offset 0 of the node struct, this prefetch
  * also covers the cmp_key stage's full-key comparison.
  *---------------------------------------------------------------------------*/
-static RIX_FORCE_INLINE _RIX_UNUSED void
+static RIX_FORCE_INLINE void
 rix_hash_prefetch_key(const void *key)
 {
     __builtin_prefetch(key, 0, 0);
@@ -297,7 +297,7 @@ rix_hash_prefetch_key(const void *key)
  * instruction (SSE4.2, -msse4.2).  key_bytes may be any value including
  * non-multiples of 8; memcpy is used for safe unaligned partial reads.
  *===========================================================================*/
-static RIX_FORCE_INLINE _RIX_UNUSED uint32_t
+static RIX_FORCE_INLINE uint32_t
 _rix_hash_crc32_bytes(uint32_t crc, const void *key, size_t key_bytes)
 {
     const uint8_t *p   = (const uint8_t *)key;
@@ -340,7 +340,7 @@ _rix_hash_crc32_bytes(uint32_t crc, const void *key, size_t key_bytes)
  *
  * key_bytes may be any positive value (no alignment constraint).
  *===========================================================================*/
-static RIX_FORCE_INLINE _RIX_UNUSED union rix_hash_hash_u
+static RIX_FORCE_INLINE union rix_hash_hash_u
 _rix_hash_fn_crc32(const void *key, size_t key_bytes, uint32_t mask)
 {
     uint32_t h0   = _rix_hash_crc32_bytes(0u, key, key_bytes);
@@ -385,7 +385,7 @@ _rix_hash_fn_crc32(const void *key, size_t key_bytes, uint32_t mask)
  * Alternate bucket: alt_bk = (fp ^ hash_field) & mask  (same XOR trick).
  * Remove: bk = hash_field & mask -> direct O(1) slot lookup, no hash call.
  */
-static RIX_FORCE_INLINE _RIX_UNUSED void
+static RIX_FORCE_INLINE void
 _rix_hash_buckets(const union rix_hash_hash_u h, unsigned mask,
                   unsigned *bk0_out, unsigned *bk1_out, uint32_t *fp_out)
 {
@@ -500,11 +500,11 @@ name##_init(struct name *head,                                                \
 /* ------------------------------------------------------------------ */      \
 /* Internal helpers: 1-origin index <-> pointer                       */      \
 /* ------------------------------------------------------------------ */      \
-static RIX_FORCE_INLINE _RIX_UNUSED unsigned                                  \
+static RIX_FORCE_INLINE unsigned                                  \
 name##_hidx(struct type *base, const struct type *p) {                        \
     return RIX_IDX_FROM_PTR(base, (struct type *)(uintptr_t)p);               \
 }                                                                             \
-static RIX_FORCE_INLINE _RIX_UNUSED struct type *                             \
+static RIX_FORCE_INLINE struct type *                             \
 name##_hptr(struct type *base, unsigned i) {                                  \
     return RIX_PTR_FROM_IDX(base, i);                                         \
 }                                                                             \
@@ -515,7 +515,7 @@ name##_hptr(struct type *base, unsigned i) {                                  \
                                                                               \
 /* Stage 1: compute hash, resolve bucket pointers, issue prefetches. */       \
 /* Must be called before name_scan_bk.                               */       \
-static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+static RIX_FORCE_INLINE void                                      \
 name##_hash_key(struct rix_hash_find_ctx_s *ctx,                              \
                 struct name *head,                                            \
                 struct rix_hash_bucket_s *buckets,                            \
@@ -540,7 +540,7 @@ name##_hash_key(struct rix_hash_find_ctx_s *ctx,                              \
 /* Stage 2: scan bk_0 fingerprints only; produce fp_hits[0] bitmask.  */      \
 /* fp != 0 (XOR-based), no _nilm filter needed; fp_hits[1] = 0 here.  */      \
 /* Call prefetch_node to hide node-fetch latency before cmp_key.      */      \
-static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+static RIX_FORCE_INLINE void                                      \
 name##_scan_bk(struct rix_hash_find_ctx_s *ctx,                               \
                struct name *head __attribute__((unused)),                     \
                struct rix_hash_bucket_s *buckets __attribute__((unused)))     \
@@ -552,7 +552,7 @@ name##_scan_bk(struct rix_hash_find_ctx_s *ctx,                               \
                                                                               \
 /* Stage 3: prefetch node data for all fp_hits positions.             */      \
 /* Hides node-fetch DRAM latency; call for all N contexts before cmp_key. */  \
-static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+static RIX_FORCE_INLINE void                                      \
 name##_prefetch_node(struct rix_hash_find_ctx_s *ctx,                         \
                      struct type *base)                                       \
 {                                                                             \
@@ -569,7 +569,7 @@ name##_prefetch_node(struct rix_hash_find_ctx_s *ctx,                         \
                                                                               \
 /* Stage 4: compare keys for bk_0 hits; lazily scan bk_1 on bk_0 miss. */     \
 /* fp != 0 (XOR-based), so no _nilm filter is needed in bk_1 scan.    */      \
-static RIX_FORCE_INLINE _RIX_UNUSED struct type *                             \
+static RIX_FORCE_INLINE struct type *                             \
 name##_cmp_key(struct rix_hash_find_ctx_s *ctx,                               \
                struct type *base)                                             \
 {                                                                             \
@@ -606,7 +606,7 @@ name##_cmp_key(struct rix_hash_find_ctx_s *ctx,                               \
 /* Staged find - xN bulk                                              */      \
 /* FORCE_INLINE + constant n -> compiler unrolls identically to xN.   */      \
 /* ================================================================== */      \
-static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+static RIX_FORCE_INLINE void                                      \
 name##_hash_key_n(struct rix_hash_find_ctx_s *ctx,                            \
                   int n,                                                      \
                   struct name *head,                                          \
@@ -617,7 +617,7 @@ name##_hash_key_n(struct rix_hash_find_ctx_s *ctx,                            \
         name##_hash_key(&ctx[_j], head, buckets, keys[_j]);                   \
 }                                                                             \
                                                                               \
-static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+static RIX_FORCE_INLINE void                                      \
 name##_scan_bk_n(struct rix_hash_find_ctx_s *ctx,                             \
                  int n,                                                       \
                  struct name *head,                                           \
@@ -627,7 +627,7 @@ name##_scan_bk_n(struct rix_hash_find_ctx_s *ctx,                             \
         name##_scan_bk(&ctx[_j], head, buckets);                              \
 }                                                                             \
                                                                               \
-static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+static RIX_FORCE_INLINE void                                      \
 name##_prefetch_node_n(struct rix_hash_find_ctx_s *ctx,                       \
                        int n,                                                 \
                        struct type *base)                                     \
@@ -636,7 +636,7 @@ name##_prefetch_node_n(struct rix_hash_find_ctx_s *ctx,                       \
         name##_prefetch_node(&ctx[_j], base);                                 \
 }                                                                             \
                                                                               \
-static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+static RIX_FORCE_INLINE void                                      \
 name##_cmp_key_n(struct rix_hash_find_ctx_s *ctx,                             \
                  int n,                                                       \
                  struct type *base,                                           \
@@ -649,7 +649,7 @@ name##_cmp_key_n(struct rix_hash_find_ctx_s *ctx,                             \
 /* ================================================================== */      \
 /* Single-shot find  = hash_key + scan_bk + cmp_key                   */      \
 /* ================================================================== */      \
-static RIX_FORCE_INLINE _RIX_UNUSED struct type *                             \
+static RIX_FORCE_INLINE struct type *                             \
 name##_find(struct name *head,                                                \
             struct rix_hash_bucket_s *buckets,                                \
             struct type *base,                                                \
@@ -900,11 +900,11 @@ name##_init(struct name *head,                                                \
 /* ------------------------------------------------------------------ */      \
 /* Internal helpers: 1-origin index <-> pointer                       */      \
 /* ------------------------------------------------------------------ */      \
-static RIX_FORCE_INLINE _RIX_UNUSED unsigned                                  \
+static RIX_FORCE_INLINE unsigned                                  \
 name##_hidx(struct type *base, const struct type *p) {                        \
     return RIX_IDX_FROM_PTR(base, (struct type *)(uintptr_t)p);               \
 }                                                                             \
-static RIX_FORCE_INLINE _RIX_UNUSED struct type *                             \
+static RIX_FORCE_INLINE struct type *                             \
 name##_hptr(struct type *base, unsigned i) {                                  \
     return RIX_PTR_FROM_IDX(base, i);                                         \
 }                                                                             \
@@ -915,7 +915,7 @@ name##_hptr(struct type *base, unsigned i) {                                  \
                                                                               \
 /* Stage 1: compute hash, resolve bucket pointers, issue prefetches. */       \
 /* Must be called before name_scan_bk.                               */       \
-static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+static RIX_FORCE_INLINE void                                      \
 name##_hash_key(struct rix_hash_find_ctx_s *ctx,                              \
                 struct name *head,                                            \
                 struct rix_hash_bucket_s *buckets,                            \
@@ -939,7 +939,7 @@ name##_hash_key(struct rix_hash_find_ctx_s *ctx,                              \
 /* Stage 2: scan bk_0 fingerprints only; produce fp_hits[0] bitmask.  */      \
 /* fp != 0 (XOR-based), no _nilm filter needed; fp_hits[1] = 0 here.  */      \
 /* Call prefetch_node to hide node-fetch latency before cmp_key.      */      \
-static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+static RIX_FORCE_INLINE void                                      \
 name##_scan_bk(struct rix_hash_find_ctx_s *ctx,                               \
                struct name *head __attribute__((unused)),                     \
                struct rix_hash_bucket_s *buckets __attribute__((unused)))     \
@@ -950,7 +950,7 @@ name##_scan_bk(struct rix_hash_find_ctx_s *ctx,                               \
                                                                               \
 /* Stage 3: prefetch node data for all fp_hits positions.             */      \
 /* Hides node-fetch DRAM latency; call for all N contexts before cmp_key. */  \
-static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+static RIX_FORCE_INLINE void                                      \
 name##_prefetch_node(struct rix_hash_find_ctx_s *ctx,                         \
                      struct type *base)                                       \
 {                                                                             \
@@ -967,7 +967,7 @@ name##_prefetch_node(struct rix_hash_find_ctx_s *ctx,                         \
                                                                               \
 /* Stage 4: compare keys for bk_0 hits; lazily scan bk_1 on bk_0 miss. */     \
 /* fp != 0 (XOR-based), so no _nilm filter is needed in bk_1 scan.     */     \
-static RIX_FORCE_INLINE _RIX_UNUSED struct type *                             \
+static RIX_FORCE_INLINE struct type *                             \
 name##_cmp_key(struct rix_hash_find_ctx_s *ctx,                               \
                struct type *base)                                             \
 {                                                                             \
@@ -998,7 +998,7 @@ name##_cmp_key(struct rix_hash_find_ctx_s *ctx,                               \
 /* Staged find - xN bulk                                              */      \
 /* FORCE_INLINE + constant n -> compiler unrolls identically to xN.   */      \
 /* ================================================================== */      \
-static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+static RIX_FORCE_INLINE void                                      \
 name##_hash_key_n(struct rix_hash_find_ctx_s *ctx,                            \
                   int n,                                                      \
                   struct name *head,                                          \
@@ -1009,7 +1009,7 @@ name##_hash_key_n(struct rix_hash_find_ctx_s *ctx,                            \
         name##_hash_key(&ctx[_j], head, buckets, keys[_j]);                   \
 }                                                                             \
                                                                               \
-static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+static RIX_FORCE_INLINE void                                      \
 name##_scan_bk_n(struct rix_hash_find_ctx_s *ctx,                             \
                  int n,                                                       \
                  struct name *head,                                           \
@@ -1019,7 +1019,7 @@ name##_scan_bk_n(struct rix_hash_find_ctx_s *ctx,                             \
         name##_scan_bk(&ctx[_j], head, buckets);                              \
 }                                                                             \
                                                                               \
-static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+static RIX_FORCE_INLINE void                                      \
 name##_prefetch_node_n(struct rix_hash_find_ctx_s *ctx,                       \
                        int n,                                                 \
                        struct type *base)                                     \
@@ -1028,7 +1028,7 @@ name##_prefetch_node_n(struct rix_hash_find_ctx_s *ctx,                       \
         name##_prefetch_node(&ctx[_j], base);                                 \
 }                                                                             \
                                                                               \
-static RIX_FORCE_INLINE _RIX_UNUSED void                                      \
+static RIX_FORCE_INLINE void                                      \
 name##_cmp_key_n(struct rix_hash_find_ctx_s *ctx,                             \
                  int n,                                                       \
                  struct type *base,                                           \
@@ -1041,7 +1041,7 @@ name##_cmp_key_n(struct rix_hash_find_ctx_s *ctx,                             \
 /* ================================================================== */      \
 /* Single-shot find  = hash_key + scan_bk + cmp_key                   */      \
 /* ================================================================== */      \
-static RIX_FORCE_INLINE _RIX_UNUSED struct type *                             \
+static RIX_FORCE_INLINE struct type *                             \
 name##_find(struct name *head,                                                \
             struct rix_hash_bucket_s *buckets,                                \
             struct type *base,                                                \
