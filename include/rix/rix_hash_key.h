@@ -207,7 +207,7 @@ static _RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_AVX512 = {
  * rix_hash_arch_init - call once at program startup before any table ops.
  * Detects CPU capabilities and selects the best available arch handler.
  *---------------------------------------------------------------------------*/
-static _RIX_UNUSED void
+static RIX_FORCE_INLINE void
 rix_hash_arch_init(void)
 {
 #    if defined(__x86_64__)
