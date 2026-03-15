@@ -12,6 +12,7 @@
 #
 
 TOPDIR := $(shell cd ../.. && pwd)
+include $(TOPDIR)/mk/simd.mk
 
 # Detect GCC vs Clang
 CC_IS_CLANG := $(shell $(CC) --version 2>&1 | grep -c "clang")
@@ -39,7 +40,7 @@ endif
 WARN         = $(WARN_COMMON) $(WARN_EXTRA)
 
 # -fPIC: required for .so, negligible cost on x86-64; one object set for both
-CFLAGS       = -std=gnu11 -O2 -mavx2 -msse4.2 $(WARN) \
+CFLAGS       = -std=gnu11 -O2 $(SIMD_FLAGS) $(WARN) \
                -I$(TOPDIR)/include -fPIC
 
 SRCS         = flow4_cache.c flow6_cache.c flow_unified_cache.c

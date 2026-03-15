@@ -3,9 +3,11 @@
 #
 
 CURDIR := $(PWD)
+TOPDIR := $(shell cd ../.. && pwd)
+include $(TOPDIR)/mk/simd.mk
 
-CFLAGS       = -std=gnu11 -g -O2 -mavx2 -msse4.2 -Wall -Wextra -I$(CURDIR) -I../../include
-BENCH_CFLAGS = -std=gnu11 -O3 -mavx2 -msse4.2 -Wall -Wextra -I$(CURDIR) -I../../include
+CFLAGS       = -std=gnu11 -g -O2 $(SIMD_FLAGS) -Wall -Wextra -I$(CURDIR) -I../../include
+BENCH_CFLAGS = -std=gnu11 -O3 $(SIMD_FLAGS) -Wall -Wextra -I$(CURDIR) -I../../include
 DEPENDS      = .depend
 
 TEST_TARGET  = hash32_test

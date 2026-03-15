@@ -15,6 +15,7 @@
 
 TOPDIR    := $(shell cd ../.. && pwd)
 FCACHEDIR := $(shell cd ../fcache && pwd)
+include $(TOPDIR)/mk/simd.mk
 
 # Detect GCC vs Clang
 CC_IS_CLANG := $(shell $(CC) --version 2>&1 | grep -c "clang")
@@ -42,7 +43,7 @@ endif
 WARN         = $(WARN_COMMON) $(WARN_EXTRA)
 
 # -O3 for test/bench; -I$(FCACHEDIR) resolves #include "flow_cache.h" etc.
-CFLAGS       = -std=gnu11 -O3 -mavx2 -msse4.2 $(WARN) \
+CFLAGS       = -std=gnu11 -O3 $(SIMD_FLAGS) $(WARN) \
                -I$(TOPDIR)/include -I$(FCACHEDIR)
 
 LIBFCACHE    = $(FCACHEDIR)/libfcache.a
@@ -58,9 +59,9 @@ all: $(TEST_TARGET)
 $(TEST_TARGET): $(TEST_SRC) $(TEST_HDRS) $(LIBFCACHE)
 	$(CC) $(CFLAGS) -o $@ $(TEST_SRC) $(LIBFCACHE)
 
-# Rebuild library if its sources changed
+# Rebuild library if its sources changed (propagate SIMD selection)
 $(LIBFCACHE):
-	$(MAKE) -C $(FCACHEDIR) static
+	$(MAKE) -C $(FCACHEDIR) static SIMD=$(SIMD)
 
 test: $(TEST_TARGET)
 	./$(TEST_TARGET)
