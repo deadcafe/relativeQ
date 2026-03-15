@@ -35,11 +35,11 @@ extern "C" {
 #    define RIX_FORCE_INLINE inline
 #  endif
 
-#  ifndef _RIX_UNUSED
+#  ifndef RIX_UNUSED
 #    if defined(__GNUC__) || defined(__clang__)
-#      define _RIX_UNUSED __attribute__((unused))
+#      define RIX_UNUSED __attribute__((unused))
 #    else
-#      define _RIX_UNUSED
+#      define RIX_UNUSED
 #    endif
 #  endif
 

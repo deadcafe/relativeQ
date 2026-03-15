@@ -62,7 +62,7 @@
     RIX_RB_PROTOTYPE_INTERNAL(name, type, field, cmp, )
 
 #  define RIX_RB_PROTOTYPE_STATIC(name, type, field, cmp) \
-    RIX_RB_PROTOTYPE_INTERNAL(name, type, field, cmp, _RIX_UNUSED static)
+    RIX_RB_PROTOTYPE_INTERNAL(name, type, field, cmp, RIX_UNUSED static)
 
 #  define RIX_RB_INSERT(name, head, base, elm) \
     name##_RIX_RB_INSERT((head), (base), (elm))
@@ -89,7 +89,7 @@
     RIX_RB_GENERATE_INTERNAL(name, type, field, cmp, )
 
 #  define RIX_RB_GENERATE_STATIC(name, type, field, cmp) \
-    RIX_RB_GENERATE_INTERNAL(name, type, field, cmp, _RIX_UNUSED static)
+    RIX_RB_GENERATE_INTERNAL(name, type, field, cmp, RIX_UNUSED static)
 
 #  define RIX_RB_GENERATE_INTERNAL(name, type, field, cmp, attr)                \
     static RIX_FORCE_INLINE unsigned name##_idx(type *base, const type *p) {  \

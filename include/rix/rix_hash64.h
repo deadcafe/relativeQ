@@ -228,13 +228,13 @@ _rix_hash64_fn(uint64_t key, uint32_t mask)
     RIX_HASH64_PROTOTYPE_INTERNAL(name, type, key_field, invalid_key, )
 
 #  define RIX_HASH64_PROTOTYPE_STATIC(name, type, key_field, invalid_key) \
-    RIX_HASH64_PROTOTYPE_INTERNAL(name, type, key_field, invalid_key, _RIX_UNUSED static)
+    RIX_HASH64_PROTOTYPE_INTERNAL(name, type, key_field, invalid_key, RIX_UNUSED static)
 
 #  define RIX_HASH64_GENERATE(name, type, key_field, invalid_key) \
     RIX_HASH64_GENERATE_INTERNAL(name, type, key_field, invalid_key, )
 
 #  define RIX_HASH64_GENERATE_STATIC(name, type, key_field, invalid_key) \
-    RIX_HASH64_GENERATE_INTERNAL(name, type, key_field, invalid_key, _RIX_UNUSED static)
+    RIX_HASH64_GENERATE_INTERNAL(name, type, key_field, invalid_key, RIX_UNUSED static)
 
 #  define RIX_HASH64_GENERATE_INTERNAL(name, type, key_field, invalid_key, attr) \
                                                                               \

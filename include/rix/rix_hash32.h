@@ -184,13 +184,13 @@ _rix_hash32_fn(uint32_t key, uint32_t mask)
     RIX_HASH32_PROTOTYPE_INTERNAL(name, type, key_field, invalid_key, )
 
 #  define RIX_HASH32_PROTOTYPE_STATIC(name, type, key_field, invalid_key) \
-    RIX_HASH32_PROTOTYPE_INTERNAL(name, type, key_field, invalid_key, _RIX_UNUSED static)
+    RIX_HASH32_PROTOTYPE_INTERNAL(name, type, key_field, invalid_key, RIX_UNUSED static)
 
 #  define RIX_HASH32_GENERATE(name, type, key_field, invalid_key) \
     RIX_HASH32_GENERATE_INTERNAL(name, type, key_field, invalid_key, )
 
 #  define RIX_HASH32_GENERATE_STATIC(name, type, key_field, invalid_key) \
-    RIX_HASH32_GENERATE_INTERNAL(name, type, key_field, invalid_key, _RIX_UNUSED static)
+    RIX_HASH32_GENERATE_INTERNAL(name, type, key_field, invalid_key, RIX_UNUSED static)
 
 #  define RIX_HASH32_GENERATE_INTERNAL(name, type, key_field, invalid_key, attr) \
                                                                               \

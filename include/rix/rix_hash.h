@@ -63,8 +63,8 @@
 #    define _RIX_HASH_COMMON_
 
 /* Silence unused-function / unused-variable warnings for static symbols */
-#    ifndef _RIX_UNUSED
-#      define _RIX_UNUSED __attribute__((unused))
+#    ifndef RIX_UNUSED
+#      define RIX_UNUSED __attribute__((unused))
 #    endif
 
 /*===========================================================================
@@ -92,7 +92,7 @@ struct rix_hash_arch_s {
 };
 
 /* Set once by rix_hash_arch_init(); extern so multiple TUs share one copy. */
-static _RIX_UNUSED const struct rix_hash_arch_s *rix_hash_arch;
+static RIX_UNUSED const struct rix_hash_arch_s *rix_hash_arch;
 
 /*---------------------------------------------------------------------------
  * Generic (scalar) implementations
@@ -117,7 +117,7 @@ _rix_hash_find_u64x16_GEN(const uint64_t *arr, uint64_t val)
     return mask;
 }
 
-static _RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_GEN = {
+static RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_GEN = {
     _rix_hash_find_u32x16_GEN,
     _rix_hash_find_u64x16_GEN,
 };
@@ -165,7 +165,7 @@ _rix_hash_find_u64x16_AVX2(const uint64_t *arr, uint64_t val)
     return m0 | (m1 << 4) | (m2 << 8) | (m3 << 12);
 }
 
-static _RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_AVX2 = {
+static RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_AVX2 = {
     _rix_hash_find_u32x16_AVX2,
     _rix_hash_find_u64x16_AVX2,
 };
@@ -197,7 +197,7 @@ _rix_hash_find_u64x16_AVX512(const uint64_t *arr, uint64_t val)
     return (uint32_t)m0 | ((uint32_t)m1 << 8);
 }
 
-static _RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_AVX512 = {
+static RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_AVX512 = {
     _rix_hash_find_u32x16_AVX512,
     _rix_hash_find_u64x16_AVX512,
 };
@@ -208,7 +208,7 @@ static _RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_AVX512 = {
  * rix_hash_arch_init - call once at program startup before any table ops.
  * Detects CPU capabilities and selects the best available arch handler.
  *---------------------------------------------------------------------------*/
-static _RIX_UNUSED void
+static RIX_UNUSED void
 rix_hash_arch_init(void)
 {
 #    if defined(__x86_64__)
@@ -476,13 +476,13 @@ _rix_hash_buckets(const union rix_hash_hash_u h, unsigned mask,
     RIX_HASH_PROTOTYPE_INTERNAL(name, type, key_field, hash_field, cmp_fn, )
 
 #  define RIX_HASH_PROTOTYPE_STATIC(name, type, key_field, hash_field, cmp_fn) \
-    RIX_HASH_PROTOTYPE_INTERNAL(name, type, key_field, hash_field, cmp_fn, _RIX_UNUSED static)
+    RIX_HASH_PROTOTYPE_INTERNAL(name, type, key_field, hash_field, cmp_fn, RIX_UNUSED static)
 
 #  define RIX_HASH_GENERATE(name, type, key_field, hash_field, cmp_fn) \
     RIX_HASH_GENERATE_INTERNAL(name, type, key_field, hash_field, cmp_fn, )
 
 #  define RIX_HASH_GENERATE_STATIC(name, type, key_field, hash_field, cmp_fn) \
-    RIX_HASH_GENERATE_INTERNAL(name, type, key_field, hash_field, cmp_fn, _RIX_UNUSED static)
+    RIX_HASH_GENERATE_INTERNAL(name, type, key_field, hash_field, cmp_fn, RIX_UNUSED static)
 
 #  define RIX_HASH_GENERATE_INTERNAL(name, type, key_field, hash_field, cmp_fn, attr) \
                                                                               \
@@ -876,13 +876,13 @@ name##_walk(struct name *head,                                                \
     RIX_HASH_NOHF_PROTOTYPE_INTERNAL(name, type, key_field, cmp_fn, )
 
 #  define RIX_HASH_NOHF_PROTOTYPE_STATIC(name, type, key_field, cmp_fn) \
-    RIX_HASH_NOHF_PROTOTYPE_INTERNAL(name, type, key_field, cmp_fn, _RIX_UNUSED static)
+    RIX_HASH_NOHF_PROTOTYPE_INTERNAL(name, type, key_field, cmp_fn, RIX_UNUSED static)
 
 #  define RIX_HASH_GENERATE_NOHF(name, type, key_field, cmp_fn) \
     RIX_HASH_GENERATE_NOHF_INTERNAL(name, type, key_field, cmp_fn, )
 
 #  define RIX_HASH_GENERATE_NOHF_STATIC(name, type, key_field, cmp_fn) \
-    RIX_HASH_GENERATE_NOHF_INTERNAL(name, type, key_field, cmp_fn, _RIX_UNUSED static)
+    RIX_HASH_GENERATE_NOHF_INTERNAL(name, type, key_field, cmp_fn, RIX_UNUSED static)
 
 #  define RIX_HASH_GENERATE_NOHF_INTERNAL(name, type, key_field, cmp_fn, attr) \
                                                                               \
