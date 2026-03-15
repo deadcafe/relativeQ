@@ -399,7 +399,7 @@ Comparator signature: `int cmp(const type *a, const type *b)` -- strict weak ord
 Three header-only, index-based cuckoo hash variants.  All share:
 
 - **16 slots per bucket** (SIMD-parallel slot scan)
-- **Runtime SIMD dispatch** -- Generic / AVX2 / AVX-512 selected at startup via `rix_hash_arch_init()`
+- **Runtime SIMD dispatch** -- Generic / AVX2 / AVX-512 selected at startup via `rix_hash_arch_init(enable)`
 - **Two candidate buckets per key** via XOR symmetry -- O(1) remove, no rehash
 - **N-ahead pipelined lookup** API -- hides DRAM latency across multiple requests
 - **1-origin index storage** -- `RIX_NIL = 0` marks empty slots; no raw pointers
@@ -443,7 +443,7 @@ RIX_HASH_HEAD(myht);
 RIX_HASH_GENERATE(myht, mynode, key, cur_hash, my_cmp_fn)
 
 /* 3. Init once at startup */
-rix_hash_arch_init();
+rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
 
 /* 4. Allocate 64-byte-aligned bucket array */
 struct rix_hash_bucket_s *buckets =
@@ -518,7 +518,7 @@ struct entry32 {
 RIX_HASH32_HEAD(ht32);
 RIX_HASH32_GENERATE(ht32, entry32, key)
 
-rix_hash_arch_init();
+rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
 
 struct rix_hash32_bucket_s *buckets =
     aligned_alloc(64, NB_BK * sizeof(*buckets));
@@ -582,7 +582,10 @@ Pipelined stages follow the same pattern: `ht64_hash_key4`, `ht64_scan_bk4`,
 
 #### Important notes (all hash variants)
 
-- `rix_hash_arch_init()` must be called **once** before any hash operation.
+- `rix_hash_arch_init(enable)` must be called **once** before any hash operation.
+  Pass `RIX_HASH_ARCH_AUTO` to use the best available SIMD level (recommended).
+  Pass `RIX_HASH_ARCH_AVX2` to cap at AVX2 even if AVX-512 is present.
+  Pass `0` to force Generic (scalar) — useful for benchmarking.
 - Bucket arrays must be **64-byte aligned** (`aligned_alloc(64, ...)` or `posix_memalign`).
 - `NB_BK` must be a **power of 2** and at least 2.
 - `insert` return values:
@@ -753,10 +756,32 @@ struct flow_cache_stats {
 C11 required.  Suggested flags:
 
 ```sh
+# AVX2 (recommended default)
 cc -std=gnu11 -O3 -mavx2 -msse4.2 \
    -Wall -Wextra -Wshadow -Werror  \
    -I/path/to/librix/include       \
    your_sources.c
+
+# AVX-512
+cc -std=gnu11 -O3 -mavx512f -mavx2 -msse4.2 \
+   -Wall -Wextra -Wshadow -Werror             \
+   -I/path/to/librix/include                  \
+   your_sources.c
+
+# Generic scalar only (no SIMD search; CRC32C hash retained)
+cc -std=gnu11 -O3 -msse4.2 \
+   -Wall -Wextra -Wshadow -Werror \
+   -I/path/to/librix/include      \
+   your_sources.c
+```
+
+When using the bundled test/benchmark suite, the `SIMD=` make variable
+selects the SIMD level for all sub-targets:
+
+```sh
+make SIMD=avx2    # default
+make SIMD=avx512
+make SIMD=gen
 ```
 
 For address/UB sanitizers during development:

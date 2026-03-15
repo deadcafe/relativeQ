@@ -400,7 +400,7 @@ RIX_RB_FOREACH_REVERSE(var, name, head, base)   /* 降順 */
 インデックスベースのカッコーハッシュ 3 バリアント。共通特性:
 
 - **バケットあたり 16 スロット** (SIMD 並列スキャン)
-- **実行時 SIMD ディスパッチ** -- `rix_hash_arch_init()` で Generic / AVX2 / AVX-512 を自動選択
+- **実行時 SIMD ディスパッチ** -- `rix_hash_arch_init(enable)` で Generic / AVX2 / AVX-512 を選択
 - **XOR 対称性による 2 候補バケット** -- 削除 O(1)、リハッシュ不要
 - **N 段先行パイプラインルックアップ** -- DRAM レイテンシを複数リクエスト間で隠蔽
 - **1-origin インデックス格納** -- `RIX_NIL = 0` が空スロットを示す; 生ポインタなし
@@ -444,7 +444,7 @@ RIX_HASH_HEAD(myht);
 RIX_HASH_GENERATE(myht, mynode, key, cur_hash, my_cmp_fn)
 
 /* 3. 起動時に 1 度だけ初期化 */
-rix_hash_arch_init();
+rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
 
 /* 4. 64 バイトアライメントのバケット配列を確保 */
 struct rix_hash_bucket_s *buckets =
@@ -519,7 +519,7 @@ struct entry32 {
 RIX_HASH32_HEAD(ht32);
 RIX_HASH32_GENERATE(ht32, entry32, key)
 
-rix_hash_arch_init();
+rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
 
 struct rix_hash32_bucket_s *buckets =
     aligned_alloc(64, NB_BK * sizeof(*buckets));
@@ -583,7 +583,10 @@ entry64 *ht64_remove(&head, buckets, pool, key_value);
 
 #### 全ハッシュバリアント共通の注意事項
 
-- `rix_hash_arch_init()` はハッシュ操作の前に**必ず 1 度**呼び出すこと。
+- `rix_hash_arch_init(enable)` はハッシュ操作の前に**必ず 1 度**呼び出すこと。
+  `RIX_HASH_ARCH_AUTO` を渡すと利用可能な最良の SIMD を自動選択（推奨）。
+  `RIX_HASH_ARCH_AVX2` を渡すと AVX-512 が存在しても AVX2 に制限。
+  `0` を渡すと Generic（スカラー）強制 — ベンチマーク比較用。
 - バケット配列は**64 バイトアライメント**必須 (`aligned_alloc(64, ...)` または `posix_memalign`)。
 - `NB_BK` は**2 の冪乗**かつ 2 以上であること。
 - `insert` の戻り値:
@@ -756,10 +759,31 @@ struct flow_cache_stats {
 C11 必須。推奨フラグ:
 
 ```sh
+# AVX2（推奨デフォルト）
 cc -std=gnu11 -O3 -mavx2 -msse4.2 \
    -Wall -Wextra -Wshadow -Werror  \
    -I/path/to/librix/include       \
    your_sources.c
+
+# AVX-512
+cc -std=gnu11 -O3 -mavx512f -mavx2 -msse4.2 \
+   -Wall -Wextra -Wshadow -Werror             \
+   -I/path/to/librix/include                  \
+   your_sources.c
+
+# Generic スカラーのみ（SIMD サーチなし、CRC32C ハッシュは維持）
+cc -std=gnu11 -O3 -msse4.2 \
+   -Wall -Wextra -Wshadow -Werror \
+   -I/path/to/librix/include      \
+   your_sources.c
+```
+
+付属のテスト・ベンチマークスイートでは `SIMD=` 変数で一括切り替え可能:
+
+```sh
+make SIMD=avx2    # デフォルト
+make SIMD=avx512
+make SIMD=gen
 ```
 
 開発時のサニタイザ:
