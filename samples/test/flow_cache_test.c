@@ -16,6 +16,9 @@
 
 #include "flow_cache.h"
 
+#define FLOW_CACHE_TEST_BACKEND_DECLARED 1
+flow_cache_backend_t flow_cache_test_backend = FLOW_CACHE_BACKEND_AUTO;
+
 /*===========================================================================
  * Test payload overlay: cast entry->userdata to this struct in unit tests.
  * Demonstrates the caller-defined CL1 usage pattern.
@@ -195,6 +198,32 @@ now_sec(void)
     return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 }
 
+static int
+parse_backend(const char *s, flow_cache_backend_t *out)
+{
+    if (strcmp(s, "auto") == 0) {
+        *out = FLOW_CACHE_BACKEND_AUTO;
+        return 0;
+    }
+    if (strcmp(s, "gen") == 0) {
+        *out = FLOW_CACHE_BACKEND_GEN;
+        return 0;
+    }
+    if (strcmp(s, "sse") == 0) {
+        *out = FLOW_CACHE_BACKEND_SSE;
+        return 0;
+    }
+    if (strcmp(s, "avx2") == 0) {
+        *out = FLOW_CACHE_BACKEND_AVX2;
+        return 0;
+    }
+    if (strcmp(s, "avx512") == 0) {
+        *out = FLOW_CACHE_BACKEND_AVX512;
+        return 0;
+    }
+    return -1;
+}
+
 /*===========================================================================
  * Bench parameters
  *===========================================================================*/
@@ -213,7 +242,8 @@ flow4_test_init_insert_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     struct flow4_cache fc;
     uint64_t now = 1000000;
 
-    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0,
+    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries,
+                     flow_cache_test_backend, 0,
                      flow4_test_init_cb, NULL, NULL);
 
     struct flow4_key k1 = make_key4(0x0A000001, 0x0A000002,
@@ -254,7 +284,8 @@ flow4_test_insert_exhaustion(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     printf("[T-IPv4] insert on free-list exhaustion\n");
 
     struct flow4_cache fc;
-    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, 1 /* 1 ms */, NULL, NULL, NULL);
+    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries,
+                     flow_cache_test_backend, 1 /* 1 ms */, NULL, NULL, NULL);
 
     uint64_t now = flow_cache_rdtsc();
     unsigned filled = 0;
@@ -287,7 +318,8 @@ flow4_test_insert_exhaustion(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     printf("    evictions: %" PRIu64 "\n", st.evictions);
 
     /* all live, no expiry - insert must still succeed (forced bucket eviction) */
-    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0, NULL, NULL, NULL);
+    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries,
+                     flow_cache_test_backend, 0, NULL, NULL, NULL);
     now = flow_cache_rdtsc();
     for (unsigned i = 0; i < max_entries; i++) {
         struct flow4_key k = make_key4(i + 1, i + 10001,
@@ -318,7 +350,8 @@ flow6_test_init_insert_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     struct flow6_cache fc;
     uint64_t now = 1000000;
 
-    flow6_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0,
+    flow6_cache_init(&fc, buckets, nb_bk, pool, max_entries,
+                     flow_cache_test_backend, 0,
                      flow6_test_init_cb, NULL, NULL);
 
     uint8_t src1[16] = {0,0,0,0,0,0,0,0, 0,0,0,0, 0,0x0a,0,1};
@@ -369,7 +402,8 @@ flow4_bench_single_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     printf("\n[B-IPv4] single find (no pipeline) - hit vs miss latency\n");
 
     struct flow4_cache fc;
-    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0, NULL, NULL, NULL);
+    flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries,
+                     flow_cache_test_backend, 0, NULL, NULL, NULL);
 
     unsigned actual_fill;
     struct flow4_key *hit_keys;
@@ -608,7 +642,8 @@ flowu_test_mixed(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
 
     struct flowu_cache fc;
     uint64_t now = 1000000;
-    flowu_cache_init(&fc, buckets, nb_bk, pool, max_entries, 0, NULL, NULL, NULL);
+    flowu_cache_init(&fc, buckets, nb_bk, pool, max_entries,
+                     flow_cache_test_backend, 0, NULL, NULL, NULL);
 
     /* insert an IPv4 flow */
     struct flowu_key k4 = flowu_key_v4(0x0A000001, 0x0A000002,
@@ -661,6 +696,8 @@ usage(const char *prog)
             "                     (default: 1024, min: 64)\n"
             "  -b, --buckets N    Hash bucket count, must be power-of-2\n"
             "                     (default: auto, targets ~50%% fill)\n"
+            "  -B, --backend NAME Backend request: auto | gen | sse | avx2 | avx512\n"
+            "                     (default: auto)\n"
             "  -r, --repeat N     Benchmark repeat count (default: auto)\n"
             "  -h, --help         Show this help and exit\n"
             "\n"
@@ -700,13 +737,14 @@ main(int argc, char **argv)
     static const struct option long_opts[] = {
         { "entries", required_argument, NULL, 'n' },
         { "buckets", required_argument, NULL, 'b' },
+        { "backend", required_argument, NULL, 'B' },
         { "repeat",  required_argument, NULL, 'r' },
         { "help",    no_argument,       NULL, 'h' },
         { NULL,      0,                 NULL,  0  },
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "n:b:r:h", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "n:b:B:r:h", long_opts, NULL)) != -1) {
         switch (opt) {
         case 'n':
             max_entries = flow_cache_pool_count((unsigned)strtoul(optarg, NULL, 0));
@@ -715,6 +753,13 @@ main(int argc, char **argv)
             nb_bk = (unsigned)strtoul(optarg, NULL, 0);
             if (nb_bk != 0 && (nb_bk & (nb_bk - 1)) != 0) {
                 fprintf(stderr, "error: --buckets must be a power of 2\n");
+                return 1;
+            }
+            break;
+        case 'B':
+            if (parse_backend(optarg, &flow_cache_test_backend) != 0) {
+                fprintf(stderr,
+                        "error: --backend must be one of auto, gen, sse, avx2, avx512\n");
                 return 1;
             }
             break;
@@ -759,6 +804,8 @@ main(int argc, char **argv)
     printf("  pool4 mem  = %.1f MB\n", (double)pool4_size / 1e6);
     printf("  pool6 mem  = %.1f MB\n", (double)pool6_size / 1e6);
     printf("  poolu mem  = %.1f MB\n", (double)poolu_size / 1e6);
+    printf("  backend    = %s\n",
+           flow_cache_backend_name(flow_cache_test_backend));
     printf("  repeat     = %u\n", repeat);
     printf("\n");
 
@@ -766,6 +813,25 @@ main(int argc, char **argv)
     struct flow4_entry *pool4 = alloc_aligned(pool4_size);
     struct flow6_entry *pool6 = alloc_aligned(pool6_size);
     struct flowu_entry *poolu = alloc_aligned(poolu_size);
+
+    {
+        struct flow4_cache fc4;
+        struct flow6_cache fc6;
+        struct flowu_cache fcu;
+
+        flow4_cache_init(&fc4, buckets, nb_bk, pool4, max_entries,
+                         flow_cache_test_backend, 0, NULL, NULL, NULL);
+        flow6_cache_init(&fc6, buckets, nb_bk, pool6, max_entries,
+                         flow_cache_test_backend, 0, NULL, NULL, NULL);
+        flowu_cache_init(&fcu, buckets, nb_bk, poolu, max_entries,
+                         flow_cache_test_backend, 0, NULL, NULL, NULL);
+
+        printf("  selected   = flow4:%s flow6:%s flowu:%s\n",
+               flow_cache_backend_name(flow4_cache_backend(&fc4)),
+               flow_cache_backend_name(flow6_cache_backend(&fc6)),
+               flow_cache_backend_name(flowu_cache_backend(&fcu)));
+        printf("\n");
+    }
 
     /* --- IPv4 correctness tests --- */
     printf("--- IPv4 ---\n");

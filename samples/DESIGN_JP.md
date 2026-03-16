@@ -460,24 +460,30 @@ cache_adjust_timeout(struct cache *fc, unsigned misses)
 void cache_expire(struct cache *fc, uint64_t now)
 {
     unsigned max_scan = cache_expire_scan(fc);
-    /* プールをカーソル位置からスキャン、期限切れをフリーリストに回収 */
-    for (unsigned i = 0; i < max_scan; i++) {
+    struct entry *pending[pf_dist] = {0};
+    for (unsigned i = 0; i < max_scan + pf_dist; i++) {
+        if (pending[i % pf_dist])
+            hash_remove_and_recycle(pending[i % pf_dist]);
+        if (i >= max_scan)
+            continue;
+
         /* SW prefetch: CL0 pf_dist先をプリフェッチ */
         prefetch(&pool[(cursor + i + pf_dist) & mask]);
         entry = &pool[(cursor + i) & mask];
         if (entry->last_ts == 0) continue;        /* 空きスロット */
         if (now - entry->last_ts <= timeout) continue;  /* 存命 */
-        hash_remove(entry);
-        entry->last_ts = 0;
-        free_list_push(entry);
+        prefetch(&buckets[entry->cur_hash & bk_mask]);
+        pending[i % pf_dist] = entry;
     }
     cursor += max_scan;
 }
 ```
 
 2段パイプラインバリアント（`cache_expire_2stage`）は中距離（`pf_dist/2`）で
-期限切れ候補のバケットをプリフェッチし、`hash_remove` 時のDRAMアクセスを
-削減する。プールがLLCに収まらず、かつエビクション率が高い場合に有効。
+期限切れ候補のバケットをさらに追加プリフェッチし、`hash_remove` 時のDRAM
+アクセスをさらに削減する。プールがLLCに収まらず、かつエビクション率が
+高い場合に有効。デフォルトの `cache_expire()` も高圧時には内部でこの
+2stage 経路へ自動切替する。
 
 #### スイープカバレッジ
 
@@ -611,7 +617,7 @@ pool_size ≥ max_new_flow_rate × base_timeout × 2
 ### 8.5 タイムアウトパラメータ
 
 ```c
-void cache_init(..., uint64_t timeout_ms);
+void cache_init(..., flow_cache_backend_t backend, uint64_t timeout_ms);
 ```
 
 タイムアウト値はランタイムパラメータ。
@@ -623,6 +629,13 @@ void cache_init(..., uint64_t timeout_ms);
 最小タイムアウト下限は `FLOW_CACHE_TIMEOUT_MIN_MS = 1000`（1.0秒）。
 これ以下ではキャッシュ効果が期待できないため、ミスレートが極端に
 高くても1.0秒を下回らない。
+
+backend 選択もランタイムパラメータ:
+- `FLOW_CACHE_BACKEND_AUTO` は init 時に利用可能な最適 backend を選択
+- `FLOW_CACHE_BACKEND_GEN` は Generic backend を強制
+- `FLOW_CACHE_BACKEND_SSE` は SSE4.2 / XMM backend を要求
+- `FLOW_CACHE_BACKEND_AVX2` / `FLOW_CACHE_BACKEND_AVX512` は SIMD backend を要求
+- 要求した backend が未対応の場合は `GEN` にフォールバック
 
 ## 9. フリーリスト管理
 
@@ -642,15 +655,19 @@ void cache_init(..., uint64_t timeout_ms);
 
 ```c
 /* 初期化 — 呼び出し元が事前割り当てメモリを提供。
- * init_cb: 挿入成功後に呼び出し（NULL → no-op）。
- * fini_cb: エビクション/remove/flush 前に呼び出し（NULL → no-op）。
+ * init_cb: 挿入成功後に呼び出し（NULL の場合は共通 no-op callback を設定）。
+ * fini_cb: エビクション/remove/flush 前に呼び出し（NULL の場合は共通 no-op callback を設定）。
+ * これら既定 callback が有効な間は、ホットパス側で間接 callback 呼び出し
+ * 自体を省略する。
  * max_entries は事前に flow_cache_pool_count() で丸めた値
- * （2のべき乗かつ 64 以上）を渡すこと。*/
+ * （2のべき乗かつ 64 以上）を渡すこと。
+ * backend は要求値であり、未対応 SIMD backend は GEN にフォールバックする。*/
 void PREFIX_cache_init(struct PREFIX_cache *fc,
                        struct rix_hash_bucket_s *buckets,
                        unsigned nb_bk,
                        struct PREFIX_entry *pool,
                        unsigned max_entries,
+                       flow_cache_backend_t backend,
                        uint64_t timeout_ms,
                        void (*init_cb)(struct PREFIX_entry *entry, void *arg),
                        void (*fini_cb)(struct PREFIX_entry *entry,
@@ -690,7 +707,8 @@ PREFIX_cache_touch(struct PREFIX_entry *entry, uint64_t now);
 static inline void
 PREFIX_cache_adjust_timeout(struct PREFIX_cache *fc, unsigned misses);
 
-/* 適応的エクスパイア — スキャン量は充填率で自動調整（常時呼び出し） */
+/* 適応的エクスパイア — スキャン量は充填率で自動調整し、大きくて高圧な
+ * プールでは内部で 2stage 経路へ自動切替する（常時呼び出し）。 */
 void PREFIX_cache_expire(struct PREFIX_cache *fc, uint64_t now);
 
 /* 2段パイプラインエクスパイア — DRAM常駐の大規模プール向け */
@@ -699,6 +717,10 @@ void PREFIX_cache_expire_2stage(struct PREFIX_cache *fc, uint64_t now);
 /* エントリ数（インライン） */
 static inline unsigned
 PREFIX_cache_nb_entries(const struct PREFIX_cache *fc);
+
+/* このキャッシュで実際に選ばれた backend（インライン） */
+static inline flow_cache_backend_t
+PREFIX_cache_backend(const struct PREFIX_cache *fc);
 
 /* 統計スナップショット */
 void PREFIX_cache_stats(const struct PREFIX_cache *fc,
@@ -721,7 +743,9 @@ struct flowu_key flowu_key_v6(const uint8_t *src_ip, const uint8_t *dst_ip,
 
 全フローキャッシュバリアントはCマクロテンプレートにより実装を共有する。
 プロトコル固有のコード（キー構造体、エントリ構造体、比較関数）は
-各バリアントのヘッダで定義する。それ以外はすべて自動生成される。
+各バリアントのヘッダで定義する。大半のロジックはテンプレートから
+直接生成され、各バリアントは複数 backend を切り替える薄い公開
+wrapper を追加で持つ。
 
 ### 11.1 テンプレートパラメータ
 
@@ -739,6 +763,7 @@ struct flowu_key flowu_key_v6(const uint8_t *src_ip, const uint8_t *dst_ip,
 | ファイル | 生成内容 | 使用箇所 |
 |---|---|---|
 | `flow_cache_decl_private.h` | キャッシュ構造体、API宣言、インラインヘルパー | `.h` ファイル |
+| `flow_cache_backend_private.h` | backend ops テーブル定義 | fat-backend `.c` |
 | `flow_cache_body_private.h` | init、insert、lookup_batch、expire、stats | `.c` ファイル |
 | `flow_cache_test_body.h` | テスト+ベンチマーク関数 | テスト `.c` |
 
@@ -752,7 +777,10 @@ struct flowu_key flowu_key_v6(const uint8_t *src_ip, const uint8_t *dst_ip,
 4. `FC_*` マクロを設定し、ソースで `#include "flow_cache_body_private.h"`
 5. `FCT_*` マクロを設定し、テストで `#include "flow_cache_test_body.h"`
 
-他のコード変更は不要 — すべてのロジックはテンプレート内にある。
+新バリアントでも推奨構成は同じ:
+1. ランタイム backend 選択を行う薄い公開 wrapper
+2. `gen` / `sse` / `avx2` / `avx512` として多重コンパイルする backend テンプレート源
+3. 実体は共通テンプレートを再利用
 
 ## 12. ファイル構成
 
@@ -766,15 +794,19 @@ samples/
 
     # 公開ヘッダ（ユーザーが直接 include する）
     flow_cache.h             共通定義（TSC、stats、パイプラインパラメータ）
-    flow4_cache.h            IPv4: キー、エントリ、cmp、ハッシュ生成、テンプレート展開
-    flow4_cache.c            IPv4: テンプレート展開
+    flow4_cache.h            IPv4: キー、エントリ、cmp、公開 API
+    flow4_cache.c            IPv4: 公開 wrapper + backend 選択
+    flow4_cache_backend.c    IPv4: backend テンプレート、gen/sse/avx2/avx512 として多重コンパイル
     flow6_cache.h            IPv6: キー、エントリ、cmp、ハッシュ生成、テンプレート展開
-    flow6_cache.c            IPv6: テンプレート展開
+    flow6_cache.c            IPv6: 公開 wrapper + backend 選択
+    flow6_cache_backend.c    IPv6: backend テンプレート、gen/sse/avx2/avx512 として多重コンパイル
     flow_unified_cache.h     統合: キー（family+union）、エントリ、cmp、テンプレート展開
-    flow_unified_cache.c     統合: テンプレート展開
+    flow_unified_cache.c     統合: 公開 wrapper + backend 選択
+    flow_unified_cache_backend.c Unified: backend テンプレート、gen/sse/avx2/avx512 として多重コンパイル
 
     # 内部専用ヘッダ（ライブラリ内部のみ; _private サフィックス）
     flow_cache_decl_private.h  テンプレート: キャッシュ構造体 + API宣言（Section 1: 一度のみ / Section 2: FC_PREFIX 毎）
+    flow_cache_backend_private.h backend ops テーブル定義
     flow_cache_body_private.h  テンプレート: 実装（init/insert/lookup/expire）
 
   test/                    テストバイナリ
@@ -793,6 +825,8 @@ rix/rix_hash.h          フィンガープリントハッシュテーブル（SI
 
 TAILQ依存なし（LRUをタイムスタンプのみのアプローチに置換）。
 SIMD高速化ハッシュ操作には `-mavx2` または `-mavx512f` が必要。
+サンプル Makefile はデフォルトで `OPTLEVEL=3` を使い、`CC=gcc` と
+`CC=clang` の両方でビルドできる前提とする。
 
 ## 14. スレッド安全性
 
@@ -930,8 +964,8 @@ DRAM-cold条件として優秀。
 
 **性能面**
 
-- `expire_2stage` の効果が定量的に未検証。単段との比較ベンチマークがあると
-  判断材料になる
+- `expire_2stage` の効果が定量的に未検証。デフォルトのバッファ付き
+  expire との比較ベンチマークがあると判断材料になる
 - バッチ insert（ミスが複数ある場合のパイプライン化）は未実装。
   ミス率が高い場合の改善余地がある
 

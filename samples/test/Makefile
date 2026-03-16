@@ -41,9 +41,10 @@ WARN_EXTRA   = -Wcast-align -Wstrict-aliasing
 endif
 
 WARN         = $(WARN_COMMON) $(WARN_EXTRA)
+OPTLEVEL    ?= 3
 
 # -O3 for test/bench; -I$(FCACHEDIR) resolves #include "flow_cache.h" etc.
-CFLAGS       = -std=gnu11 -O3 $(SIMD_FLAGS) $(WARN) \
+CFLAGS       = -std=gnu11 -O$(OPTLEVEL) $(SIMD_FLAGS) $(WARN) \
                -I$(TOPDIR)/include -I$(FCACHEDIR)
 
 LIBFCACHE    = $(FCACHEDIR)/libfcache.a

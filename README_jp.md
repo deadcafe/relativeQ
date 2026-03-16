@@ -85,10 +85,13 @@ samples/
   DESIGN_JP.md      設計ドキュメント (日本語)
   fcache/           ライブラリ (libfcache.a / libfcache.so)
     flow_cache.h            傘ヘッダ: 3 バリアント全体をインクルード
-    flow4_cache.h/.c        IPv4 5 タプルフローキャッシュ (20 バイトキー)
+    flow4_cache.h           IPv4 5 タプルフローキャッシュ (20 バイトキー)
+    flow4_cache.c           IPv4 公開 wrapper + backend 選択
+    flow4_cache_backend.c   IPv4 backend テンプレート、gen/sse/avx2/avx512 として多重コンパイル
     flow6_cache.h/.c        IPv6 5 タプルフローキャッシュ (44 バイトキー)
     flow_unified_cache.h/.c IPv4+IPv6 統合テーブル (44 バイトキー、family フィールド)
     flow_cache_decl_private.h  テンプレート: キャッシュ構造体 + API (内部用)
+    flow_cache_backend_private.h テンプレート: backend ops テーブル (内部用)
     flow_cache_body_private.h  テンプレート: 実装 (内部用)
   test/
     flow_cache_test.c       正確性テスト + ベンチマーク (全 3 バリアント)
@@ -626,6 +629,11 @@ entry64 *ht64_remove(&head, buckets, pool, key_value);
 `samples/` は `rix_hash` を基盤とした本番品質のフローキャッシュを提供します。
 IPv4 専用・IPv6 専用・IPv4+IPv6 統合の 3 バリアントがあります。
 
+3つのバリアントはすべて小さな fat binary
+（`GEN` + `SSE` + `AVX2` + `AVX512` backend）としてビルドされます。
+`*_cache_init()` は backend を明示指定でき、`AUTO` を指定すれば
+実行時に利用可能な最適 backend を自動選択します。
+
 ### インクルード
 
 ```c
@@ -654,12 +662,20 @@ unsigned pool_count = flow_cache_pool_count(max_entries); /* 2^n、最小 64 */
 /* 初期化 */
 struct flow4_cache fc;
 flow4_cache_init(&fc, buckets, nb_bk, pool, pool_count,
+                 FLOW_CACHE_BACKEND_AUTO, /* または GEN / SSE / AVX2 / AVX512 */
                  30000,           /* timeout_ms: 30 秒 */
-                 NULL, NULL, NULL); /* init_cb, fini_cb, cb_arg (NULL = no-op) */
+                 NULL, NULL, NULL); /* init_cb, fini_cb, cb_arg (NULL = no-op fast path) */
+
+printf("backend = %s\n",
+       flow_cache_backend_name(flow4_cache_backend(&fc)));
 
 /* 一括クリア (VRF 削除、インターフェースダウンなど) */
 flow4_cache_flush(&fc);
 ```
+
+サンプルのベンチマーク / デバッグ用途では、
+`samples/test/flow_cache_test --backend auto|gen|sse|avx2|avx512`
+でも backend を固定でき、各バリアントで実際に選ばれた backend を表示します。
 
 ### パケット処理ループ
 
@@ -686,24 +702,37 @@ flow4_cache_adjust_timeout(&fc, misses);
 
 /* 4. エージングによるエビクション */
 flow4_cache_expire(&fc, now);
-/* または: flow4_cache_expire_2stage() -- バケットプリフェッチ版
-   pool >> LLC またはエビクション頻度が高い場合に有効 */
+/* flow4_cache_expire() は高圧時に内部で 2stage へ自動切替する。
+   flow4_cache_expire_2stage() で明示強制も可能。 */
 ```
 
 ### API 一覧
 
 ```c
 /* ライフサイクル */
-void     flow4_cache_init (fc, buckets, nb_bk, pool, pool_count, timeout_ms,
-                           init_cb, fini_cb, cb_arg);
+void     flow4_cache_init (fc, buckets, nb_bk, pool, pool_count, backend,
+                           timeout_ms, init_cb, fini_cb, cb_arg);
 void     flow4_cache_flush(fc);
+
+/* backend 選択 / 確認 */
+typedef enum {
+    FLOW_CACHE_BACKEND_AUTO,
+    FLOW_CACHE_BACKEND_GEN,
+    FLOW_CACHE_BACKEND_SSE,
+    FLOW_CACHE_BACKEND_AVX2,
+    FLOW_CACHE_BACKEND_AVX512,
+} flow_cache_backend_t;
+flow_cache_backend_t flow4_cache_backend(fc);    /* 初期化後に実際に選ばれた backend */
+const char *flow_cache_backend_name(flow_cache_backend_t backend);
 
 /* サイジングヘルパー */
 unsigned flow_cache_pool_count(max_entries);              /* cache_init 用エントリ数 (2^n、最小 64) */
 size_t   flow_cache_pool_size (max_entries, entry_size);  /* aligned_alloc 用バイト数 */
 unsigned flow_cache_nb_bk_hint(max_entries);              /* ~50% 充填率向けバケット数 (2^n) */
 
-/* cache_init の入力前提: pool_count は 2^n かつ 64 以上であること */
+/* cache_init の入力前提:
+ *   pool_count は 2^n かつ 64 以上
+ *   要求した backend が未対応なら GEN にフォールバック */
 
 /* ルックアップ */
 void                flow4_cache_lookup_batch(fc, keys, nb_pkts, results);
@@ -743,13 +772,15 @@ uint64_t flow_cache_ms_to_tsc(tsc_hz, ms);
 #include "flow_cache.h"
 
 /* FC_CALL(prefix, suffix) は prefix##_##suffix に展開される */
-FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, pool_count, timeout_ms,
+FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, pool_count,
+                           FLOW_CACHE_BACKEND_AUTO, timeout_ms,
                            init_cb, fini_cb, cb_arg);
 FC_CALL(flow4, cache_lookup_batch)(&fc, keys, nb_pkts, results);
 FC_CALL(flow4, cache_insert)(&fc, &keys[i], now);
 FC_CALL(flow4, cache_touch)(results[i], now);
 FC_CALL(flow4, cache_adjust_timeout)(&fc, misses);
 FC_CALL(flow4, cache_expire)(&fc, now);
+FC_CALL(flow4, cache_backend)(&fc);
 
 /* prefix はマクロトークンでも可 -- 先に展開されてから結合される */
 #define MY_FC flow6
@@ -811,6 +842,15 @@ make SIMD=avx2    # デフォルト
 make SIMD=avx512
 make SIMD=gen
 ```
+
+コンパイラと最適化レベルも上書き可能:
+
+```sh
+make CC=gcc   OPTLEVEL=3
+make CC=clang OPTLEVEL=3
+```
+
+現状ツリーはこの条件で GCC / Clang の両方でビルドできる前提です。
 
 開発時のサニタイザ:
 

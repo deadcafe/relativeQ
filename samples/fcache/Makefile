@@ -38,13 +38,18 @@ WARN_EXTRA   = -Wcast-align -Wstrict-aliasing
 endif
 
 WARN         = $(WARN_COMMON) $(WARN_EXTRA)
+OPTLEVEL    ?= 3
 
 # -fPIC: required for .so, negligible cost on x86-64; one object set for both
-CFLAGS       = -std=gnu11 -O2 $(SIMD_FLAGS) $(WARN) \
-               -I$(TOPDIR)/include -fPIC
+CFLAGS_BASE  = -std=gnu11 -O$(OPTLEVEL) $(WARN) -I$(TOPDIR)/include -fPIC
 
-SRCS         = flow4_cache.c flow6_cache.c flow_unified_cache.c
-OBJS         = $(SRCS:.c=.o)
+WRAPPER_SRCS = flow4_cache.c flow6_cache.c flow_unified_cache.c
+WRAPPER_OBJS = $(WRAPPER_SRCS:.c=.o)
+BACKEND_OBJS = flow4_cache_gen.o flow4_cache_sse.o flow4_cache_avx2.o flow4_cache_avx512.o \
+               flow6_cache_gen.o flow6_cache_sse.o flow6_cache_avx2.o flow6_cache_avx512.o \
+               flow_unified_cache_gen.o flow_unified_cache_sse.o \
+               flow_unified_cache_avx2.o flow_unified_cache_avx512.o
+OBJS         = $(WRAPPER_OBJS) $(BACKEND_OBJS)
 
 # Public headers installed alongside the library
 PUB_HDRS     = flow_cache.h \
@@ -70,7 +75,40 @@ $(LIB_SHARED): $(OBJS)
 	$(CC) -shared -Wl,-soname,$(LIB_SHARED).1 -o $@ $^
 
 %.o: %.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS_BASE) $(CFLAGS_LOCAL) -c -o $@ $<
+
+flow4_cache.o: CFLAGS_LOCAL =
+
+flow6_cache.o: CFLAGS_LOCAL =
+
+flow_unified_cache.o: CFLAGS_LOCAL =
+
+flow4_cache_gen.o: flow4_cache_backend.c
+	$(CC) $(CFLAGS_BASE) -DFLOW_CACHE_BACKEND_NAME=gen -c -o $@ $<
+flow4_cache_sse.o: flow4_cache_backend.c
+	$(CC) $(CFLAGS_BASE) -msse4.2 -DFLOW_CACHE_BACKEND_NAME=sse -c -o $@ $<
+flow4_cache_avx2.o: flow4_cache_backend.c
+	$(CC) $(CFLAGS_BASE) -mavx2 -msse4.2 -DFLOW_CACHE_BACKEND_NAME=avx2 -c -o $@ $<
+flow4_cache_avx512.o: flow4_cache_backend.c
+	$(CC) $(CFLAGS_BASE) -mavx512f -mavx2 -msse4.2 -DFLOW_CACHE_BACKEND_NAME=avx512 -c -o $@ $<
+
+flow6_cache_gen.o: flow6_cache_backend.c
+	$(CC) $(CFLAGS_BASE) -DFLOW_CACHE_BACKEND_NAME=gen -c -o $@ $<
+flow6_cache_sse.o: flow6_cache_backend.c
+	$(CC) $(CFLAGS_BASE) -msse4.2 -DFLOW_CACHE_BACKEND_NAME=sse -c -o $@ $<
+flow6_cache_avx2.o: flow6_cache_backend.c
+	$(CC) $(CFLAGS_BASE) -mavx2 -msse4.2 -DFLOW_CACHE_BACKEND_NAME=avx2 -c -o $@ $<
+flow6_cache_avx512.o: flow6_cache_backend.c
+	$(CC) $(CFLAGS_BASE) -mavx512f -mavx2 -msse4.2 -DFLOW_CACHE_BACKEND_NAME=avx512 -c -o $@ $<
+
+flow_unified_cache_gen.o: flow_unified_cache_backend.c
+	$(CC) $(CFLAGS_BASE) -DFLOW_CACHE_BACKEND_NAME=gen -c -o $@ $<
+flow_unified_cache_sse.o: flow_unified_cache_backend.c
+	$(CC) $(CFLAGS_BASE) -msse4.2 -DFLOW_CACHE_BACKEND_NAME=sse -c -o $@ $<
+flow_unified_cache_avx2.o: flow_unified_cache_backend.c
+	$(CC) $(CFLAGS_BASE) -mavx2 -msse4.2 -DFLOW_CACHE_BACKEND_NAME=avx2 -c -o $@ $<
+flow_unified_cache_avx512.o: flow_unified_cache_backend.c
+	$(CC) $(CFLAGS_BASE) -mavx512f -mavx2 -msse4.2 -DFLOW_CACHE_BACKEND_NAME=avx512 -c -o $@ $<
 
 clean:
 	rm -f $(OBJS) $(LIB_STATIC) $(LIB_SHARED) *~ core core.*

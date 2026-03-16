@@ -17,6 +17,21 @@
  *   flow6_cache   IPv6 5-tuple + vrfid (44-byte key, rix_hash)
  *   flowu_cache   Unified IPv4/IPv6 in one table (44-byte key, family field)
  *
+ * Backend model:
+ *   flow4_cache   fat binary (GEN + SSE + AVX2 + AVX512)
+ *   flow6_cache   fat binary (GEN + SSE + AVX2 + AVX512)
+ *   flowu_cache   fat binary (GEN + SSE + AVX2 + AVX512)
+ *
+ * cache_init() accepts an explicit flow_cache_backend_t request:
+ *   FLOW_CACHE_BACKEND_AUTO    pick the best supported backend at runtime
+ *   FLOW_CACHE_BACKEND_GEN     force generic backend
+ *   FLOW_CACHE_BACKEND_SSE     request SSE4.2/XMM, fallback to GEN if unavailable
+ *   FLOW_CACHE_BACKEND_AVX2    request AVX2, fallback to GEN if unavailable
+ *   FLOW_CACHE_BACKEND_AVX512  request AVX512, fallback to GEN if unavailable
+ *
+ * Use <variant>_cache_backend() after init to inspect the actual backend
+ * and flow_cache_backend_name() to format it for logs/debug output.
+ *
  * API
  * ---
  * All per-variant functions follow the pattern:
@@ -26,9 +41,13 @@
  * where <variant> is one of:  flow4  flow6  flowu
  *
  *   Lifecycle
- *     flow4_cache_init(fc, buckets, nb_bk, pool, max_entries, timeout_ms,
- *                      init_cb, fini_cb, cb_arg)
+ *     flow4_cache_init(fc, buckets, nb_bk, pool, max_entries, backend,
+ *                      timeout_ms, init_cb, fini_cb, cb_arg)
  *     flow4_cache_flush(fc)
+ *
+ *   Backend selection / inspection
+ *     flow4_cache_backend(fc)                     -- actual backend selected at init
+ *     flow_cache_backend_name(backend)           -- "auto" / "gen" / "sse" / "avx2" / "avx512"
  *
  *   Sizing
  *     flow_cache_pool_count(max_entries)              -- pool element count for cache_init (rounded to 2^n, min 64)
@@ -47,7 +66,7 @@
  *     flow4_cache_touch(entry, now)   -- refresh timestamp; update userdata after
  *
  *   Aging (call every batch)
- *     flow4_cache_expire(fc, now)
+ *     flow4_cache_expire(fc, now)   -- default path, auto-switches to 2stage under pressure
  *     flow4_cache_expire_2stage(fc, now) -- bucket-prefetch variant
  *     flow4_cache_adjust_timeout(fc, misses)
  *
@@ -66,7 +85,8 @@
  * FC_CALL(prefix, suffix) expands to prefix##_##suffix after full macro
  * expansion of both arguments.  The underscore is inserted automatically.
  *
- *   FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, max_entries, timeout_ms,
+ *   FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, max_entries,
+ *                              FLOW_CACHE_BACKEND_AUTO, timeout_ms,
  *                              init_cb, fini_cb, cb_arg);
  *   FC_CALL(flow4, cache_lookup_batch)(&fc, keys, nb_pkts, results);
  *   FC_CALL(flow4, cache_insert)(&fc, &key, now);
@@ -76,7 +96,7 @@
  *
  * When the prefix is a macro token, it is fully expanded first:
  *   #define MY_FC flow4
- *   FC_CALL(MY_FC, cache_init)(&fc, ...);   // → flow4_cache_init(&fc, ...)
+ *   FC_CALL(MY_FC, cache_init)(&fc, ...);   // -> flow4_cache_init(&fc, ...)
  *
  * Typical packet processing loop (using FC_CALL):
  *

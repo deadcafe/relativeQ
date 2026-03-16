@@ -422,30 +422,37 @@ eff_timeout += (base - eff) >> FLOW_CACHE_TIMEOUT_RECOVER_SHIFT; /* recover */
 
 Floor: `FLOW_CACHE_TIMEOUT_MIN_MS` (default 1000 ms).
 
-#### Expire body (single-stage / two-stage pipeline)
+#### Expire body (buffered default / extra two-stage pipeline)
 
 ```c
 void cache_expire(struct cache *fc, uint64_t now)
 {
     unsigned max_scan = cache_expire_scan(fc);
-    /* scan from cursor, reclaim expired entries to free list */
-    for (unsigned i = 0; i < max_scan; i++) {
+    struct entry *pending[pf_dist] = {0};
+    for (unsigned i = 0; i < max_scan + pf_dist; i++) {
+        if (pending[i % pf_dist])
+            hash_remove_and_recycle(pending[i % pf_dist]);
+        if (i >= max_scan)
+            continue;
+
         /* SW prefetch: pf_dist ahead in CL0 */
         prefetch(&pool[(cursor + i + pf_dist) & mask]);
         entry = &pool[(cursor + i) & mask];
         if (entry->last_ts == 0) continue;        /* free slot */
         if (now - entry->last_ts <= timeout) continue;  /* alive */
-        hash_remove(entry);
-        entry->last_ts = 0;
-        free_list_push(entry);
+        prefetch(&buckets[entry->cur_hash & bk_mask]);
+        pending[i % pf_dist] = entry;
     }
     cursor += max_scan;
 }
 ```
 
-The two-stage variant (`cache_expire_2stage`) adds a mid-distance bucket
-prefetch (`pf_dist/2`) for candidates about to be hash_removed, reducing
-DRAM stalls when the pool is DRAM-resident and eviction rate is high.
+The two-stage variant (`cache_expire_2stage`) adds an extra mid-distance
+bucket prefetch (`pf_dist/2`) for candidates about to be hash_removed,
+reducing DRAM stalls further when the pool is DRAM-resident and eviction
+rate is high. The default `cache_expire()` path switches to `2stage`
+automatically once pressure rises enough (currently expire level >= 4 on
+reasonably large pools).
 
 #### Sweep coverage
 
@@ -581,7 +588,7 @@ Typical miss rates: 5-10% normal, 15-20% peak, 30%+ under attack.
 ### 8.5 Timeout parameter
 
 ```c
-void cache_init(..., uint64_t timeout_ms);
+void cache_init(..., flow_cache_backend_t backend, uint64_t timeout_ms);
 ```
 
 Timeout value is a runtime parameter.
@@ -589,6 +596,13 @@ Appropriate value depends on workload:
 - Short-lived flows (web): 1-5 seconds
 - Long-lived flows (streaming): 30-60 seconds
 - 0 = no expiry (`timeout_tsc = UINT64_MAX`)
+
+Backend selection is also a runtime parameter:
+- `FLOW_CACHE_BACKEND_AUTO` picks the best supported backend at init time
+- `FLOW_CACHE_BACKEND_GEN` forces the generic backend
+- `FLOW_CACHE_BACKEND_SSE` requests the SSE4.2/XMM backend
+- `FLOW_CACHE_BACKEND_AVX2` / `FLOW_CACHE_BACKEND_AVX512` request SIMD backends
+- Unsupported explicit requests fall back to `GEN`
 
 ## 9. Free List Management
 
@@ -607,15 +621,19 @@ Function names use the variant prefix: `flow4_`, `flow6_`, or `flowu_`.
 
 ```c
 /* Initialization — caller provides pre-allocated memory.
- * init_cb: called after each successful insert (NULL → no-op).
- * fini_cb: called before every eviction/remove/flush (NULL → no-op).
+ * init_cb: called after each successful insert (NULL installs a shared no-op callback).
+ * fini_cb: called before every eviction/remove/flush (NULL installs a shared no-op callback).
+ * Hot paths skip the indirect callback call entirely while those default
+ * no-op callbacks are active.
  * max_entries must already be rounded via flow_cache_pool_count():
- * power-of-2 and >= 64. */
+ * power-of-2 and >= 64.
+ * backend is a request; unsupported SIMD requests fall back to GEN. */
 void PREFIX_cache_init(struct PREFIX_cache *fc,
                        struct rix_hash_bucket_s *buckets,
                        unsigned nb_bk,
                        struct PREFIX_entry *pool,
                        unsigned max_entries,
+                       flow_cache_backend_t backend,
                        uint64_t timeout_ms,
                        void (*init_cb)(struct PREFIX_entry *entry, void *arg),
                        void (*fini_cb)(struct PREFIX_entry *entry,
@@ -655,7 +673,8 @@ PREFIX_cache_touch(struct PREFIX_entry *entry, uint64_t now);
 static inline void
 PREFIX_cache_adjust_timeout(struct PREFIX_cache *fc, unsigned misses);
 
-/* Adaptive expire — scan depth auto-scales with fill level (always call) */
+/* Adaptive expire — scan depth auto-scales with fill level and auto-switches
+ * to the 2stage path on large, high-pressure pools (always call). */
 void PREFIX_cache_expire(struct PREFIX_cache *fc, uint64_t now);
 
 /* Two-stage expire — adds mid-distance bucket prefetch for DRAM-resident pools */
@@ -664,6 +683,10 @@ void PREFIX_cache_expire_2stage(struct PREFIX_cache *fc, uint64_t now);
 /* Entry count (inline) */
 static inline unsigned
 PREFIX_cache_nb_entries(const struct PREFIX_cache *fc);
+
+/* Actual backend selected for this cache instance (inline) */
+static inline flow_cache_backend_t
+PREFIX_cache_backend(const struct PREFIX_cache *fc);
 
 /* Statistics snapshot */
 void PREFIX_cache_stats(const struct PREFIX_cache *fc,
@@ -686,7 +709,9 @@ struct flowu_key flowu_key_v6(const uint8_t *src_ip, const uint8_t *dst_ip,
 
 All flow cache variants share implementation via C macro templates.
 Protocol-specific code (key struct, entry struct, comparison function)
-is defined in each variant's header.  Everything else is generated.
+is defined in each variant's header. Most logic is generated directly from
+templates; each variant additionally uses a thin public wrapper that selects
+between multiple precompiled backends.
 
 ### 11.1 Template parameters
 
@@ -704,6 +729,7 @@ is defined in each variant's header.  Everything else is generated.
 | File | Generates | Used by |
 |---|---|---|
 | `flow_cache_decl_private.h` | Cache struct, API declarations, inline helpers | `.h` files |
+| `flow_cache_backend_private.h` | Backend ops table layout | fat-backend `.c` files |
 | `flow_cache_body_private.h` | init, insert, lookup_batch, expire, stats | `.c` files |
 | `flow_cache_test_body.h` | Test + benchmark functions | test `.c` |
 
@@ -717,7 +743,10 @@ To add a new flow cache variant (e.g., MPLS):
 4. Set `FC_*` macros, `#include "flow_cache_body_private.h"` in source
 5. Set `FCT_*` macros, `#include "flow_cache_test_body.h"` in test
 
-No other code changes needed — all logic is in the templates.
+For a new variant, the preferred pattern is:
+1. thin public wrapper for runtime backend selection
+2. one backend template source compiled multiple times (`gen`, `sse`, `avx2`, `avx512`)
+3. shared template reuse for the full implementation body
 
 ## 12. File Structure
 
@@ -730,16 +759,20 @@ samples/
     Makefile
     -- public headers --
     flow_cache.h             umbrella: includes all three variant headers
-    flow4_cache.h            IPv4: key, entry, cmp, hash generate, template expand
+    flow4_cache.h            IPv4: key, entry, cmp, public API
     flow6_cache.h            IPv6: key, entry, cmp, hash generate, template expand
     flow_unified_cache.h     Unified: key (family+union), entry, cmp, template expand
     -- private headers --
     flow_cache_decl_private.h  template: base defs (Section 1) + cache struct/API decls (Section 2)
+    flow_cache_backend_private.h template: backend ops table
     flow_cache_body_private.h  template: implementation (init/insert/lookup/expire)
     -- sources --
-    flow4_cache.c            IPv4: template expand (~33 lines)
-    flow6_cache.c            IPv6: template expand (~33 lines)
-    flow_unified_cache.c     Unified: template expand (~33 lines)
+    flow4_cache.c            IPv4: public wrapper + backend selection
+    flow4_cache_backend.c    IPv4: backend template, compiled as gen/sse/avx2/avx512
+    flow6_cache.c            IPv6: public wrapper + backend selection
+    flow6_cache_backend.c    IPv6: backend template, compiled as gen/sse/avx2/avx512
+    flow_unified_cache.c     Unified: public wrapper + backend selection
+    flow_unified_cache_backend.c Unified: backend template, compiled as gen/sse/avx2/avx512
 
   test/                    test and benchmark binary
     Makefile
@@ -757,6 +790,8 @@ rix/rix_hash.h          fingerprint hash table (SIMD dispatch)
 
 No TAILQ dependency (LRU replaced by timestamp-only approach).
 Requires `-mavx2` or `-mavx512f` for SIMD-accelerated hash operations.
+The sample Makefiles default to `OPTLEVEL=3` and are intended to build with
+both `CC=gcc` and `CC=clang`.
 
 ## 14. Thread Safety
 
@@ -899,8 +934,8 @@ rare in real workloads.
 
 **Performance**
 
-- `expire_2stage` benefit not yet quantified.  A single-stage vs two-stage
-  benchmark would help guide usage decisions.
+- `expire_2stage` benefit not yet quantified.  A buffered-default vs
+  extra-two-stage benchmark would help guide usage decisions.
 - Batch insert (pipeline across multiple misses) not implemented.
   Potential improvement when miss rate is high.
 

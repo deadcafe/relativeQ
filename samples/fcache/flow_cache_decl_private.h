@@ -194,7 +194,8 @@ flow_cache_ms_to_tsc(uint64_t tsc_hz, uint64_t ms)
  * The underscore separator is inserted automatically by the macro.
  *
  * Example:
- *   FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, max_entries, timeout_ms);
+ *   FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, max_entries,
+ *                              FLOW_CACHE_BACKEND_AUTO, timeout_ms);
  *   FC_CALL(flow4, cache_lookup_batch)(&fc, keys, nb_pkts, results);
  *   FC_CALL(flow4, cache_insert)(&fc, &key, now);
  *   FC_CALL(flow4, cache_touch)(entry, now);  // then update userdata fields as needed
@@ -224,6 +225,32 @@ struct flow_cache_stats {
     uint32_t nb_entries;    /* current entry count */
     uint32_t max_entries;   /* pool capacity */
 };
+
+/*===========================================================================
+ * Backend selection
+ *===========================================================================*/
+typedef enum {
+    FLOW_CACHE_BACKEND_AUTO = 0,
+    FLOW_CACHE_BACKEND_GEN,
+    FLOW_CACHE_BACKEND_SSE,
+    FLOW_CACHE_BACKEND_AVX2,
+    FLOW_CACHE_BACKEND_AVX512,
+} flow_cache_backend_t;
+/* AUTO = best supported backend at runtime.
+ * Explicit SSE / AVX2 / AVX512 requests fall back to GEN if unavailable. */
+
+static inline const char *
+flow_cache_backend_name(flow_cache_backend_t backend)
+{
+    switch (backend) {
+    case FLOW_CACHE_BACKEND_AUTO:   return "auto";
+    case FLOW_CACHE_BACKEND_GEN:    return "gen";
+    case FLOW_CACHE_BACKEND_SSE:    return "sse";
+    case FLOW_CACHE_BACKEND_AVX2:   return "avx2";
+    case FLOW_CACHE_BACKEND_AVX512: return "avx512";
+    default:                        return "unknown";
+    }
+}
 
 /*===========================================================================
  * Sizing helpers
@@ -264,7 +291,8 @@ flow_cache_pool_count(unsigned max_entries)
  *   unsigned nb_bk   = flow_cache_nb_bk_hint(pool_n);
  *   struct flow4_entry       *pool    = aligned_alloc(64, pool_sz);
  *   struct rix_hash_bucket_s *buckets = aligned_alloc(64, nb_bk * sizeof(*buckets));
- *   flow4_cache_init(&fc, buckets, nb_bk, pool, pool_n, timeout_ms, ...);
+ *   flow4_cache_init(&fc, buckets, nb_bk, pool, pool_n,
+ *                    FLOW_CACHE_BACKEND_AUTO, timeout_ms, ...);
  */
 static inline size_t
 flow_cache_pool_size(unsigned max_entries, size_t entry_size)
@@ -395,6 +423,10 @@ struct FC_CACHE {
     void    (*fini_cb)(struct FC_ENTRY *entry,
                         flow_cache_fini_reason_t reason, void *arg);
     void    *cb_arg;
+
+    /* internal backend dispatch state (used by fat-binary variants) */
+    const void                 *ops;
+    flow_cache_backend_t        backend_id;
 };
 
 /*===========================================================================
@@ -437,6 +469,7 @@ void FCC_FN(FC_PREFIX, cache_init)(struct FC_CACHE *fc,
                          unsigned nb_bk,
                          struct FC_ENTRY *pool,
                          unsigned max_entries,
+                         flow_cache_backend_t backend,
                          uint64_t timeout_ms,
                          void (*init_cb)(struct FC_ENTRY *entry, void *arg),
                          void (*fini_cb)(struct FC_ENTRY *entry,
@@ -444,7 +477,11 @@ void FCC_FN(FC_PREFIX, cache_init)(struct FC_CACHE *fc,
                                          void *arg),
                          void *cb_arg);
 /* max_entries passed to cache_init must already be flow_cache_pool_count()
- * output: power-of-2 and >= 64. */
+ * output: power-of-2 and >= 64.
+ *
+ * backend is a request, not a guarantee. Unsupported SIMD requests fall
+ * back to GEN. Call PREFIX_cache_backend() after init to inspect the
+ * actual backend selected for this cache instance. */
 
 void FCC_FN(FC_PREFIX, cache_flush)(struct FC_CACHE *fc);
 
@@ -491,6 +528,12 @@ static inline unsigned
 FCC_FN(FC_PREFIX, cache_nb_entries)(const struct FC_CACHE *fc)
 {
     return fc->ht_head.rhh_nb;
+}
+
+static inline flow_cache_backend_t
+FCC_FN(FC_PREFIX, cache_backend)(const struct FC_CACHE *fc)
+{
+    return fc->backend_id;
 }
 
 /*

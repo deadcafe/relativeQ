@@ -28,6 +28,10 @@
 #define FC_FN_CAT(a, b, c)   _FC_FN_CAT(a, b, c)
 #define FC_FN(prefix, suffix) FC_FN_CAT(prefix, _, suffix)
 
+#ifndef FC_IMPL_ATTR
+#define FC_IMPL_ATTR
+#endif
+
 /*===========================================================================
  * Default no-op lifecycle callbacks
  *
@@ -46,6 +50,22 @@ FC_FN(FC_PREFIX, default_fini_cb)(struct FC_ENTRY *entry __attribute__((unused))
                                    flow_cache_fini_reason_t reason __attribute__((unused)),
                                    void *arg __attribute__((unused)))
 {
+}
+
+static RIX_FORCE_INLINE void
+FC_FN(FC_PREFIX, call_init_cb)(struct FC_CACHE *fc, struct FC_ENTRY *entry)
+{
+    if (fc->init_cb != FC_FN(FC_PREFIX, default_init_cb))
+        fc->init_cb(entry, fc->cb_arg);
+}
+
+static RIX_FORCE_INLINE void
+FC_FN(FC_PREFIX, call_fini_cb)(struct FC_CACHE *fc,
+                               struct FC_ENTRY *entry,
+                               flow_cache_fini_reason_t reason)
+{
+    if (fc->fini_cb != FC_FN(FC_PREFIX, default_fini_cb))
+        fc->fini_cb(entry, reason, fc->cb_arg);
 }
 
 /*===========================================================================
@@ -90,15 +110,35 @@ FC_FN(FC_PREFIX, cache_expire_scan)(const struct FC_CACHE *fc)
     return (unsigned)FLOW_CACHE_EXPIRE_SCAN_MIN << level;
 }
 
+static inline int
+FC_FN(FC_PREFIX, cache_use_expire_2stage)(const struct FC_CACHE *fc)
+{
+    if (fc->max_entries < 4096u)
+        return 0;
+    return FC_CALL(FC_PREFIX, cache_expire_level)(fc) >= 4u;
+}
+
+static inline unsigned
+FC_FN(FC_PREFIX, cache_expire_pf_dist)(const struct FC_CACHE *fc)
+{
+    (void)fc;
+    return FLOW_CACHE_EXPIRE_PF_DIST;
+}
+
+FC_IMPL_ATTR void
+FC_FN(FC_PREFIX, cache_expire_2stage)(struct FC_CACHE *fc,
+                                      uint64_t now);
+
 /*===========================================================================
  * Init
  *===========================================================================*/
-void
+FC_IMPL_ATTR void
 FC_FN(FC_PREFIX, cache_init)(struct FC_CACHE *fc,
                    struct rix_hash_bucket_s *buckets,
                    unsigned nb_bk,
                    struct FC_ENTRY *pool,
                    unsigned max_entries,
+                   flow_cache_backend_t backend,
                    uint64_t timeout_ms,
                    void (*init_cb)(struct FC_ENTRY *entry, void *arg),
                    void (*fini_cb)(struct FC_ENTRY *entry,
@@ -107,7 +147,24 @@ FC_FN(FC_PREFIX, cache_init)(struct FC_CACHE *fc,
 {
     memset(fc, 0, sizeof(*fc));
 
-    rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
+    switch (backend) {
+    case FLOW_CACHE_BACKEND_GEN:
+        rix_hash_arch_init(0);
+        break;
+    case FLOW_CACHE_BACKEND_SSE:
+        rix_hash_arch_init(RIX_HASH_ARCH_SSE);
+        break;
+    case FLOW_CACHE_BACKEND_AVX2:
+        rix_hash_arch_init(RIX_HASH_ARCH_AVX2);
+        break;
+    case FLOW_CACHE_BACKEND_AVX512:
+        rix_hash_arch_init(RIX_HASH_ARCH_AVX512);
+        break;
+    case FLOW_CACHE_BACKEND_AUTO:
+    default:
+        rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
+        break;
+    }
 
     FC_CALL(FC_HT_PREFIX, init)(&fc->ht_head, nb_bk);
     fc->buckets = buckets;
@@ -157,7 +214,7 @@ static struct FC_ENTRY *
 FC_FN(FC_PREFIX, cache_evict_one)(struct FC_CACHE *fc, uint64_t now)
 {
     uint64_t timeout = fc->eff_timeout_tsc;
-    const unsigned pf_dist = FLOW_CACHE_EXPIRE_PF_DIST;
+    const unsigned pf_dist = FC_CALL(FC_PREFIX, cache_expire_pf_dist)(fc);
     const unsigned max_scan = fc->max_entries >> 3;  /* 1/8 of pool */
 
     for (unsigned i = 0; i < max_scan; i++) {
@@ -174,7 +231,7 @@ FC_FN(FC_PREFIX, cache_evict_one)(struct FC_CACHE *fc, uint64_t now)
 
         FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
                                        fc->pool, entry);
-        fc->fini_cb(entry, FLOW_CACHE_FINI_TIMEOUT, fc->cb_arg);
+        FC_CALL(FC_PREFIX, call_fini_cb)(fc, entry, FLOW_CACHE_FINI_TIMEOUT);
         entry->last_ts = 0;
         fc->stats.evictions++;
         return entry;
@@ -228,7 +285,7 @@ FC_FN(FC_PREFIX, cache_evict_bucket_oldest)(struct FC_CACHE *fc,
 
     FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
                                    fc->pool, oldest);
-    fc->fini_cb(oldest, FLOW_CACHE_FINI_EVICTED, fc->cb_arg);
+    FC_CALL(FC_PREFIX, call_fini_cb)(fc, oldest, FLOW_CACHE_FINI_EVICTED);
     oldest->last_ts = 0;
     fc->stats.evictions++;
     return oldest;
@@ -241,7 +298,7 @@ FC_FN(FC_PREFIX, cache_evict_bucket_oldest)(struct FC_CACHE *fc,
  * The bucket eviction frees both a pool entry and a bucket slot, so
  * ht_insert always finds an empty slot in the fast path.
  *===========================================================================*/
-struct FC_ENTRY *
+FC_IMPL_ATTR struct FC_ENTRY *
 FC_FN(FC_PREFIX, cache_insert)(struct FC_CACHE *fc,
                      const struct FC_KEY *key,
                      uint64_t now)
@@ -269,7 +326,7 @@ FC_FN(FC_PREFIX, cache_insert)(struct FC_CACHE *fc,
                                        fc->pool, entry);
     if (dup == NULL) {
         /* New entry placed successfully - let caller initialize payload. */
-        fc->init_cb(entry, fc->cb_arg);
+        FC_CALL(FC_PREFIX, call_init_cb)(fc, entry);
         fc->stats.inserts++;
         return entry;
     }
@@ -290,7 +347,7 @@ FC_FN(FC_PREFIX, cache_insert)(struct FC_CACHE *fc,
 /*===========================================================================
  * Pipelined batch lookup
  *===========================================================================*/
-void
+FC_IMPL_ATTR void
 FC_FN(FC_PREFIX, cache_lookup_batch)(struct FC_CACHE *fc,
                            const struct FC_KEY *keys,
                            unsigned nb_pkts,
@@ -347,26 +404,56 @@ FC_FN(FC_PREFIX, cache_lookup_batch)(struct FC_CACHE *fc,
 }
 
 /*===========================================================================
- * Aging expire - single-stage pipeline (default)
+ * Aging expire - buffered bucket-prefetch pipeline (default)
  *
  * Scan count: fill-rate-driven (level 0..15, 64->1024).
  * Timeout: miss-rate-driven (eff_timeout_tsc, adjusted by caller).
  *
- * Prefetches entry CL0 ahead; bucket access on remove is unpipelined.
- * Suitable when pool fits in LLC or eviction rate is low.
- * See FC_FN(FC_PREFIX, cache_expire_2stage) for bucket-prefetch variant.
+ * Prefetches entry CL0 ahead, and when an expired entry is detected,
+ * prefetches its bucket and defers the actual remove by pf_dist iterations.
+ * This hides bucket miss latency without storing extra per-entry metadata.
+ *
+ * Suitable as the default path across low and moderate eviction rates.
+ * See FC_FN(FC_PREFIX, cache_expire_2stage) for the extra mid-distance
+ * bucket-prefetch stage used at higher eviction pressure.
  *===========================================================================*/
-void
+FC_IMPL_ATTR void
 FC_FN(FC_PREFIX, cache_expire)(struct FC_CACHE *fc,
                      uint64_t now)
 {
+    if (FC_CALL(FC_PREFIX, cache_use_expire_2stage)(fc)) {
+        FC_CALL(FC_PREFIX, cache_expire_2stage)(fc, now);
+        return;
+    }
+
     unsigned max_scan = FC_CALL(FC_PREFIX, cache_expire_scan)(fc);
     uint64_t timeout  = fc->eff_timeout_tsc;
-    const unsigned pf_dist = FLOW_CACHE_EXPIRE_PF_DIST;
+    const unsigned pf_dist = FC_CALL(FC_PREFIX, cache_expire_pf_dist)(fc);
+    struct FC_ENTRY *pending[FLOW_CACHE_EXPIRE_PF_DIST] = { 0 };
     const unsigned mask = fc->entries_mask;
+    const unsigned bk_mask = fc->ht_head.rhh_mask;
     unsigned cursor = fc->age_cursor;
 
-    for (unsigned i = 0; i < max_scan; i++) {
+    for (unsigned i = 0; i < max_scan + pf_dist; i++) {
+        unsigned slot = i % pf_dist;
+
+        if (pending[slot] != NULL) {
+            struct FC_ENTRY *entry = pending[slot];
+
+            FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
+                                           fc->pool, entry);
+            FC_CALL(FC_PREFIX, call_fini_cb)(fc, entry,
+                                             FLOW_CACHE_FINI_TIMEOUT);
+            entry->last_ts = 0;
+
+            RIX_SLIST_INSERT_HEAD(&fc->free_head, fc->pool, entry, free_link);
+            fc->stats.evictions++;
+            pending[slot] = NULL;
+        }
+
+        if (i >= max_scan)
+            continue;
+
         /* SW prefetch: CL0 only (last_ts is in CL0) */
         unsigned pf_idx = (cursor + i + pf_dist) & mask;
         __builtin_prefetch(&fc->pool[pf_idx], 0, 1);
@@ -378,13 +465,10 @@ FC_FN(FC_PREFIX, cache_expire)(struct FC_CACHE *fc,
         if (now - entry->last_ts <= timeout)
             continue;
 
-        FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
-                                       fc->pool, entry);
-        fc->fini_cb(entry, FLOW_CACHE_FINI_TIMEOUT, fc->cb_arg);
-        entry->last_ts = 0;
-
-        RIX_SLIST_INSERT_HEAD(&fc->free_head, fc->pool, entry, free_link);
-        fc->stats.evictions++;
+        /* cur_hash tracks the current bucket, so remove() only needs this
+         * bucket line once it reaches the delayed stage. */
+        __builtin_prefetch(&fc->buckets[entry->cur_hash & bk_mask], 1, 1);
+        pending[slot] = entry;
     }
 
     fc->age_cursor = (cursor + max_scan) & mask;
@@ -393,8 +477,8 @@ FC_FN(FC_PREFIX, cache_expire)(struct FC_CACHE *fc,
 /*===========================================================================
  * Aging expire - 2-stage pipeline (bucket prefetch variant)
  *
- * Same adaptive 16-level pressure as single-stage, but adds a second
- * pipeline stage: entries at mid-distance (pf_dist/2) are checked early
+ * Same adaptive 16-level pressure as the default expire path, but adds a
+ * second bucket-prefetch stage: entries at mid-distance (pf_dist/2) are checked early
  * and, if expired, their hash bucket is prefetched so that _remove()
  * hits warm cache lines.
  *
@@ -407,13 +491,13 @@ FC_FN(FC_PREFIX, cache_expire)(struct FC_CACHE *fc,
  * Overhead of stage 1 check hurts when buckets are already warm (small
  * pool) or eviction is rare.
  *===========================================================================*/
-void
+FC_IMPL_ATTR void
 FC_FN(FC_PREFIX, cache_expire_2stage)(struct FC_CACHE *fc,
                             uint64_t now)
 {
     unsigned max_scan = FC_CALL(FC_PREFIX, cache_expire_scan)(fc);
     uint64_t timeout  = fc->eff_timeout_tsc;
-    const unsigned pf_dist    = FLOW_CACHE_EXPIRE_PF_DIST;
+    const unsigned pf_dist    = FC_CALL(FC_PREFIX, cache_expire_pf_dist)(fc);
     const unsigned bk_pf_dist = pf_dist / 2;
     const unsigned mask = fc->entries_mask;
     unsigned cursor = fc->age_cursor;
@@ -442,7 +526,7 @@ FC_FN(FC_PREFIX, cache_expire_2stage)(struct FC_CACHE *fc,
 
         FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
                                        fc->pool, entry);
-        fc->fini_cb(entry, FLOW_CACHE_FINI_TIMEOUT, fc->cb_arg);
+        FC_CALL(FC_PREFIX, call_fini_cb)(fc, entry, FLOW_CACHE_FINI_TIMEOUT);
         entry->last_ts = 0;
 
         RIX_SLIST_INSERT_HEAD(&fc->free_head, fc->pool, entry, free_link);
@@ -458,7 +542,7 @@ FC_FN(FC_PREFIX, cache_expire_2stage)(struct FC_CACHE *fc,
  * Executes all 4 pipeline stages back-to-back without inter-packet overlap.
  * Use lookup_batch() for high-throughput packet processing.
  *===========================================================================*/
-struct FC_ENTRY *
+FC_IMPL_ATTR struct FC_ENTRY *
 FC_FN(FC_PREFIX, cache_find)(struct FC_CACHE *fc,
                    const struct FC_KEY *key)
 {
@@ -478,13 +562,13 @@ FC_FN(FC_PREFIX, cache_find)(struct FC_CACHE *fc,
  *
  * Use cases: TCP FIN/RST, admin teardown, policy invalidation.
  *===========================================================================*/
-void
+FC_IMPL_ATTR void
 FC_FN(FC_PREFIX, cache_remove)(struct FC_CACHE *fc,
                      struct FC_ENTRY *entry)
 {
     FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
                                    fc->pool, entry);
-    fc->fini_cb(entry, FLOW_CACHE_FINI_REMOVED, fc->cb_arg);
+    FC_CALL(FC_PREFIX, call_fini_cb)(fc, entry, FLOW_CACHE_FINI_REMOVED);
     entry->last_ts = 0;
     RIX_SLIST_INSERT_HEAD(&fc->free_head, fc->pool, entry, free_link);
     fc->stats.removes++;
@@ -498,13 +582,14 @@ FC_FN(FC_PREFIX, cache_remove)(struct FC_CACHE *fc,
  *
  * Use cases: VRF delete, interface down, graceful shutdown.
  *===========================================================================*/
-void
+FC_IMPL_ATTR void
 FC_FN(FC_PREFIX, cache_flush)(struct FC_CACHE *fc)
 {
     /* Notify caller for each active entry before wiping the pool. */
     for (unsigned i = 0; i < fc->max_entries; i++) {
         if (fc->pool[i].last_ts != 0)
-            fc->fini_cb(&fc->pool[i], FLOW_CACHE_FINI_FLUSHED, fc->cb_arg);
+            FC_CALL(FC_PREFIX, call_fini_cb)(fc, &fc->pool[i],
+                                             FLOW_CACHE_FINI_FLUSHED);
     }
 
     unsigned flushed = fc->ht_head.rhh_nb;
@@ -525,7 +610,7 @@ FC_FN(FC_PREFIX, cache_flush)(struct FC_CACHE *fc)
 /*===========================================================================
  * Statistics
  *===========================================================================*/
-void
+FC_IMPL_ATTR void
 FC_FN(FC_PREFIX, cache_stats)(const struct FC_CACHE *fc,
                     struct flow_cache_stats *out)
 {
@@ -538,6 +623,7 @@ FC_FN(FC_PREFIX, cache_stats)(const struct FC_CACHE *fc,
 #undef FC_FN
 #undef FC_FN_CAT
 #undef _FC_FN_CAT
+#undef FC_IMPL_ATTR
 
 /*
  * Local Variables:

@@ -84,10 +84,13 @@ samples/
   DESIGN_JP.md      design document (Japanese)
   fcache/           library (libfcache.a / libfcache.so)
     flow_cache.h            umbrella: includes all three variant headers
-    flow4_cache.h/.c        IPv4 5-tuple flow cache  (20-byte key)
+    flow4_cache.h           IPv4 5-tuple flow cache  (20-byte key)
+    flow4_cache.c           IPv4 public wrapper + backend selection
+    flow4_cache_backend.c   IPv4 backend template, compiled as gen/sse/avx2/avx512
     flow6_cache.h/.c        IPv6 5-tuple flow cache  (44-byte key)
     flow_unified_cache.h/.c IPv4+IPv6 in one table (44-byte key, family field)
     flow_cache_decl_private.h  template: cache struct + API (internal)
+    flow_cache_backend_private.h template: backend ops table (internal)
     flow_cache_body_private.h  template: implementation (internal)
   test/
     flow_cache_test.c       correctness tests + benchmarks (all 3 variants)
@@ -626,6 +629,11 @@ Pipelined stages follow the same pattern: `ht64_hash_key4`, `ht64_scan_bk4`,
 `rix_hash`.  Three variants handle IPv4-only, IPv6-only, and unified IPv4+IPv6
 traffic in a single table.
 
+All three variants are built as small fat binaries
+(`GEN` + `SSE` + `AVX2` + `AVX512` backends). `*_cache_init()` accepts an explicit
+backend request and can also auto-select the best supported backend at
+runtime.
+
 ### Include
 
 ```c
@@ -654,12 +662,20 @@ unsigned pool_count = flow_cache_pool_count(max_entries); /* 2^n, min 64 */
 /* Initialise */
 struct flow4_cache fc;
 flow4_cache_init(&fc, buckets, nb_bk, pool, pool_count,
+                 FLOW_CACHE_BACKEND_AUTO, /* or GEN / SSE / AVX2 / AVX512 */
                  30000,           /* timeout_ms: 30 seconds */
-                 NULL, NULL, NULL); /* init_cb, fini_cb, cb_arg (NULL = no-op) */
+                 NULL, NULL, NULL); /* init_cb, fini_cb, cb_arg (NULL = no-op fast path) */
+
+printf("backend = %s\n",
+       flow_cache_backend_name(flow4_cache_backend(&fc)));
 
 /* Bulk clear (e.g. VRF delete, interface down) */
 flow4_cache_flush(&fc);
 ```
+
+For sample benchmarking/debugging, `samples/test/flow_cache_test` also accepts
+`--backend auto|gen|sse|avx2|avx512` and prints the actual backend selected per
+variant.
 
 ### Packet processing loop
 
@@ -686,24 +702,37 @@ flow4_cache_adjust_timeout(&fc, misses);
 
 /* 4. Aging eviction */
 flow4_cache_expire(&fc, now);
-/* or: flow4_cache_expire_2stage() -- bucket-prefetch variant, better when
-   pool >> LLC or eviction rate is high */
+/* flow4_cache_expire() auto-switches to the 2stage path under high pressure.
+   flow4_cache_expire_2stage() is still available to force that path. */
 ```
 
 ### API summary
 
 ```c
 /* Lifecycle */
-void     flow4_cache_init (fc, buckets, nb_bk, pool, pool_count, timeout_ms,
-                           init_cb, fini_cb, cb_arg);
+void     flow4_cache_init (fc, buckets, nb_bk, pool, pool_count, backend,
+                           timeout_ms, init_cb, fini_cb, cb_arg);
 void     flow4_cache_flush(fc);
+
+/* Backend selection / inspection */
+typedef enum {
+    FLOW_CACHE_BACKEND_AUTO,
+    FLOW_CACHE_BACKEND_GEN,
+    FLOW_CACHE_BACKEND_SSE,
+    FLOW_CACHE_BACKEND_AVX2,
+    FLOW_CACHE_BACKEND_AVX512,
+} flow_cache_backend_t;
+flow_cache_backend_t flow4_cache_backend(fc);    /* actual backend after init */
+const char *flow_cache_backend_name(flow_cache_backend_t backend);
 
 /* Sizing helpers */
 unsigned flow_cache_pool_count(max_entries);              /* element count for cache_init (2^n, min 64) */
 size_t   flow_cache_pool_size (max_entries, entry_size);  /* bytes for aligned_alloc */
 unsigned flow_cache_nb_bk_hint(max_entries);              /* bucket count for ~50% fill (2^n) */
 
-/* cache_init input contract: pool_count must already be 2^n and >= 64 */
+/* cache_init input contract:
+ *   pool_count must already be 2^n and >= 64
+ *   backend request may fall back to GEN if unsupported */
 
 /* Lookup */
 void           flow4_cache_lookup_batch(fc, keys, nb_pkts, results);
@@ -740,13 +769,15 @@ All three expose the identical API surface.
 #include "flow_cache.h"
 
 /* FC_CALL(prefix, suffix) expands to prefix##_##suffix */
-FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, pool_count, timeout_ms,
+FC_CALL(flow4, cache_init)(&fc, buckets, nb_bk, pool, pool_count,
+                           FLOW_CACHE_BACKEND_AUTO, timeout_ms,
                            init_cb, fini_cb, cb_arg);
 FC_CALL(flow4, cache_lookup_batch)(&fc, keys, nb_pkts, results);
 FC_CALL(flow4, cache_insert)(&fc, &keys[i], now);
 FC_CALL(flow4, cache_touch)(results[i], now);
 FC_CALL(flow4, cache_adjust_timeout)(&fc, misses);
 FC_CALL(flow4, cache_expire)(&fc, now);
+FC_CALL(flow4, cache_backend)(&fc);
 
 /* prefix can be a macro token -- it is fully expanded first */
 #define MY_FC flow6
@@ -809,6 +840,15 @@ make SIMD=avx2    # default
 make SIMD=avx512
 make SIMD=gen
 ```
+
+Compiler and optimisation level are also overridable:
+
+```sh
+make CC=gcc   OPTLEVEL=3
+make CC=clang OPTLEVEL=3
+```
+
+The current tree is expected to build with both GCC and Clang in this mode.
 
 For address/UB sanitizers during development:
 
