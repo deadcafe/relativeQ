@@ -593,6 +593,7 @@ Appropriate value depends on workload:
 ## 9. Free List Management
 
 - Pre-allocated pool of entry[max_entries]
+- `max_entries` must be a power of 2 and at least 64
 - At init: all entries pushed to SLIST free list
 - insert: pop from free list → if empty, evict_one
 - expire/evict: push back to free list
@@ -607,7 +608,9 @@ Function names use the variant prefix: `flow4_`, `flow6_`, or `flowu_`.
 ```c
 /* Initialization — caller provides pre-allocated memory.
  * init_cb: called after each successful insert (NULL → no-op).
- * fini_cb: called before every eviction/remove/flush (NULL → no-op). */
+ * fini_cb: called before every eviction/remove/flush (NULL → no-op).
+ * max_entries must already be rounded via flow_cache_pool_count():
+ * power-of-2 and >= 64. */
 void PREFIX_cache_init(struct PREFIX_cache *fc,
                        struct rix_hash_bucket_s *buckets,
                        unsigned nb_bk,
@@ -1166,8 +1169,8 @@ Staged find functions (for N-ahead pipeline):
 #### A.4.2 Basic usage
 
 ```c
-/* IMPORTANT: call once per TU at startup */
-rix_hash_arch_init();
+/* Optional: enable SIMD in this TU */
+rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
 
 /* allocate */
 unsigned nb_bk = 1024;   /* must be power of 2 */
@@ -1258,16 +1261,18 @@ This achieves ~55-73 cy/key (DRAM-cold) vs ~388 cy/key for single
 
 #### A.4.4 `rix_hash_arch_init()` — SIMD dispatch
 
-`rix_hash_arch_init()` detects CPU features (AVX2, AVX-512) and sets
-function pointers for the fastest SIMD fingerprint scan available.
+`rix_hash_arch_init(enable)` detects CPU/OS SIMD availability
+(SSE4.2, AVX2, AVX-512) and sets function pointers for the fastest
+allowed fingerprint scan implementation.
 
-**Must be called once per translation unit** that uses hash tables,
-before any hash operation.  The dispatch variable `rix_hash_arch` is
-`static` per TU, so each `.c` file needs its own call.
+Each source file defaults to Generic dispatch. If you want SIMD
+acceleration, call this in each `.c` file that uses hash tables before
+any hash operation. If you do not call it, the code remains correct and
+uses the Generic path.
 
 ```c
 /* At the top of main() or module init: */
-rix_hash_arch_init();
+rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
 ```
 
 Build with `-mavx2` or `-mavx512f` to enable SIMD acceleration.

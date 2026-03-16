@@ -39,9 +39,11 @@
  * Used by rix_hash.h, rix_hash32.h, rix_hash64.h, and rix_hash_key.h.
  *
  * Included via the _RIX_HASH_COMMON_ guard so that including multiple hash
- * variant headers in a single translation unit compiles this block only once.
+ * variant headers in one source file compiles this block only once.
  *
- * Call rix_hash_arch_init() once at program startup before any table ops.
+ * Each source file starts in the Generic dispatch mode by default.
+ * Call rix_hash_arch_init() in a source file that uses hash tables to
+ * enable the best SIMD level allowed by `enable`.
  *
  * Dispatch matrix (find / hash):
  *
@@ -74,7 +76,6 @@
 
 #  if defined(__x86_64__)
 #    include <immintrin.h>
-#    include <cpuid.h>
 #  endif
 
 #  ifndef _RIX_HASH_COMMON_
@@ -103,8 +104,9 @@
  * Priority: AVX-512 > AVX2 > SSE > GEN.
  * Higher-level flags imply lower ones as fallback
  *   (AVX-512 ⊃ AVX2 ⊃ SSE ⊃ GEN).
- * AVX2 / AVX-512 are verified via CPUID; SSE is unconditional on x86_64.
- * Must be called in each translation unit that uses hash table operations.
+ * AVX2 / AVX-512 / SSE are verified with compiler CPU builtins when available.
+ * Each source file defaults to Generic until rix_hash_arch_init() is
+ * called there.
  *===========================================================================*/
 #    define RIX_HASH_ARCH_AVX2   (1u << 0)
 #    define RIX_HASH_ARCH_AVX512 (1u << 1)
@@ -146,8 +148,10 @@ struct rix_hash_arch_s {
     union rix_hash_hash_u (*hash_u64)(uint64_t key, uint32_t mask);
 };
 
-/* Set once by rix_hash_arch_init(); static per-TU (each TU must call init). */
-static RIX_UNUSED const struct rix_hash_arch_s *rix_hash_arch;
+/* Per-TU dispatch handle.  Defaults to Generic until init enables SIMD. */
+static RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_GEN;
+static RIX_UNUSED const struct rix_hash_arch_s *rix_hash_arch =
+    &_rix_hash_arch_GEN;
 
 /*===========================================================================
  * Generic (scalar) find implementations
@@ -519,55 +523,59 @@ static RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_AVX512 = {
 #    endif /* __x86_64__ && __AVX512F__ */
 
 /*---------------------------------------------------------------------------
- * rix_hash_arch_init - call once at program startup before any table ops.
+ * rix_hash_arch_init - enable the best dispatch level for this source file.
  *
  * enable: bitmask of RIX_HASH_ARCH_* flags that are allowed.
  *   0                    → GEN scalar — useful for benchmarking
- *   RIX_HASH_ARCH_SSE   → SSE XMM 128-bit find (x86_64 baseline, no CPUID)
- *   RIX_HASH_ARCH_AVX2   → AVX2 YMM 256-bit find (CPUID verified)
- *   RIX_HASH_ARCH_AVX512 → AVX-512F ZMM 512-bit find (CPUID verified)
+ *   RIX_HASH_ARCH_SSE    → SSE XMM 128-bit find
+ *   RIX_HASH_ARCH_AVX2   → AVX2 YMM 256-bit find
+ *   RIX_HASH_ARCH_AVX512 → AVX-512F ZMM 512-bit find
  *   RIX_HASH_ARCH_AUTO   → best available (recommended default)
  *
  * Implication chain (higher ⊃ lower): AVX-512 ⊃ AVX2 ⊃ SSE ⊃ GEN.
  * Enabling a higher level automatically falls back to lower levels if the
  * CPU or compile-time flags do not support it.
- * Must be called in each translation unit that uses hash table operations.
+ * Safe default: if this function is never called, the source file remains on
+ * GEN.
+ * For SIMD acceleration, call this in each source file that uses hash
+ * table operations.
  *---------------------------------------------------------------------------*/
 static RIX_FORCE_INLINE void
 rix_hash_arch_init(uint32_t enable)
 {
 #    if defined(__x86_64__)
-    rix_hash_arch = &_rix_hash_arch_GEN; /* fallback */
+    rix_hash_arch = &_rix_hash_arch_GEN; /* per-TU fallback */
 
     if (!enable)
         return;
 
-    {
-        unsigned eax = 0u, ebx = 0u, ecx = 0u, edx = 0u;
-        if (__get_cpuid_count(7u, 0u, &eax, &ebx, &ecx, &edx)) {
-#      if defined(__AVX512F__)
-            /* AVX-512F: CPUID leaf 7, EBX bit 16 */
-            if ((enable & RIX_HASH_ARCH_AVX512) && (ebx & (1u << 16))) {
-                rix_hash_arch = &_rix_hash_arch_AVX512;
-                return;
-            }
-#      endif
-#      if defined(__AVX2__)
-            /* AVX2: CPUID leaf 7, EBX bit 5.
-             * RIX_HASH_ARCH_AVX512 implies AVX2 fallback (AVX-512 ⊃ AVX2). */
-            if ((enable & (RIX_HASH_ARCH_AVX2 | RIX_HASH_ARCH_AVX512)) &&
-                (ebx & (1u << 5))) {
-                rix_hash_arch = &_rix_hash_arch_AVX2;
-                return;
-            }
-#      endif
-        }
+#      if defined(__GNUC__) || defined(__clang__)
+    __builtin_cpu_init();
+#        if defined(__AVX512F__)
+    if ((enable & RIX_HASH_ARCH_AVX512) &&
+        __builtin_cpu_supports("avx512f")) {
+        rix_hash_arch = &_rix_hash_arch_AVX512;
+        return;
     }
-
-#      if defined(__SSE4_2__)
-    /* SSE is mandated by the x86_64 ABI — no CPUID check needed.
-     * Any enable bit that includes SSE or a superset selects this level. */
-    if (enable & (RIX_HASH_ARCH_SSE | RIX_HASH_ARCH_AVX2 | RIX_HASH_ARCH_AVX512))
+#        endif
+#        if defined(__AVX2__)
+    if ((enable & (RIX_HASH_ARCH_AVX2 | RIX_HASH_ARCH_AVX512)) &&
+        __builtin_cpu_supports("avx2")) {
+        rix_hash_arch = &_rix_hash_arch_AVX2;
+        return;
+    }
+#        endif
+#        if defined(__SSE4_2__)
+    if ((enable & (RIX_HASH_ARCH_SSE | RIX_HASH_ARCH_AVX2 |
+                   RIX_HASH_ARCH_AVX512)) &&
+        __builtin_cpu_supports("sse4.2")) {
+        rix_hash_arch = &_rix_hash_arch_SSE;
+        return;
+    }
+#        endif
+#      elif defined(__SSE4_2__)
+    if (enable & (RIX_HASH_ARCH_SSE | RIX_HASH_ARCH_AVX2 |
+                  RIX_HASH_ARCH_AVX512))
         rix_hash_arch = &_rix_hash_arch_SSE;
 #      endif
 

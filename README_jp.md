@@ -400,7 +400,7 @@ RIX_RB_FOREACH_REVERSE(var, name, head, base)   /* 降順 */
 インデックスベースのカッコーハッシュ 3 バリアント。共通特性:
 
 - **バケットあたり 16 スロット** (SIMD 並列スキャン)
-- **実行時 SIMD ディスパッチ** -- `rix_hash_arch_init(enable)` で Generic / SSE / AVX2 / AVX-512 を選択
+- **実行時 SIMD ディスパッチ** -- `rix_hash_arch_init(enable)` でソースファイルごとに Generic / SSE / AVX2 / AVX-512 を選択
 - **XOR 対称性による 2 候補バケット** -- 削除 O(1)、リハッシュ不要
 - **N 段先行パイプラインルックアップ** -- DRAM レイテンシを複数リクエスト間で隠蔽
 - **1-origin インデックス格納** -- `RIX_NIL = 0` が空スロットを示す; 生ポインタなし
@@ -463,7 +463,7 @@ struct mynode {
 RIX_HASH_HEAD(myht);
 RIX_HASH_GENERATE(myht, mynode, key, cur_hash, my_cmp_fn)
 
-/* 3. 起動時に 1 度だけ初期化 */
+/* 3. 任意: このソースファイルで SIMD を有効化 */
 rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
 
 /* 4. 64 バイトアライメントのバケット配列を確保 */
@@ -603,7 +603,10 @@ entry64 *ht64_remove(&head, buckets, pool, key_value);
 
 #### 全ハッシュバリアント共通の注意事項
 
-- `rix_hash_arch_init(enable)` はハッシュ操作の前に**必ず 1 度**呼び出すこと。
+- `rix_hash_arch_init(enable)` は任意。呼ばない場合、各ソースファイルは
+  デフォルトで Generic パスのまま動作する。
+- SIMD を有効にする場合は、ハッシュ操作を行う各ソースファイルで
+  `rix_hash_arch_init(enable)` を呼ぶこと。
   `RIX_HASH_ARCH_AUTO` を渡すと利用可能な最良の SIMD を自動選択（推奨）。
   `RIX_HASH_ARCH_SSE` を渡すと SSE XMM 止まり（SSE4.2、AVX2 不使用）。
   `RIX_HASH_ARCH_AVX2` を渡すと AVX-512 が存在しても AVX2 に制限。
@@ -699,6 +702,8 @@ void     flow4_cache_flush(fc);
 unsigned flow_cache_pool_count(max_entries);              /* cache_init 用エントリ数 (2^n、最小 64) */
 size_t   flow_cache_pool_size (max_entries, entry_size);  /* aligned_alloc 用バイト数 */
 unsigned flow_cache_nb_bk_hint(max_entries);              /* ~50% 充填率向けバケット数 (2^n) */
+
+/* cache_init の入力前提: pool_count は 2^n かつ 64 以上であること */
 
 /* ルックアップ */
 void                flow4_cache_lookup_batch(fc, keys, nb_pkts, results);

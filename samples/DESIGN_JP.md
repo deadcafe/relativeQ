@@ -626,7 +626,7 @@ void cache_init(..., uint64_t timeout_ms);
 
 ## 9. フリーリスト管理
 
-- entry[max_entries] の事前割り当てプール（max_entries は2のべき乗）
+- entry[max_entries] の事前割り当てプール（max_entries は2のべき乗かつ 64 以上）
 - 初期化時: 全エントリをSLISTフリーリストにプッシュ
 - insert: フリーリストからポップ → 空なら3段フォールバック（§8.3参照）
 - expire/evict: フリーリストにプッシュバック
@@ -643,7 +643,9 @@ void cache_init(..., uint64_t timeout_ms);
 ```c
 /* 初期化 — 呼び出し元が事前割り当てメモリを提供。
  * init_cb: 挿入成功後に呼び出し（NULL → no-op）。
- * fini_cb: エビクション/remove/flush 前に呼び出し（NULL → no-op）。*/
+ * fini_cb: エビクション/remove/flush 前に呼び出し（NULL → no-op）。
+ * max_entries は事前に flow_cache_pool_count() で丸めた値
+ * （2のべき乗かつ 64 以上）を渡すこと。*/
 void PREFIX_cache_init(struct PREFIX_cache *fc,
                        struct rix_hash_bucket_s *buckets,
                        unsigned nb_bk,
@@ -1200,8 +1202,8 @@ RIX_HASH_GENERATE(my_ht, my_node, key, cur_hash, my_cmp)
 #### A.4.2 基本的な使い方
 
 ```c
-/* 重要: 起動時にTUごとに1回呼び出すこと */
-rix_hash_arch_init();
+/* 任意: この TU で SIMD を有効化 */
+rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
 
 /* 割り当て */
 unsigned nb_bk = 1024;   /* 2のべき乗であること */
@@ -1292,16 +1294,18 @@ DRAMコールド時に約55-73 cy/key を達成。単発 `my_ht_find()` の
 
 #### A.4.4 `rix_hash_arch_init()` — SIMDディスパッチ
 
-`rix_hash_arch_init()` はCPU機能（AVX2、AVX-512）を検出し、
-利用可能な最速のSIMDフィンガープリントスキャンの関数ポインタを設定する。
+`rix_hash_arch_init(enable)` は CPU/OS の SIMD 利用可否
+（SSE4.2、AVX2、AVX-512）を検出し、許可された範囲で最速の
+フィンガープリントスキャン実装を選択する。
 
-**ハッシュテーブルを使用する翻訳単位ごとに、ハッシュ操作の前に
-1回呼び出す必要がある。** ディスパッチ変数 `rix_hash_arch` は
-TUごとに `static` であるため、各 `.c` ファイルで個別に呼び出しが必要。
+各ソースファイルはデフォルトで Generic ディスパッチから開始する。
+SIMD を有効にしたい場合のみ、ハッシュテーブルを使う各 `.c`
+ファイルでハッシュ操作前に呼び出す。呼び出さなくても正しさは
+保たれ、Generic パスで動作する。
 
 ```c
 /* main() またはモジュール初期化の先頭で: */
-rix_hash_arch_init();
+rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
 ```
 
 SIMD高速化を有効にするには `-mavx2` または `-mavx512f` でビルドする。

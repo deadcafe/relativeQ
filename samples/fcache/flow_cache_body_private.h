@@ -66,6 +66,9 @@ FC_FN(FC_PREFIX, cache_expire_level)(const struct FC_CACHE *fc)
     unsigned max  = fc->max_entries;
     unsigned half = max >> 1;
 
+    if (max < 64u)
+        return 0;
+
     if (nb <= half)
         return 0;
 
@@ -111,8 +114,10 @@ FC_FN(FC_PREFIX, cache_init)(struct FC_CACHE *fc,
     fc->nb_bk   = nb_bk;
     memset(buckets, 0, nb_bk * sizeof(*buckets));
 
-    assert((max_entries & (max_entries - 1)) == 0 &&
-           "max_entries must be a power of 2");
+    RIX_ASSERT(max_entries >= 64u &&
+               "max_entries must be >= 64; use flow_cache_pool_count()");
+    RIX_ASSERT((max_entries & (max_entries - 1)) == 0 &&
+               "max_entries must be a power of 2");
     fc->pool         = pool;
     fc->max_entries  = max_entries;
     fc->entries_mask = max_entries - 1;

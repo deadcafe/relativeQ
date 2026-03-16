@@ -399,7 +399,7 @@ Comparator signature: `int cmp(const type *a, const type *b)` -- strict weak ord
 Three header-only, index-based cuckoo hash variants.  All share:
 
 - **16 slots per bucket** (SIMD-parallel slot scan)
-- **Runtime SIMD dispatch** -- Generic / SSE / AVX2 / AVX-512 selected at startup via `rix_hash_arch_init(enable)`
+- **Runtime SIMD dispatch** -- Generic / SSE / AVX2 / AVX-512 selected per source file via `rix_hash_arch_init(enable)`
 - **Two candidate buckets per key** via XOR symmetry -- O(1) remove, no rehash
 - **N-ahead pipelined lookup** API -- hides DRAM latency across multiple requests
 - **1-origin index storage** -- `RIX_NIL = 0` marks empty slots; no raw pointers
@@ -462,7 +462,7 @@ struct mynode {
 RIX_HASH_HEAD(myht);
 RIX_HASH_GENERATE(myht, mynode, key, cur_hash, my_cmp_fn)
 
-/* 3. Init once at startup */
+/* 3. Optional: enable SIMD in this source file */
 rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
 
 /* 4. Allocate 64-byte-aligned bucket array */
@@ -602,8 +602,11 @@ Pipelined stages follow the same pattern: `ht64_hash_key4`, `ht64_scan_bk4`,
 
 #### Important notes (all hash variants)
 
-- `rix_hash_arch_init(enable)` must be called **once** before any hash operation.
-  Pass `RIX_HASH_ARCH_AUTO` to use the best available SIMD level (recommended).
+- `rix_hash_arch_init(enable)` is optional. Without it, each source file
+  stays on the Generic path by default.
+- For SIMD acceleration, call `rix_hash_arch_init(enable)` in each source file
+  that uses hash operations. Pass `RIX_HASH_ARCH_AUTO` to use the best
+  available SIMD level (recommended).
   Pass `RIX_HASH_ARCH_SSE` to cap at SSE XMM (SSE4.2, no AVX2).
   Pass `RIX_HASH_ARCH_AVX2` to cap at AVX2 even if AVX-512 is present.
   Pass `0` to force Generic (scalar) — useful for benchmarking.
@@ -699,6 +702,8 @@ void     flow4_cache_flush(fc);
 unsigned flow_cache_pool_count(max_entries);              /* element count for cache_init (2^n, min 64) */
 size_t   flow_cache_pool_size (max_entries, entry_size);  /* bytes for aligned_alloc */
 unsigned flow_cache_nb_bk_hint(max_entries);              /* bucket count for ~50% fill (2^n) */
+
+/* cache_init input contract: pool_count must already be 2^n and >= 64 */
 
 /* Lookup */
 void           flow4_cache_lookup_batch(fc, keys, nb_pkts, results);

@@ -56,7 +56,8 @@
  *
  *   #include "librix.h"
  *
- *   // For hash tables, call once at startup:
+ *   // Optional per source file: enable the best SIMD level.
+ *   // If omitted, hash tables stay on the Generic path.
  *   rix_hash_arch_init(RIX_HASH_ARCH_AUTO);   // or 0 to force Generic
  *
  * -----------------------------------------------------------------------

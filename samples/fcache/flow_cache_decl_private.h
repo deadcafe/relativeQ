@@ -443,6 +443,8 @@ void FCC_FN(FC_PREFIX, cache_init)(struct FC_CACHE *fc,
                                          flow_cache_fini_reason_t reason,
                                          void *arg),
                          void *cb_arg);
+/* max_entries passed to cache_init must already be flow_cache_pool_count()
+ * output: power-of-2 and >= 64. */
 
 void FCC_FN(FC_PREFIX, cache_flush)(struct FC_CACHE *fc);
 
