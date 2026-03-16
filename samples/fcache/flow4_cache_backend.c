@@ -30,7 +30,14 @@
 #undef FC_ENTRY
 #undef FC_PREFIX
 
-RIX_HASH_GENERATE_STATIC(flow4_ht, flow4_entry, key, cur_hash, flow4_cmp)
+static inline union rix_hash_hash_u
+flow4_ht_hash_fn(const struct flow4_key *key, uint32_t mask)
+{
+    return rix_hash_hash_bytes_fast(key, sizeof(*key), mask);
+}
+
+RIX_HASH_GENERATE_STATIC_EX(flow4_ht, flow4_entry, key, cur_hash,
+                            flow4_cmp, flow4_ht_hash_fn)
 
 #define FC_PREFIX       FC_BACKEND_PREFIX(flow4, FLOW_CACHE_BACKEND_NAME)
 #define FC_ENTRY        flow4_entry

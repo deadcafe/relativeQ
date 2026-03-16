@@ -140,6 +140,7 @@ _rix_hash_buckets(const union rix_hash_hash_u h, unsigned mask,
 
 /*===========================================================================
  * RIX_HASH_GENERATE(name, type, key_field, hash_field, cmp_fn)
+ * RIX_HASH_GENERATE_EX(name, type, key_field, hash_field, cmp_fn, hash_fn)
  *
  *   name       - head struct tag AND generated-function prefix (must match
  *                the tag given to RIX_HASH_HEAD)
@@ -171,8 +172,14 @@ _rix_hash_buckets(const union rix_hash_hash_u h, unsigned mask,
  *                      return memcmp(a, b, sizeof(struct my_key)) == 0;
  *                  }
  *
- * The hash function is provided internally via rix_hash_arch->hash_bytes
- * (CRC32C on x86_64+SSE4.2, FNV-1a fallback elsewhere).
+ * Default hashing is provided internally via rix_hash_hash_bytes_fast()
+ * (CRC32C on x86_64+SSE4.2, FNV-1a fallback elsewhere, plus fixed-size
+ * fast paths where available).
+ *
+ * EX variants allow callers to provide:
+ *   union rix_hash_hash_u hash_fn(const key_type *key, uint32_t mask);
+ * This keeps the typed API while letting fixed-size or domain-specific hash
+ * functions be selected explicitly at generate time.
  *
  * Generated functions:
  *
@@ -216,19 +223,48 @@ _rix_hash_buckets(const union rix_hash_hash_u h, unsigned mask,
                          int (*cb)(struct type *, void *),                           \
                          void *arg);
 
+#  define RIX_HASH_PROTOTYPE_EX(name, type, key_field, hash_field, cmp_fn, hash_fn) \
+    RIX_HASH_PROTOTYPE_INTERNAL(name, type, key_field, hash_field, cmp_fn, )
+
+#  define RIX_HASH_PROTOTYPE_STATIC_EX(name, type, key_field, hash_field, cmp_fn, hash_fn) \
+    RIX_HASH_PROTOTYPE_INTERNAL(name, type, key_field, hash_field, cmp_fn, RIX_UNUSED static)
+
 #  define RIX_HASH_PROTOTYPE(name, type, key_field, hash_field, cmp_fn) \
     RIX_HASH_PROTOTYPE_INTERNAL(name, type, key_field, hash_field, cmp_fn, )
 
 #  define RIX_HASH_PROTOTYPE_STATIC(name, type, key_field, hash_field, cmp_fn) \
     RIX_HASH_PROTOTYPE_INTERNAL(name, type, key_field, hash_field, cmp_fn, RIX_UNUSED static)
 
-#  define RIX_HASH_GENERATE(name, type, key_field, hash_field, cmp_fn) \
-    RIX_HASH_GENERATE_INTERNAL(name, type, key_field, hash_field, cmp_fn, )
+#  define _RIX_HASH_DEFAULT_HASH_FN_NAME(name) name ## _default_hash
+
+#  define _RIX_HASH_DEFINE_DEFAULT_HASH_FN(name, type, key_field)               \
+    static RIX_UNUSED RIX_FORCE_INLINE union rix_hash_hash_u                    \
+    _RIX_HASH_DEFAULT_HASH_FN_NAME(name)(                                       \
+        const _RIX_HASH_KEY_TYPE(type, key_field) *key, uint32_t mask)          \
+    {                                                                           \
+        return rix_hash_hash_bytes_fast((const void *)key,                      \
+                                        sizeof(((struct type *)0)->key_field),  \
+                                        mask);                                  \
+    }
+
+#  define RIX_HASH_GENERATE_EX(name, type, key_field, hash_field, cmp_fn, hash_fn) \
+    RIX_HASH_GENERATE_INTERNAL(name, type, key_field, hash_field, cmp_fn, hash_fn, )
+
+#  define RIX_HASH_GENERATE_STATIC_EX(name, type, key_field, hash_field, cmp_fn, hash_fn) \
+    RIX_HASH_GENERATE_INTERNAL(name, type, key_field, hash_field, cmp_fn, hash_fn, RIX_UNUSED static)
+
+#  define RIX_HASH_GENERATE(name, type, key_field, hash_field, cmp_fn)         \
+    _RIX_HASH_DEFINE_DEFAULT_HASH_FN(name, type, key_field)                    \
+    RIX_HASH_GENERATE_INTERNAL(name, type, key_field, hash_field, cmp_fn,      \
+                               _RIX_HASH_DEFAULT_HASH_FN_NAME(name), )
 
 #  define RIX_HASH_GENERATE_STATIC(name, type, key_field, hash_field, cmp_fn) \
-    RIX_HASH_GENERATE_INTERNAL(name, type, key_field, hash_field, cmp_fn, RIX_UNUSED static)
+    _RIX_HASH_DEFINE_DEFAULT_HASH_FN(name, type, key_field)                    \
+    RIX_HASH_GENERATE_INTERNAL(name, type, key_field, hash_field, cmp_fn,      \
+                               _RIX_HASH_DEFAULT_HASH_FN_NAME(name),           \
+                               RIX_UNUSED static)
 
-#  define RIX_HASH_GENERATE_INTERNAL(name, type, key_field, hash_field, cmp_fn, attr) \
+#  define RIX_HASH_GENERATE_INTERNAL(name, type, key_field, hash_field, cmp_fn, hash_fn, attr) \
                                                                               \
 /* ================================================================== */      \
 /* Init                                                               */      \
@@ -267,9 +303,7 @@ name##_hash_key(struct rix_hash_find_ctx_s *ctx,                              \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
     union rix_hash_hash_u _h =                                                \
-        rix_hash_hash_bytes_fast((const void *)key,                           \
-                                 sizeof(((struct type *)0)->key_field),       \
-                                 mask);                                       \
+        hash_fn(key, mask);                                                   \
     unsigned _bk0, _bk1;                                                      \
     uint32_t _fp;                                                             \
     _rix_hash_buckets(_h, mask, &_bk0, &_bk1, &_fp);                          \
@@ -422,9 +456,8 @@ name##_insert(struct name *head,                                              \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
     union rix_hash_hash_u _h =                                                \
-        rix_hash_hash_bytes_fast((const void *)&elm->key_field,               \
-                                 sizeof(((struct type *)0)->key_field),       \
-                                 mask);                                       \
+        hash_fn((const _RIX_HASH_KEY_TYPE(type, key_field) *)&elm->key_field, \
+                mask);                                                        \
     unsigned _bk0, _bk1;                                                      \
     uint32_t _fp;                                                             \
     uint32_t _hits_fp[2];                                                     \
@@ -605,6 +638,7 @@ name##_walk(struct name *head,                                                \
 
 /*===========================================================================
  * RIX_HASH_GENERATE_NOHF(name, type, key_field, cmp_fn)
+ * RIX_HASH_GENERATE_NOHF_EX(name, type, key_field, cmp_fn, hash_fn)
  *
  * Variant of RIX_HASH_GENERATE without hash_field in the node struct.
  * All find operations are identical to RIX_HASH_GENERATE.
@@ -629,19 +663,36 @@ name##_walk(struct name *head,                                                \
                          int (*cb)(struct type *, void *),                    \
                          void *arg);
 
+#  define RIX_HASH_NOHF_PROTOTYPE_EX(name, type, key_field, cmp_fn, hash_fn) \
+    RIX_HASH_NOHF_PROTOTYPE_INTERNAL(name, type, key_field, cmp_fn, )
+
+#  define RIX_HASH_NOHF_PROTOTYPE_STATIC_EX(name, type, key_field, cmp_fn, hash_fn) \
+    RIX_HASH_NOHF_PROTOTYPE_INTERNAL(name, type, key_field, cmp_fn, RIX_UNUSED static)
+
 #  define RIX_HASH_NOHF_PROTOTYPE(name, type, key_field, cmp_fn) \
     RIX_HASH_NOHF_PROTOTYPE_INTERNAL(name, type, key_field, cmp_fn, )
 
 #  define RIX_HASH_NOHF_PROTOTYPE_STATIC(name, type, key_field, cmp_fn) \
     RIX_HASH_NOHF_PROTOTYPE_INTERNAL(name, type, key_field, cmp_fn, RIX_UNUSED static)
 
-#  define RIX_HASH_GENERATE_NOHF(name, type, key_field, cmp_fn) \
-    RIX_HASH_GENERATE_NOHF_INTERNAL(name, type, key_field, cmp_fn, )
+#  define RIX_HASH_GENERATE_NOHF_EX(name, type, key_field, cmp_fn, hash_fn) \
+    RIX_HASH_GENERATE_NOHF_INTERNAL(name, type, key_field, cmp_fn, hash_fn, )
 
-#  define RIX_HASH_GENERATE_NOHF_STATIC(name, type, key_field, cmp_fn) \
-    RIX_HASH_GENERATE_NOHF_INTERNAL(name, type, key_field, cmp_fn, RIX_UNUSED static)
+#  define RIX_HASH_GENERATE_NOHF_STATIC_EX(name, type, key_field, cmp_fn, hash_fn) \
+    RIX_HASH_GENERATE_NOHF_INTERNAL(name, type, key_field, cmp_fn, hash_fn, RIX_UNUSED static)
 
-#  define RIX_HASH_GENERATE_NOHF_INTERNAL(name, type, key_field, cmp_fn, attr) \
+#  define RIX_HASH_GENERATE_NOHF(name, type, key_field, cmp_fn)               \
+    _RIX_HASH_DEFINE_DEFAULT_HASH_FN(name, type, key_field)                   \
+    RIX_HASH_GENERATE_NOHF_INTERNAL(name, type, key_field, cmp_fn,            \
+                                    _RIX_HASH_DEFAULT_HASH_FN_NAME(name), )
+
+#  define RIX_HASH_GENERATE_NOHF_STATIC(name, type, key_field, cmp_fn)        \
+    _RIX_HASH_DEFINE_DEFAULT_HASH_FN(name, type, key_field)                   \
+    RIX_HASH_GENERATE_NOHF_INTERNAL(name, type, key_field, cmp_fn,            \
+                                    _RIX_HASH_DEFAULT_HASH_FN_NAME(name),     \
+                                    RIX_UNUSED static)
+
+#  define RIX_HASH_GENERATE_NOHF_INTERNAL(name, type, key_field, cmp_fn, hash_fn, attr) \
                                                                               \
 /* ================================================================== */      \
 /* Init                                                               */      \
@@ -680,9 +731,7 @@ name##_hash_key(struct rix_hash_find_ctx_s *ctx,                              \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
     union rix_hash_hash_u _h =                                                \
-        rix_hash_hash_bytes_fast((const void *)key,                           \
-                                 sizeof(((struct type *)0)->key_field),       \
-                                 mask);                                       \
+        hash_fn(key, mask);                                                   \
     unsigned _bk0, _bk1;                                                      \
     uint32_t _fp;                                                             \
     _rix_hash_buckets(_h, mask, &_bk0, &_bk1, &_fp);                          \
@@ -827,9 +876,8 @@ name##_insert(struct name *head,                                              \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
     union rix_hash_hash_u _h =                                                \
-        rix_hash_hash_bytes_fast((const void *)&elm->key_field,               \
-                                 sizeof(((struct type *)0)->key_field),       \
-                                 mask);                                       \
+        hash_fn((const _RIX_HASH_KEY_TYPE(type, key_field) *)&elm->key_field, \
+                mask);                                                        \
     unsigned _bk0, _bk1;                                                      \
     uint32_t _fp;                                                             \
     _rix_hash_buckets(_h, mask, &_bk0, &_bk1, &_fp);                          \
@@ -872,9 +920,8 @@ name##_insert(struct name *head,                                              \
             _bk->idx [_pos] = _new_idx;                                       \
             /* Re-hash victim's key to find alternate bucket */               \
             union rix_hash_hash_u _vic_h =                                    \
-                rix_hash_hash_bytes_fast((const void *)&_vic_node->key_field, \
-                                         sizeof(((struct type *)0)->key_field),\
-                                         mask);                               \
+                hash_fn((const _RIX_HASH_KEY_TYPE(type, key_field) *)         \
+                        &_vic_node->key_field, mask);                         \
             unsigned _vic_bk0 = _vic_h.val32[0] & mask;                       \
             unsigned _vic_bk1 = _vic_h.val32[1] & mask;                       \
             unsigned _alt_bk  = (_cur_bk == _vic_bk0) ? _vic_bk1 : _vic_bk0;  \
@@ -907,9 +954,8 @@ name##_remove(struct name *head,                                              \
     unsigned node_idx = name##_hidx(base, elm);                               \
     unsigned mask = head->rhh_mask;                                           \
     union rix_hash_hash_u _h =                                                \
-        rix_hash_hash_bytes_fast((const void *)&elm->key_field,               \
-                                 sizeof(((struct type *)0)->key_field),       \
-                                 mask);                                       \
+        hash_fn((const _RIX_HASH_KEY_TYPE(type, key_field) *)&elm->key_field, \
+                mask);                                                        \
     unsigned _bk0, _bk1;                                                      \
     uint32_t _fp;                                                             \
     _rix_hash_buckets(_h, mask, &_bk0, &_bk1, &_fp);                          \

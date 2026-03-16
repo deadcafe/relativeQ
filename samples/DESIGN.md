@@ -215,6 +215,8 @@ same entry size, so pool memory is identical.
 
 - Hash variant: `rix_hash.h` fingerprint (arbitrary key size, cmp_fn)
 - `RIX_HASH_GENERATE(name, type, key_field, hash_field, cmp_fn)`
+- Optional typed hash hook:
+  `RIX_HASH_GENERATE_EX(name, type, key_field, hash_field, cmp_fn, hash_fn)`
 - `hash_field` (`cur_hash`) enables O(1) remove (no rehash)
 - Kickout uses XOR trick: `alt_bk = (fp ^ hash_field) & mask`
 - Bucket: 128 bytes (2 CL), 16 slots/bucket

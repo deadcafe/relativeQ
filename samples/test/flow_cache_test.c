@@ -165,7 +165,14 @@ flow6_test_init_cb(struct flow6_entry *e, void *arg __attribute__((unused)))
  * internals directly.  flow6_ht / flowu_ht are only accessed via the
  * cache API, so no generate is needed for them here.
  */
-RIX_HASH_GENERATE_STATIC(flow4_ht, flow4_entry, key, cur_hash, flow4_cmp)
+static inline union rix_hash_hash_u
+flow4_ht_hash_fn(const struct flow4_key *key, uint32_t mask)
+{
+    return rix_hash_hash_bytes_fast(key, sizeof(*key), mask);
+}
+
+RIX_HASH_GENERATE_STATIC_EX(flow4_ht, flow4_entry, key, cur_hash,
+                            flow4_cmp, flow4_ht_hash_fn)
 
 /*===========================================================================
  * TSC helpers (lfence/rdtscp for precise measurement)

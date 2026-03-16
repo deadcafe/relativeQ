@@ -466,6 +466,10 @@ struct mynode {
 /* 2. ヘッドの宣言と API 生成 */
 RIX_HASH_HEAD(myht);
 RIX_HASH_GENERATE(myht, mynode, key, cur_hash, my_cmp_fn)
+/* 型付き hash hook を渡す場合:
+ * RIX_HASH_GENERATE_EX(myht, mynode, key, cur_hash,
+ *                      my_cmp_fn, my_hash_fn)
+ */
 
 /* 3. 任意: このソースファイルで SIMD を有効化 */
 rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
@@ -520,9 +524,12 @@ myht_cmp_key4 (ctx, pool, results);
 | バリアント | マクロ |
 |-----------|-------|
 | 外部リンケージ | `RIX_HASH_GENERATE(name, type, key_field, hash_field, cmp_fn)` |
+| 外部リンケージ + custom hash | `RIX_HASH_GENERATE_EX(name, type, key_field, hash_field, cmp_fn, hash_fn)` |
 | `static` リンケージ | `RIX_HASH_GENERATE_STATIC(name, type, key_field, hash_field, cmp_fn)` |
+| `static` リンケージ + custom hash | `RIX_HASH_GENERATE_STATIC_EX(name, type, key_field, hash_field, cmp_fn, hash_fn)` |
 
 `cmp_fn` シグネチャ: `int cmp_fn(const type *a, const type *b)` -- 等しければ 0 を返す。
+`hash_fn` シグネチャ: `union rix_hash_hash_u hash_fn(const key_type *key, uint32_t mask)`。
 
 ---
 

@@ -465,6 +465,10 @@ struct mynode {
 /* 2. Declare head and generate the API */
 RIX_HASH_HEAD(myht);
 RIX_HASH_GENERATE(myht, mynode, key, cur_hash, my_cmp_fn)
+/* Optional typed hash hook:
+ * RIX_HASH_GENERATE_EX(myht, mynode, key, cur_hash,
+ *                      my_cmp_fn, my_hash_fn)
+ */
 
 /* 3. Optional: enable SIMD in this source file */
 rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
@@ -519,9 +523,12 @@ Bulk variants: `_key1` / `_key2` / `_key4` / `_key8` (suffix = count).
 | Variant | Macro |
 |---------|-------|
 | External linkage | `RIX_HASH_GENERATE(name, type, key_field, hash_field, cmp_fn)` |
+| External linkage + custom hash | `RIX_HASH_GENERATE_EX(name, type, key_field, hash_field, cmp_fn, hash_fn)` |
 | `static` linkage | `RIX_HASH_GENERATE_STATIC(name, type, key_field, hash_field, cmp_fn)` |
+| `static` linkage + custom hash | `RIX_HASH_GENERATE_STATIC_EX(name, type, key_field, hash_field, cmp_fn, hash_fn)` |
 
 `cmp_fn` signature: `int cmp_fn(const type *a, const type *b)` -- returns 0 if equal.
+`hash_fn` signature: `union rix_hash_hash_u hash_fn(const key_type *key, uint32_t mask)`.
 
 ---
 
