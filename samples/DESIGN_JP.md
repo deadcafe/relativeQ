@@ -472,7 +472,8 @@ void cache_expire(struct cache *fc, uint64_t now)
         entry = &pool[(cursor + i) & mask];
         if (entry->last_ts == 0) continue;        /* 空きスロット */
         if (now - entry->last_ts <= timeout) continue;  /* 存命 */
-        prefetch(&buckets[entry->cur_hash & bk_mask]);
+        prefetch(bucket[idx[] line for entry->cur_hash]);
+        prefetch(bucket[hash[] line for entry->cur_hash]);
         pending[i % pf_dist] = entry;
     }
     cursor += max_scan;
@@ -484,6 +485,11 @@ void cache_expire(struct cache *fc, uint64_t now)
 アクセスをさらに削減する。プールがLLCに収まらず、かつエビクション率が
 高い場合に有効。デフォルトの `cache_expire()` も高圧時には内部でこの
 2stage 経路へ自動切替する。
+
+組み込みの flow cache key では、key サイズがコンパイル時に確定している場合
+に汎用 CRC32 byte-loop を通さない fixed-size hash fast path も使う。現状の
+specialization は 20 バイトの IPv4 key と 44 バイトの IPv6 / unified key を
+対象にしている。
 
 #### スイープカバレッジ
 
@@ -813,6 +819,7 @@ samples/
     Makefile
     flow_cache_test.c        正当性テスト + ベンチマーク（全3バリアント）
     flow_cache_test_body.h   テンプレート: テスト + ベンチマーク関数
+    flow_cache_perf.sh       単一ベンチケース向け perf stat wrapper
 ```
 
 ## 13. ビルド依存関係

@@ -440,7 +440,8 @@ void cache_expire(struct cache *fc, uint64_t now)
         entry = &pool[(cursor + i) & mask];
         if (entry->last_ts == 0) continue;        /* free slot */
         if (now - entry->last_ts <= timeout) continue;  /* alive */
-        prefetch(&buckets[entry->cur_hash & bk_mask]);
+        prefetch(bucket[idx[] line for entry->cur_hash]);
+        prefetch(bucket[hash[] line for entry->cur_hash]);
         pending[i % pf_dist] = entry;
     }
     cursor += max_scan;
@@ -453,6 +454,11 @@ reducing DRAM stalls further when the pool is DRAM-resident and eviction
 rate is high. The default `cache_expire()` path switches to `2stage`
 automatically once pressure rises enough (currently expire level >= 4 on
 reasonably large pools).
+
+For built-in flow-cache keys, the hash stage also bypasses the generic
+byte-loop CRC helper when the key size is known at compile time.  The
+current specialisations cover 20-byte IPv4 keys and 44-byte IPv6/unified
+keys.
 
 #### Sweep coverage
 
@@ -778,6 +784,7 @@ samples/
     Makefile
     flow_cache_test.c        correctness tests + benchmarks (all 3 variants)
     flow_cache_test_body.h   template: test + benchmark functions
+    flow_cache_perf.sh       perf stat wrapper for single benchmark cases
 ```
 
 ## 13. Build Dependencies

@@ -19,6 +19,122 @@
 #define FLOW_CACHE_TEST_BACKEND_DECLARED 1
 flow_cache_backend_t flow_cache_test_backend = FLOW_CACHE_BACKEND_AUTO;
 
+#ifndef FLOW_CACHE_TEST_CC
+#define FLOW_CACHE_TEST_CC "cc"
+#endif
+
+#ifndef FLOW_CACHE_TEST_OPTLEVEL
+#define FLOW_CACHE_TEST_OPTLEVEL 3
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+#define FLOW_CACHE_TEST_NOINLINE __attribute__((noinline))
+#else
+#define FLOW_CACHE_TEST_NOINLINE
+#endif
+
+static int flow_cache_test_json = 0;
+static unsigned flow_cache_test_warmup = 50;
+
+typedef enum {
+    FLOW_CACHE_BENCH_NONE = 0,
+    FLOW_CACHE_BENCH_FLOW4_INSERT,
+    FLOW_CACHE_BENCH_FLOW4_LOOKUP_HIT80,
+    FLOW_CACHE_BENCH_FLOW4_FIND_SINGLE_HIT,
+    FLOW_CACHE_BENCH_FLOW4_FIND_SINGLE_MISS,
+    FLOW_CACHE_BENCH_FLOW4_EXPIRE_FULL,
+    FLOW_CACHE_BENCH_FLOW4_PKT_STD,
+    FLOW_CACHE_BENCH_FLOW4_PKT_TIGHT,
+    FLOW_CACHE_BENCH_FLOW6_INSERT,
+    FLOW_CACHE_BENCH_FLOW6_LOOKUP_HIT80,
+    FLOW_CACHE_BENCH_FLOW6_FIND_SINGLE_HIT,
+    FLOW_CACHE_BENCH_FLOW6_FIND_SINGLE_MISS,
+    FLOW_CACHE_BENCH_FLOW6_EXPIRE_FULL,
+    FLOW_CACHE_BENCH_FLOW6_PKT_STD,
+    FLOW_CACHE_BENCH_FLOW6_PKT_TIGHT,
+    FLOW_CACHE_BENCH_FLOWU_INSERT,
+    FLOW_CACHE_BENCH_FLOWU_LOOKUP_HIT80,
+    FLOW_CACHE_BENCH_FLOWU_FIND_SINGLE_HIT,
+    FLOW_CACHE_BENCH_FLOWU_FIND_SINGLE_MISS,
+    FLOW_CACHE_BENCH_FLOWU_EXPIRE_FULL,
+    FLOW_CACHE_BENCH_FLOWU_PKT_STD,
+    FLOW_CACHE_BENCH_FLOWU_PKT_TIGHT,
+} flow_cache_bench_case_t;
+
+struct flow_cache_bench_case_desc {
+    const char *name;
+    flow_cache_bench_case_t id;
+};
+
+static const struct flow_cache_bench_case_desc flow_cache_bench_cases[] = {
+    { "flow4:insert",            FLOW_CACHE_BENCH_FLOW4_INSERT },
+    { "flow4:lookup_hit80",      FLOW_CACHE_BENCH_FLOW4_LOOKUP_HIT80 },
+    { "flow4:find_single_hit",   FLOW_CACHE_BENCH_FLOW4_FIND_SINGLE_HIT },
+    { "flow4:find_single_miss",  FLOW_CACHE_BENCH_FLOW4_FIND_SINGLE_MISS },
+    { "flow4:expire_full",       FLOW_CACHE_BENCH_FLOW4_EXPIRE_FULL },
+    { "flow4:pkt_std",           FLOW_CACHE_BENCH_FLOW4_PKT_STD },
+    { "flow4:pkt_tight",         FLOW_CACHE_BENCH_FLOW4_PKT_TIGHT },
+    { "flow6:insert",            FLOW_CACHE_BENCH_FLOW6_INSERT },
+    { "flow6:lookup_hit80",      FLOW_CACHE_BENCH_FLOW6_LOOKUP_HIT80 },
+    { "flow6:find_single_hit",   FLOW_CACHE_BENCH_FLOW6_FIND_SINGLE_HIT },
+    { "flow6:find_single_miss",  FLOW_CACHE_BENCH_FLOW6_FIND_SINGLE_MISS },
+    { "flow6:expire_full",       FLOW_CACHE_BENCH_FLOW6_EXPIRE_FULL },
+    { "flow6:pkt_std",           FLOW_CACHE_BENCH_FLOW6_PKT_STD },
+    { "flow6:pkt_tight",         FLOW_CACHE_BENCH_FLOW6_PKT_TIGHT },
+    { "flowu:insert",            FLOW_CACHE_BENCH_FLOWU_INSERT },
+    { "flowu:lookup_hit80",      FLOW_CACHE_BENCH_FLOWU_LOOKUP_HIT80 },
+    { "flowu:find_single_hit",   FLOW_CACHE_BENCH_FLOWU_FIND_SINGLE_HIT },
+    { "flowu:find_single_miss",  FLOW_CACHE_BENCH_FLOWU_FIND_SINGLE_MISS },
+    { "flowu:expire_full",       FLOW_CACHE_BENCH_FLOWU_EXPIRE_FULL },
+    { "flowu:pkt_std",           FLOW_CACHE_BENCH_FLOWU_PKT_STD },
+    { "flowu:pkt_tight",         FLOW_CACHE_BENCH_FLOWU_PKT_TIGHT },
+};
+
+#ifndef FLOW_CACHE_TEST_RESULT_TYPES_DEFINED
+#define FLOW_CACHE_TEST_RESULT_TYPES_DEFINED
+struct flow_cache_pkt_bench_result {
+    double lookup_insert_cy_per_pkt;
+    double expire_cy_per_call;
+    double expire_cy_per_pkt;
+    unsigned total_pkts;
+    unsigned total_hits;
+    unsigned total_misses;
+    unsigned total_inserts;
+    unsigned total_expire_calls;
+    uint64_t total_evictions;
+    unsigned final_entries;
+    unsigned total_slots;
+};
+#endif
+
+static void
+flow_cache_test_emit_result(const char *variant,
+                            const char *case_name,
+                            const char *metric,
+                            double value,
+                            unsigned max_entries,
+                            unsigned nb_bk,
+                            unsigned repeat,
+                            flow_cache_backend_t requested_backend,
+                            flow_cache_backend_t selected_backend);
+
+static void
+flow_cache_test_emit_pkt_result(const char *variant,
+                                const char *case_name,
+                                unsigned max_entries,
+                                unsigned nb_bk,
+                                unsigned repeat,
+                                flow_cache_backend_t requested_backend,
+                                flow_cache_backend_t selected_backend,
+                                const struct flow_cache_pkt_bench_result *result);
+
+static flow_cache_backend_t
+flow_cache_test_selected_backend(const char *variant,
+                                 struct rix_hash_bucket_s *buckets,
+                                 unsigned nb_bk,
+                                 void *pool,
+                                 unsigned max_entries);
+
 /*===========================================================================
  * Test payload overlay: cast entry->userdata to this struct in unit tests.
  * Demonstrates the caller-defined CL1 usage pattern.
@@ -222,6 +338,120 @@ parse_backend(const char *s, flow_cache_backend_t *out)
         return 0;
     }
     return -1;
+}
+
+static int
+parse_bench_case(const char *s, flow_cache_bench_case_t *out)
+{
+    for (size_t i = 0; i < RIX_COUNT_OF(flow_cache_bench_cases); i++) {
+        if (strcmp(s, flow_cache_bench_cases[i].name) == 0) {
+            *out = flow_cache_bench_cases[i].id;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static void
+list_bench_cases(FILE *out)
+{
+    for (size_t i = 0; i < RIX_COUNT_OF(flow_cache_bench_cases); i++)
+        fprintf(out, "  %s\n", flow_cache_bench_cases[i].name);
+}
+
+static void
+flow_cache_test_emit_result(const char *variant,
+                            const char *case_name,
+                            const char *metric,
+                            double value,
+                            unsigned max_entries,
+                            unsigned nb_bk,
+                            unsigned repeat,
+                            flow_cache_backend_t requested_backend,
+                            flow_cache_backend_t selected_backend)
+{
+    if (flow_cache_test_json) {
+        printf("{\"case\":\"%s:%s\",\"variant\":\"%s\","
+               "\"metric\":\"%s\",\"value\":%.3f,"
+               "\"max_entries\":%u,\"nb_bk\":%u,\"repeat\":%u,"
+               "\"requested_backend\":\"%s\",\"selected_backend\":\"%s\","
+               "\"compiler\":\"%s\",\"optlevel\":%d}\n",
+               variant, case_name, variant, metric, value,
+               max_entries, nb_bk, repeat,
+               flow_cache_backend_name(requested_backend),
+               flow_cache_backend_name(selected_backend),
+               FLOW_CACHE_TEST_CC, FLOW_CACHE_TEST_OPTLEVEL);
+        return;
+    }
+
+    printf("[P] %s:%s selected=%s %s=%.3f max_entries=%u nb_bk=%u repeat=%u cc=%s -O%d\n",
+           variant, case_name, flow_cache_backend_name(selected_backend),
+           metric, value, max_entries, nb_bk, repeat,
+           FLOW_CACHE_TEST_CC, FLOW_CACHE_TEST_OPTLEVEL);
+}
+
+static void
+flow_cache_test_emit_pkt_result(const char *variant,
+                                const char *case_name,
+                                unsigned max_entries,
+                                unsigned nb_bk,
+                                unsigned repeat,
+                                flow_cache_backend_t requested_backend,
+                                flow_cache_backend_t selected_backend,
+                                const struct flow_cache_pkt_bench_result *result)
+{
+    if (flow_cache_test_json) {
+        printf("{\"case\":\"%s:%s\",\"variant\":\"%s\","
+               "\"metric\":\"lookup+insert\",\"value\":%.3f,"
+               "\"unit\":\"cycles/pkt\","
+               "\"expire_cy_per_call\":%.3f,"
+               "\"expire_cy_per_pkt\":%.3f,"
+               "\"max_entries\":%u,\"nb_bk\":%u,\"repeat\":%u,"
+               "\"requested_backend\":\"%s\",\"selected_backend\":\"%s\","
+               "\"compiler\":\"%s\",\"optlevel\":%d}\n",
+               variant, case_name, variant,
+               result->lookup_insert_cy_per_pkt,
+               result->expire_cy_per_call,
+               result->expire_cy_per_pkt,
+               max_entries, nb_bk, repeat,
+               flow_cache_backend_name(requested_backend),
+               flow_cache_backend_name(selected_backend),
+               FLOW_CACHE_TEST_CC, FLOW_CACHE_TEST_OPTLEVEL);
+        return;
+    }
+
+    printf("[P] %s:%s selected=%s lookup+insert=%.3f cycles/pkt expire=%.3f cycles/pkt max_entries=%u nb_bk=%u repeat=%u cc=%s -O%d\n",
+           variant, case_name, flow_cache_backend_name(selected_backend),
+           result->lookup_insert_cy_per_pkt,
+           result->expire_cy_per_pkt,
+           max_entries, nb_bk, repeat,
+           FLOW_CACHE_TEST_CC, FLOW_CACHE_TEST_OPTLEVEL);
+}
+
+static flow_cache_backend_t
+flow_cache_test_selected_backend(const char *variant,
+                                 struct rix_hash_bucket_s *buckets,
+                                 unsigned nb_bk,
+                                 void *pool,
+                                 unsigned max_entries)
+{
+    if (strcmp(variant, "flow4") == 0) {
+        struct flow4_cache fc;
+        flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries,
+                         flow_cache_test_backend, 0, NULL, NULL, NULL);
+        return flow4_cache_backend(&fc);
+    }
+    if (strcmp(variant, "flow6") == 0) {
+        struct flow6_cache fc;
+        flow6_cache_init(&fc, buckets, nb_bk, pool, max_entries,
+                         flow_cache_test_backend, 0, NULL, NULL, NULL);
+        return flow6_cache_backend(&fc);
+    }
+
+    struct flowu_cache fc;
+    flowu_cache_init(&fc, buckets, nb_bk, pool, max_entries,
+                     flow_cache_test_backend, 0, NULL, NULL, NULL);
+    return flowu_cache_backend(&fc);
 }
 
 /*===========================================================================
@@ -582,6 +812,7 @@ flow4_bench_bk0_rate(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
 #define FCT_ENTRY         flow4_entry
 #define FCT_CACHE         flow4_cache
 #define FCT_LABEL         "IPv4"
+#define FCT_VARIANT       "flow4"
 #define FCT_KEY_BYTES     20
 #define FCT_MAKE_RANDOM_KEY(kp)  make_random_key4(kp)
 #include "flow_cache_test_body.h"
@@ -590,6 +821,7 @@ flow4_bench_bk0_rate(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
 #undef FCT_ENTRY
 #undef FCT_CACHE
 #undef FCT_LABEL
+#undef FCT_VARIANT
 #undef FCT_KEY_BYTES
 #undef FCT_MAKE_RANDOM_KEY
 
@@ -601,6 +833,7 @@ flow4_bench_bk0_rate(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
 #define FCT_ENTRY         flow6_entry
 #define FCT_CACHE         flow6_cache
 #define FCT_LABEL         "IPv6"
+#define FCT_VARIANT       "flow6"
 #define FCT_KEY_BYTES     44
 #define FCT_MAKE_RANDOM_KEY(kp)  make_random_key6(kp)
 #include "flow_cache_test_body.h"
@@ -609,6 +842,7 @@ flow4_bench_bk0_rate(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
 #undef FCT_ENTRY
 #undef FCT_CACHE
 #undef FCT_LABEL
+#undef FCT_VARIANT
 #undef FCT_KEY_BYTES
 #undef FCT_MAKE_RANDOM_KEY
 
@@ -620,6 +854,7 @@ flow4_bench_bk0_rate(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
 #define FCT_ENTRY         flowu_entry
 #define FCT_CACHE         flowu_cache
 #define FCT_LABEL         "Unified"
+#define FCT_VARIANT       "flowu"
 #define FCT_KEY_BYTES     44
 #define FCT_MAKE_RANDOM_KEY(kp)  make_random_keyu(kp)
 #include "flow_cache_test_body.h"
@@ -628,6 +863,7 @@ flow4_bench_bk0_rate(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
 #undef FCT_ENTRY
 #undef FCT_CACHE
 #undef FCT_LABEL
+#undef FCT_VARIANT
 #undef FCT_KEY_BYTES
 #undef FCT_MAKE_RANDOM_KEY
 
@@ -682,6 +918,85 @@ flowu_test_mixed(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     printf("    PASS\n");
 }
 
+static FLOW_CACHE_TEST_NOINLINE int
+run_bench_case(flow_cache_bench_case_t bench_case,
+               struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+               struct flow4_entry *pool4,
+               struct flow6_entry *pool6,
+               struct flowu_entry *poolu,
+               unsigned max_entries,
+               unsigned repeat)
+{
+    switch (bench_case) {
+    case FLOW_CACHE_BENCH_FLOW4_INSERT:
+        flow4_perf_insert_case(buckets, nb_bk, pool4, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOW4_LOOKUP_HIT80:
+        flow4_perf_lookup_hit80_case(buckets, nb_bk, pool4, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOW4_FIND_SINGLE_HIT:
+        flow4_perf_find_single_hit_case(buckets, nb_bk, pool4, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOW4_FIND_SINGLE_MISS:
+        flow4_perf_find_single_miss_case(buckets, nb_bk, pool4, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOW4_EXPIRE_FULL:
+        flow4_perf_expire_full_case(buckets, nb_bk, pool4, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOW4_PKT_STD:
+        flow4_perf_pkt_std_case(buckets, nb_bk, pool4, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOW4_PKT_TIGHT:
+        flow4_perf_pkt_tight_case(buckets, nb_bk, pool4, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOW6_INSERT:
+        flow6_perf_insert_case(buckets, nb_bk, pool6, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOW6_LOOKUP_HIT80:
+        flow6_perf_lookup_hit80_case(buckets, nb_bk, pool6, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOW6_FIND_SINGLE_HIT:
+        flow6_perf_find_single_hit_case(buckets, nb_bk, pool6, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOW6_FIND_SINGLE_MISS:
+        flow6_perf_find_single_miss_case(buckets, nb_bk, pool6, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOW6_EXPIRE_FULL:
+        flow6_perf_expire_full_case(buckets, nb_bk, pool6, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOW6_PKT_STD:
+        flow6_perf_pkt_std_case(buckets, nb_bk, pool6, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOW6_PKT_TIGHT:
+        flow6_perf_pkt_tight_case(buckets, nb_bk, pool6, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOWU_INSERT:
+        flowu_perf_insert_case(buckets, nb_bk, poolu, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOWU_LOOKUP_HIT80:
+        flowu_perf_lookup_hit80_case(buckets, nb_bk, poolu, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOWU_FIND_SINGLE_HIT:
+        flowu_perf_find_single_hit_case(buckets, nb_bk, poolu, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOWU_FIND_SINGLE_MISS:
+        flowu_perf_find_single_miss_case(buckets, nb_bk, poolu, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOWU_EXPIRE_FULL:
+        flowu_perf_expire_full_case(buckets, nb_bk, poolu, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOWU_PKT_STD:
+        flowu_perf_pkt_std_case(buckets, nb_bk, poolu, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOWU_PKT_TIGHT:
+        flowu_perf_pkt_tight_case(buckets, nb_bk, poolu, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_NONE:
+    default:
+        return -1;
+    }
+}
+
 /*===========================================================================
  * Usage
  *===========================================================================*/
@@ -698,7 +1013,12 @@ usage(const char *prog)
             "                     (default: auto, targets ~50%% fill)\n"
             "  -B, --backend NAME Backend request: auto | gen | sse | avx2 | avx512\n"
             "                     (default: auto)\n"
+            "  -c, --bench-case C Run a single benchmark case for perf/stat collection\n"
+            "  -j, --json         Print the selected benchmark result as one JSON line\n"
             "  -r, --repeat N     Benchmark repeat count (default: auto)\n"
+            "  -s, --seed N       Seed for random workload generation\n"
+            "  -w, --warmup N     Warmup iterations for single benchmark cases\n"
+            "  -l, --list-bench-cases  List available --bench-case names and exit\n"
             "  -h, --help         Show this help and exit\n"
             "\n"
             "Each bucket holds %u slots.  Bucket memory = N * %zu bytes.\n"
@@ -706,11 +1026,14 @@ usage(const char *prog)
             "Examples:\n"
             "  %s -n 1000000\n"
             "  %s -n 100000000 -b 8388608\n"
-            "  %s -n 100000000 -b 8388608 -r 500\n",
+            "  %s -c flow4:pkt_std -B avx2 -n 1000000 -r 1000 --json\n",
             prog,
             (unsigned)RIX_HASH_BUCKET_ENTRY_SZ,
             sizeof(struct rix_hash_bucket_s),
             prog, prog, prog);
+
+    fprintf(stderr, "\nAvailable bench cases:\n");
+    list_bench_cases(stderr);
 }
 
 /*===========================================================================
@@ -733,18 +1056,25 @@ main(int argc, char **argv)
     unsigned max_entries = 1048576;  /* 2^20 ~= 1M: realistic DRAM-cold benchmark */
     unsigned nb_bk = 0;    /* auto */
     unsigned repeat = 0;   /* auto */
+    flow_cache_bench_case_t bench_case = FLOW_CACHE_BENCH_NONE;
+    int list_only = 0;
 
     static const struct option long_opts[] = {
         { "entries", required_argument, NULL, 'n' },
         { "buckets", required_argument, NULL, 'b' },
         { "backend", required_argument, NULL, 'B' },
+        { "bench-case", required_argument, NULL, 'c' },
+        { "json",    no_argument,       NULL, 'j' },
         { "repeat",  required_argument, NULL, 'r' },
+        { "seed",    required_argument, NULL, 's' },
+        { "warmup",  required_argument, NULL, 'w' },
+        { "list-bench-cases", no_argument, NULL, 'l' },
         { "help",    no_argument,       NULL, 'h' },
         { NULL,      0,                 NULL,  0  },
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "n:b:B:r:h", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "n:b:B:c:jr:s:w:lh", long_opts, NULL)) != -1) {
         switch (opt) {
         case 'n':
             max_entries = flow_cache_pool_count((unsigned)strtoul(optarg, NULL, 0));
@@ -763,8 +1093,26 @@ main(int argc, char **argv)
                 return 1;
             }
             break;
+        case 'c':
+            if (parse_bench_case(optarg, &bench_case) != 0) {
+                fprintf(stderr, "error: unknown --bench-case '%s'\n", optarg);
+                return 1;
+            }
+            break;
+        case 'j':
+            flow_cache_test_json = 1;
+            break;
         case 'r':
             repeat = (unsigned)strtoul(optarg, NULL, 0);
+            break;
+        case 's':
+            xr64 = strtoull(optarg, NULL, 0);
+            break;
+        case 'w':
+            flow_cache_test_warmup = (unsigned)strtoul(optarg, NULL, 0);
+            break;
+        case 'l':
+            list_only = 1;
             break;
         case 'h':
             usage(argv[0]);
@@ -773,6 +1121,16 @@ main(int argc, char **argv)
             usage(argv[0]);
             return 1;
         }
+    }
+
+    if (list_only) {
+        list_bench_cases(stdout);
+        return 0;
+    }
+
+    if (flow_cache_test_json && bench_case == FLOW_CACHE_BENCH_NONE) {
+        fprintf(stderr, "error: --json requires --bench-case\n");
+        return 1;
     }
 
     /* auto-size buckets: target ~50% fill */
@@ -796,18 +1154,20 @@ main(int argc, char **argv)
     size_t pool6_size = flow_cache_pool_size(max_entries, sizeof(struct flow6_entry));
     size_t poolu_size = flow_cache_pool_size(max_entries, sizeof(struct flowu_entry));
 
-    printf("=== flow cache test & bench (IPv4 / IPv6 / Unified) ===\n");
-    printf("  max_entries   = %u\n", max_entries);
-    printf("  nb_bk      = %u  (slots = %u)\n",
-           nb_bk, nb_bk * RIX_HASH_BUCKET_ENTRY_SZ);
-    printf("  bucket mem = %.1f MB\n", (double)bk_size   / 1e6);
-    printf("  pool4 mem  = %.1f MB\n", (double)pool4_size / 1e6);
-    printf("  pool6 mem  = %.1f MB\n", (double)pool6_size / 1e6);
-    printf("  poolu mem  = %.1f MB\n", (double)poolu_size / 1e6);
-    printf("  backend    = %s\n",
-           flow_cache_backend_name(flow_cache_test_backend));
-    printf("  repeat     = %u\n", repeat);
-    printf("\n");
+    if (!flow_cache_test_json) {
+        printf("=== flow cache test & bench (IPv4 / IPv6 / Unified) ===\n");
+        printf("  max_entries   = %u\n", max_entries);
+        printf("  nb_bk      = %u  (slots = %u)\n",
+               nb_bk, nb_bk * RIX_HASH_BUCKET_ENTRY_SZ);
+        printf("  bucket mem = %.1f MB\n", (double)bk_size   / 1e6);
+        printf("  pool4 mem  = %.1f MB\n", (double)pool4_size / 1e6);
+        printf("  pool6 mem  = %.1f MB\n", (double)pool6_size / 1e6);
+        printf("  poolu mem  = %.1f MB\n", (double)poolu_size / 1e6);
+        printf("  backend    = %s\n",
+               flow_cache_backend_name(flow_cache_test_backend));
+        printf("  repeat     = %u\n", repeat);
+        printf("\n");
+    }
 
     struct rix_hash_bucket_s *buckets = alloc_aligned(bk_size);
     struct flow4_entry *pool4 = alloc_aligned(pool4_size);
@@ -826,11 +1186,23 @@ main(int argc, char **argv)
         flowu_cache_init(&fcu, buckets, nb_bk, poolu, max_entries,
                          flow_cache_test_backend, 0, NULL, NULL, NULL);
 
-        printf("  selected   = flow4:%s flow6:%s flowu:%s\n",
-               flow_cache_backend_name(flow4_cache_backend(&fc4)),
-               flow_cache_backend_name(flow6_cache_backend(&fc6)),
-               flow_cache_backend_name(flowu_cache_backend(&fcu)));
-        printf("\n");
+        if (!flow_cache_test_json) {
+            printf("  selected   = flow4:%s flow6:%s flowu:%s\n",
+                   flow_cache_backend_name(flow4_cache_backend(&fc4)),
+                   flow_cache_backend_name(flow6_cache_backend(&fc6)),
+                   flow_cache_backend_name(flowu_cache_backend(&fcu)));
+            printf("\n");
+        }
+    }
+
+    if (bench_case != FLOW_CACHE_BENCH_NONE) {
+        int rc = run_bench_case(bench_case, buckets, nb_bk, pool4, pool6, poolu,
+                                max_entries, repeat);
+        munmap(buckets, bk_size);
+        munmap(pool4, pool4_size);
+        munmap(pool6, pool6_size);
+        munmap(poolu, poolu_size);
+        return (rc == 0) ? 0 : 1;
     }
 
     /* --- IPv4 correctness tests --- */

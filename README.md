@@ -95,6 +95,7 @@ samples/
   test/
     flow_cache_test.c       correctness tests + benchmarks (all 3 variants)
     flow_cache_test_body.h  template: test + benchmark functions (internal)
+    flow_cache_perf.sh      perf stat wrapper for single-workload runs
 ```
 
 ---
@@ -675,7 +676,11 @@ flow4_cache_flush(&fc);
 
 For sample benchmarking/debugging, `samples/test/flow_cache_test` also accepts
 `--backend auto|gen|sse|avx2|avx512` and prints the actual backend selected per
-variant.
+variant. For perf-friendly single-workload runs it also supports
+`--bench-case`, `--list-bench-cases`, and `--json`.
+For the built-in flow-cache variants, the hash stage also uses fixed-size
+CRC32 fast paths for 20-byte and 44-byte keys, avoiding the generic
+`hash_bytes()` loop on the hot path.
 
 ### Packet processing loop
 
@@ -876,7 +881,13 @@ make -C tests
 
 # Flow cache correctness tests + benchmarks
 make -C samples
-./samples/flow_cache_test -n 1000000
+./samples/test/flow_cache_test -n 1000000
+
+# Single workload for perf stat / perf record
+./samples/test/flow_cache_test --bench-case flow4:pkt_std --backend avx2 --json
+
+# Wrapper around perf stat
+make -C samples/test perf PERF_CASE=flow4:pkt_std PERF_BACKEND=avx2
 ```
 
 Test coverage includes:

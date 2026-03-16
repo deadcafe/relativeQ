@@ -303,6 +303,82 @@ _rix_hash_hash_bytes_CRC32(const void *key, size_t key_bytes, uint32_t mask)
     return r;
 }
 
+static RIX_FORCE_INLINE uint32_t
+_rix_hash_crc32_20(uint32_t crc, const void *key)
+{
+    const uint8_t *p = (const uint8_t *)key;
+    uint64_t w64;
+    uint32_t w32;
+
+    memcpy(&w64, p, 8u);
+    crc = (uint32_t)__builtin_ia32_crc32di((uint64_t)crc, w64);
+    memcpy(&w64, p + 8u, 8u);
+    crc = (uint32_t)__builtin_ia32_crc32di((uint64_t)crc, w64);
+    memcpy(&w32, p + 16u, 4u);
+    crc = (uint32_t)__builtin_ia32_crc32si(crc, w32);
+    return crc;
+}
+
+static RIX_FORCE_INLINE uint32_t
+_rix_hash_crc32_44(uint32_t crc, const void *key)
+{
+    const uint8_t *p = (const uint8_t *)key;
+    uint64_t w64;
+    uint32_t w32;
+
+    memcpy(&w64, p, 8u);
+    crc = (uint32_t)__builtin_ia32_crc32di((uint64_t)crc, w64);
+    memcpy(&w64, p + 8u, 8u);
+    crc = (uint32_t)__builtin_ia32_crc32di((uint64_t)crc, w64);
+    memcpy(&w64, p + 16u, 8u);
+    crc = (uint32_t)__builtin_ia32_crc32di((uint64_t)crc, w64);
+    memcpy(&w64, p + 24u, 8u);
+    crc = (uint32_t)__builtin_ia32_crc32di((uint64_t)crc, w64);
+    memcpy(&w64, p + 32u, 8u);
+    crc = (uint32_t)__builtin_ia32_crc32di((uint64_t)crc, w64);
+    memcpy(&w32, p + 40u, 4u);
+    crc = (uint32_t)__builtin_ia32_crc32si(crc, w32);
+    return crc;
+}
+
+static RIX_FORCE_INLINE union rix_hash_hash_u
+_rix_hash_hash_20_CRC32(const void *key, uint32_t mask)
+{
+    union rix_hash_hash_u r;
+    uint32_t h0   = _rix_hash_crc32_20(0u, key);
+    uint32_t bk0  = h0 & mask;
+    uint32_t seed = ~h0;
+    uint32_t h1;
+
+    do {
+        h1   = _rix_hash_crc32_20(seed, key);
+        seed = (uint32_t)__builtin_ia32_crc32di((uint64_t)seed, (uint64_t)h0);
+    } while ((h1 & mask) == bk0);
+
+    r.val32[0] = h0;
+    r.val32[1] = h1;
+    return r;
+}
+
+static RIX_FORCE_INLINE union rix_hash_hash_u
+_rix_hash_hash_44_CRC32(const void *key, uint32_t mask)
+{
+    union rix_hash_hash_u r;
+    uint32_t h0   = _rix_hash_crc32_44(0u, key);
+    uint32_t bk0  = h0 & mask;
+    uint32_t seed = ~h0;
+    uint32_t h1;
+
+    do {
+        h1   = _rix_hash_crc32_44(seed, key);
+        seed = (uint32_t)__builtin_ia32_crc32di((uint64_t)seed, (uint64_t)h0);
+    } while ((h1 & mask) == bk0);
+
+    r.val32[0] = h0;
+    r.val32[1] = h1;
+    return r;
+}
+
 static RIX_FORCE_INLINE union rix_hash_hash_u
 _rix_hash_hash_u32_CRC32(uint32_t key, uint32_t mask)
 {
@@ -521,6 +597,24 @@ static RIX_UNUSED const struct rix_hash_arch_s _rix_hash_arch_AVX512 = {
 };
 
 #    endif /* __x86_64__ && __AVX512F__ */
+
+static RIX_FORCE_INLINE union rix_hash_hash_u
+rix_hash_hash_bytes_fast(const void *key, size_t key_bytes, uint32_t mask)
+{
+#    if defined(__x86_64__) && defined(__SSE4_2__)
+    if (__builtin_constant_p(key_bytes)) {
+        switch (key_bytes) {
+        case 20u:
+            return _rix_hash_hash_20_CRC32(key, mask);
+        case 44u:
+            return _rix_hash_hash_44_CRC32(key, mask);
+        default:
+            break;
+        }
+    }
+#    endif
+    return rix_hash_arch->hash_bytes(key, key_bytes, mask);
+}
 
 /*---------------------------------------------------------------------------
  * rix_hash_arch_init - enable the best dispatch level for this source file.

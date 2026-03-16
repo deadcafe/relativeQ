@@ -96,6 +96,7 @@ samples/
   test/
     flow_cache_test.c       正確性テスト + ベンチマーク (全 3 バリアント)
     flow_cache_test_body.h  テンプレート: テスト・ベンチマーク関数 (内部用)
+    flow_cache_perf.sh      単一 workload 向け perf stat wrapper
 ```
 
 ---
@@ -676,6 +677,11 @@ flow4_cache_flush(&fc);
 サンプルのベンチマーク / デバッグ用途では、
 `samples/test/flow_cache_test --backend auto|gen|sse|avx2|avx512`
 でも backend を固定でき、各バリアントで実際に選ばれた backend を表示します。
+さらに perf 向けの単一 workload 実行として `--bench-case`,
+`--list-bench-cases`, `--json` も使えます。
+組み込みの flow cache バリアントでは、hash stage に 20 バイト / 44 バイト
+key 向けの固定長 CRC32 fast path も入り、ホットパスで汎用 `hash_bytes()`
+ループを避けます。
 
 ### パケット処理ループ
 
@@ -878,7 +884,13 @@ make -C tests
 
 # フローキャッシュ 正確性テスト + ベンチマーク
 make -C samples
-./samples/flow_cache_test -n 1000000
+./samples/test/flow_cache_test -n 1000000
+
+# perf stat / perf record 向けの単一 workload 実行
+./samples/test/flow_cache_test --bench-case flow4:pkt_std --backend avx2 --json
+
+# perf stat wrapper
+make -C samples/test perf PERF_CASE=flow4:pkt_std PERF_BACKEND=avx2
 ```
 
 テストカバレッジ:

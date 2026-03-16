@@ -29,6 +29,31 @@
 extern flow_cache_backend_t flow_cache_test_backend;
 #endif
 
+#ifndef FLOW_CACHE_TEST_NOINLINE
+#if defined(__GNUC__) || defined(__clang__)
+#define FLOW_CACHE_TEST_NOINLINE __attribute__((noinline))
+#else
+#define FLOW_CACHE_TEST_NOINLINE
+#endif
+#endif
+
+#ifndef FLOW_CACHE_TEST_RESULT_TYPES_DEFINED
+#define FLOW_CACHE_TEST_RESULT_TYPES_DEFINED
+struct flow_cache_pkt_bench_result {
+    double lookup_insert_cy_per_pkt;
+    double expire_cy_per_call;
+    double expire_cy_per_pkt;
+    unsigned total_pkts;
+    unsigned total_hits;
+    unsigned total_misses;
+    unsigned total_inserts;
+    unsigned total_expire_calls;
+    uint64_t total_evictions;
+    unsigned final_entries;
+    unsigned total_slots;
+};
+#endif
+
 /*===========================================================================
  * Test: structure sizes and alignment
  *===========================================================================*/
@@ -280,6 +305,393 @@ FCT_FN(FCT_PREFIX,fill_cache)(struct FCT_CACHE *fc, unsigned count, unsigned *ac
     }
     *actual_out = actual;
     return keys;
+}
+
+static double
+FCT_FN(FCT_PREFIX,measure_insert)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+                        struct FCT_ENTRY *pool, unsigned max_entries,
+                        unsigned *inserted_out)
+{
+    struct FCT_CACHE fc;
+    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries,
+                                    flow_cache_test_backend, 0,
+                                    NULL, NULL, NULL);
+
+    struct FCT_KEY *keys = malloc((size_t)max_entries * sizeof(*keys));
+    assert(keys);
+    for (unsigned i = 0; i < max_entries; i++)
+        FCT_MAKE_RANDOM_KEY(&keys[i]);
+
+    uint64_t t0 = tsc_start();
+    unsigned inserted = 0;
+    for (unsigned i = 0; i < max_entries; i++) {
+        struct FCT_ENTRY *e =
+            FC_CALL(FCT_PREFIX, cache_insert)(&fc, &keys[i], 1000);
+        if (e)
+            inserted++;
+    }
+    uint64_t t1 = tsc_end();
+
+    free(keys);
+    *inserted_out = inserted;
+    return (inserted > 0) ? (double)(t1 - t0) / inserted : 0.0;
+}
+
+static double
+FCT_FN(FCT_PREFIX,measure_lookup_hit_rate)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+                                 struct FCT_ENTRY *pool, unsigned max_entries,
+                                 unsigned repeat, unsigned hit_pct)
+{
+    struct FCT_CACHE fc;
+    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries,
+                                    flow_cache_test_backend, 0,
+                                    NULL, NULL, NULL);
+
+    unsigned fill_target = max_entries * 3 / 4;
+    unsigned actual_fill;
+    struct FCT_KEY *hit_keys =
+        FCT_FN(FCT_PREFIX, fill_cache)(&fc, fill_target, &actual_fill);
+    assert(actual_fill >= BENCH_BATCH);
+
+    struct FCT_ENTRY **results = malloc(BENCH_BATCH * sizeof(*results));
+    size_t pool_keys = (size_t)repeat * BENCH_BATCH;
+    struct FCT_KEY *miss_pool = malloc(pool_keys * sizeof(*miss_pool));
+    struct FCT_KEY *hit_pool  = malloc(pool_keys * sizeof(*hit_pool));
+    struct FCT_KEY *all_batches = malloc(pool_keys * sizeof(*all_batches));
+    assert(results && miss_pool && hit_pool && all_batches);
+
+    for (size_t i = 0; i < pool_keys; i++) {
+        FCT_MAKE_RANDOM_KEY(&miss_pool[i]);
+        hit_pool[i] = hit_keys[xorshift64() % actual_fill];
+    }
+
+    unsigned nb_hit = BENCH_BATCH * hit_pct / 100;
+    for (unsigned r = 0; r < repeat; r++) {
+        struct FCT_KEY *bp = all_batches + (size_t)r * BENCH_BATCH;
+        const struct FCT_KEY *hp = hit_pool + (size_t)r * BENCH_BATCH;
+        const struct FCT_KEY *mp = miss_pool + (size_t)r * BENCH_BATCH;
+        for (unsigned i = 0; i < nb_hit; i++)
+            bp[i] = hp[i];
+        for (unsigned i = nb_hit; i < BENCH_BATCH; i++)
+            bp[i] = mp[i - nb_hit];
+    }
+
+    unsigned warmup = flow_cache_test_warmup;
+    if (warmup > repeat)
+        warmup = repeat;
+    for (unsigned r = 0; r < warmup; r++) {
+        FC_CALL(FCT_PREFIX, cache_lookup_batch)(&fc,
+                            all_batches + (size_t)r * BENCH_BATCH,
+                            BENCH_BATCH, results);
+    }
+
+    uint64_t total_cy = 0;
+    for (unsigned r = 0; r < repeat; r++) {
+        const struct FCT_KEY *bp = all_batches + (size_t)r * BENCH_BATCH;
+        uint64_t t0 = tsc_start();
+        FC_CALL(FCT_PREFIX, cache_lookup_batch)(&fc, bp, BENCH_BATCH, results);
+        uint64_t t1 = tsc_end();
+        total_cy += t1 - t0;
+    }
+
+    free(all_batches);
+    free(hit_pool);
+    free(miss_pool);
+    free(results);
+    free(hit_keys);
+
+    return (double)total_cy / (double)((uint64_t)repeat * BENCH_BATCH);
+}
+
+static double
+FCT_FN(FCT_PREFIX,measure_single_find)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+                             struct FCT_ENTRY *pool, unsigned max_entries,
+                             unsigned repeat, int hit)
+{
+    struct FCT_CACHE fc;
+    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries,
+                                    flow_cache_test_backend, 0,
+                                    NULL, NULL, NULL);
+
+    unsigned actual_fill;
+    struct FCT_KEY *hit_keys =
+        FCT_FN(FCT_PREFIX, fill_cache)(&fc, max_entries * 3 / 4, &actual_fill);
+    assert(actual_fill > 0);
+
+    unsigned nkeys = repeat * 4;
+    if (nkeys > 200000)
+        nkeys = 200000;
+
+    struct FCT_KEY *keys = malloc((size_t)nkeys * sizeof(*keys));
+    assert(keys);
+    for (unsigned i = 0; i < nkeys; i++) {
+        if (hit)
+            keys[i] = hit_keys[xorshift64() % actual_fill];
+        else
+            FCT_MAKE_RANDOM_KEY(&keys[i]);
+    }
+
+    uint64_t total_cy = 0;
+    for (unsigned i = 0; i < nkeys; i++) {
+        uint64_t t0 = tsc_start();
+        struct FCT_ENTRY *e __attribute__((unused)) =
+            FC_CALL(FCT_PREFIX, cache_find)(&fc, &keys[i]);
+        uint64_t t1 = tsc_end();
+        total_cy += t1 - t0;
+    }
+
+    free(keys);
+    free(hit_keys);
+    return (double)total_cy / nkeys;
+}
+
+static double
+FCT_FN(FCT_PREFIX,measure_expire_full)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+                             struct FCT_ENTRY *pool, unsigned max_entries,
+                             uint64_t *evicted_out)
+{
+    struct FCT_CACHE fc;
+    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk, pool, max_entries,
+                                    flow_cache_test_backend, 1,
+                                    NULL, NULL, NULL);
+
+    unsigned filled;
+    struct FCT_KEY *keys =
+        FCT_FN(FCT_PREFIX, fill_cache)(&fc, max_entries, &filled);
+    (void)filled;
+
+    struct timespec delay = { .tv_sec = 0, .tv_nsec = 10000000 };
+    nanosleep(&delay, NULL);
+    uint64_t later = flow_cache_rdtsc();
+
+    uint64_t t0 = tsc_start();
+    FC_CALL(FCT_PREFIX, cache_expire)(&fc, later);
+    uint64_t t1 = tsc_end();
+
+    struct flow_cache_stats st;
+    FC_CALL(FCT_PREFIX, cache_stats)(&fc, &st);
+    free(keys);
+
+    *evicted_out = st.evictions;
+    return (st.evictions > 0) ? (double)(t1 - t0) / (double)st.evictions : 0.0;
+}
+
+static void
+FCT_FN(FCT_PREFIX,measure_pkt_loop)(struct rix_hash_bucket_s *buckets, unsigned nb_bk_use,
+                          struct FCT_ENTRY *pool, unsigned max_entries,
+                          unsigned repeat, struct flow_cache_pkt_bench_result *out)
+{
+    unsigned total_slots = nb_bk_use * RIX_HASH_BUCKET_ENTRY_SZ;
+    struct FCT_CACHE fc;
+    FC_CALL(FCT_PREFIX, cache_init)(&fc, buckets, nb_bk_use, pool, max_entries,
+                                    flow_cache_test_backend, 1,
+                                    NULL, NULL, NULL);
+
+    unsigned prefill = total_slots - (total_slots >> 2) - BENCH_BATCH;
+    if (prefill > max_entries)
+        prefill = max_entries * 70 / 100;
+    unsigned filled;
+    struct FCT_KEY *prefill_keys =
+        FCT_FN(FCT_PREFIX, fill_cache)(&fc, prefill, &filled);
+
+    struct timespec age_delay = { .tv_sec = 0, .tv_nsec = 5000000 };
+    nanosleep(&age_delay, NULL);
+
+    size_t total_keys = (size_t)repeat * BENCH_BATCH;
+    struct FCT_KEY *pkt_keys = malloc(total_keys * sizeof(*pkt_keys));
+    struct FCT_ENTRY **results = malloc(BENCH_BATCH * sizeof(*results));
+    assert(pkt_keys && results);
+
+    unsigned nb_hit_per_batch = BENCH_BATCH * 90 / 100;
+    unsigned active_flows = filled / 2;
+    if (active_flows < 1)
+        active_flows = 1;
+    for (unsigned r = 0; r < repeat; r++) {
+        struct FCT_KEY *bp = pkt_keys + (size_t)r * BENCH_BATCH;
+        for (unsigned i = 0; i < nb_hit_per_batch; i++)
+            bp[i] = prefill_keys[xorshift64() % active_flows];
+        for (unsigned i = nb_hit_per_batch; i < BENCH_BATCH; i++)
+            FCT_MAKE_RANDOM_KEY(&bp[i]);
+    }
+    free(prefill_keys);
+
+    uint64_t total_lookup_cy = 0;
+    uint64_t total_expire_cy = 0;
+    unsigned total_hits = 0, total_misses = 0, total_inserts = 0;
+    unsigned total_expire_calls = 0;
+
+    for (unsigned r = 0; r < repeat; r++) {
+        const struct FCT_KEY *batch_keys =
+            pkt_keys + (size_t)r * BENCH_BATCH;
+        uint64_t now = flow_cache_rdtsc();
+
+        uint64_t t0 = tsc_start();
+        FC_CALL(FCT_PREFIX, cache_lookup_batch)(&fc, batch_keys, BENCH_BATCH, results);
+
+        unsigned batch_misses = 0;
+        for (unsigned i = 0; i < BENCH_BATCH; i++) {
+            if (results[i] != NULL) {
+                FC_CALL(FCT_PREFIX, cache_touch)(results[i], now);
+                TP(results[i])->packets++;
+                TP(results[i])->bytes += 64;
+                total_hits++;
+            } else {
+                struct FCT_ENTRY *e =
+                    FC_CALL(FCT_PREFIX, cache_insert)(&fc, &batch_keys[i], now);
+                if (e)
+                    total_inserts++;
+                total_misses++;
+                batch_misses++;
+            }
+        }
+        uint64_t t1 = tsc_end();
+        total_lookup_cy += t1 - t0;
+
+        FC_CALL(FCT_PREFIX, cache_adjust_timeout)(&fc, batch_misses);
+
+        uint64_t te0 = tsc_start();
+        FC_CALL(FCT_PREFIX, cache_expire)(&fc, now);
+        uint64_t te1 = tsc_end();
+        total_expire_cy += te1 - te0;
+        total_expire_calls++;
+    }
+
+    struct flow_cache_stats st;
+    FC_CALL(FCT_PREFIX, cache_stats)(&fc, &st);
+
+    out->total_pkts = repeat * BENCH_BATCH;
+    out->total_hits = total_hits;
+    out->total_misses = total_misses;
+    out->total_inserts = total_inserts;
+    out->total_expire_calls = total_expire_calls;
+    out->total_evictions = st.evictions;
+    out->final_entries = st.nb_entries;
+    out->total_slots = total_slots;
+    out->lookup_insert_cy_per_pkt = (double)total_lookup_cy / out->total_pkts;
+    out->expire_cy_per_call = (double)total_expire_cy / total_expire_calls;
+    out->expire_cy_per_pkt = (double)total_expire_cy / out->total_pkts;
+
+    free(pkt_keys);
+    free(results);
+}
+
+static FLOW_CACHE_TEST_NOINLINE void
+FCT_FN(FCT_PREFIX,perf_insert_case)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+                          struct FCT_ENTRY *pool, unsigned max_entries,
+                          unsigned repeat __attribute__((unused)))
+{
+    unsigned inserted = 0;
+    double cy = FCT_FN(FCT_PREFIX, measure_insert)(buckets, nb_bk, pool,
+                                                   max_entries, &inserted);
+    flow_cache_test_emit_result(FCT_VARIANT, "insert",
+                                "cycles/insert", cy, max_entries, nb_bk,
+                                repeat, flow_cache_test_backend,
+                                flow_cache_test_selected_backend(FCT_VARIANT, buckets,
+                                                                 nb_bk, pool,
+                                                                 max_entries));
+}
+
+static FLOW_CACHE_TEST_NOINLINE void
+FCT_FN(FCT_PREFIX,perf_lookup_hit80_case)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+                                struct FCT_ENTRY *pool, unsigned max_entries,
+                                unsigned repeat)
+{
+    double cy = FCT_FN(FCT_PREFIX, measure_lookup_hit_rate)(buckets, nb_bk, pool,
+                                                            max_entries, repeat,
+                                                            80);
+    flow_cache_test_emit_result(FCT_VARIANT, "lookup_hit80",
+                                "cycles/key", cy, max_entries, nb_bk,
+                                repeat, flow_cache_test_backend,
+                                flow_cache_test_selected_backend(FCT_VARIANT, buckets,
+                                                                 nb_bk, pool,
+                                                                 max_entries));
+}
+
+static FLOW_CACHE_TEST_NOINLINE void
+FCT_FN(FCT_PREFIX,perf_find_single_hit_case)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+                                   struct FCT_ENTRY *pool, unsigned max_entries,
+                                   unsigned repeat)
+{
+    double cy = FCT_FN(FCT_PREFIX, measure_single_find)(buckets, nb_bk, pool,
+                                                        max_entries, repeat, 1);
+    flow_cache_test_emit_result(FCT_VARIANT, "find_single_hit",
+                                "cycles/key", cy, max_entries, nb_bk,
+                                repeat, flow_cache_test_backend,
+                                flow_cache_test_selected_backend(FCT_VARIANT, buckets,
+                                                                 nb_bk, pool,
+                                                                 max_entries));
+}
+
+static FLOW_CACHE_TEST_NOINLINE void
+FCT_FN(FCT_PREFIX,perf_find_single_miss_case)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+                                    struct FCT_ENTRY *pool, unsigned max_entries,
+                                    unsigned repeat)
+{
+    double cy = FCT_FN(FCT_PREFIX, measure_single_find)(buckets, nb_bk, pool,
+                                                        max_entries, repeat, 0);
+    flow_cache_test_emit_result(FCT_VARIANT, "find_single_miss",
+                                "cycles/key", cy, max_entries, nb_bk,
+                                repeat, flow_cache_test_backend,
+                                flow_cache_test_selected_backend(FCT_VARIANT, buckets,
+                                                                 nb_bk, pool,
+                                                                 max_entries));
+}
+
+static FLOW_CACHE_TEST_NOINLINE void
+FCT_FN(FCT_PREFIX,perf_expire_full_case)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+                               struct FCT_ENTRY *pool, unsigned max_entries,
+                               unsigned repeat __attribute__((unused)))
+{
+    uint64_t evicted = 0;
+    double cy = FCT_FN(FCT_PREFIX, measure_expire_full)(buckets, nb_bk, pool,
+                                                        max_entries, &evicted);
+    (void)evicted;
+    flow_cache_test_emit_result(FCT_VARIANT, "expire_full",
+                                "cycles/eviction", cy, max_entries, nb_bk,
+                                repeat, flow_cache_test_backend,
+                                flow_cache_test_selected_backend(FCT_VARIANT, buckets,
+                                                                 nb_bk, pool,
+                                                                 max_entries));
+}
+
+static FLOW_CACHE_TEST_NOINLINE void
+FCT_FN(FCT_PREFIX,perf_pkt_std_case)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+                           struct FCT_ENTRY *pool, unsigned max_entries,
+                           unsigned repeat)
+{
+    struct flow_cache_pkt_bench_result result;
+    FCT_FN(FCT_PREFIX, measure_pkt_loop)(buckets, nb_bk, pool, max_entries,
+                                         repeat, &result);
+    flow_cache_test_emit_pkt_result(FCT_VARIANT, "pkt_std",
+                                    max_entries, nb_bk, repeat,
+                                    flow_cache_test_backend,
+                                    flow_cache_test_selected_backend(FCT_VARIANT, buckets,
+                                                                     nb_bk, pool,
+                                                                     max_entries),
+                                    &result);
+}
+
+static FLOW_CACHE_TEST_NOINLINE void
+FCT_FN(FCT_PREFIX,perf_pkt_tight_case)(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
+                             struct FCT_ENTRY *pool, unsigned max_entries,
+                             unsigned repeat)
+{
+    (void)nb_bk;
+    unsigned nb_bk_tight = rix_hash_nb_bk_hint(max_entries / 2u);
+    while (nb_bk_tight > 1 &&
+           max_entries < ((uint64_t)nb_bk_tight * RIX_HASH_BUCKET_ENTRY_SZ * 3 >> 2))
+        nb_bk_tight >>= 1;
+
+    struct flow_cache_pkt_bench_result result;
+    FCT_FN(FCT_PREFIX, measure_pkt_loop)(buckets, nb_bk_tight, pool, max_entries,
+                                         repeat, &result);
+    flow_cache_test_emit_pkt_result(FCT_VARIANT, "pkt_tight",
+                                    max_entries, nb_bk_tight, repeat,
+                                    flow_cache_test_backend,
+                                    flow_cache_test_selected_backend(FCT_VARIANT, buckets,
+                                                                     nb_bk_tight, pool,
+                                                                     max_entries),
+                                    &result);
 }
 
 /*===========================================================================

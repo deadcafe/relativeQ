@@ -125,6 +125,18 @@ FC_FN(FC_PREFIX, cache_expire_pf_dist)(const struct FC_CACHE *fc)
     return FLOW_CACHE_EXPIRE_PF_DIST;
 }
 
+static inline void
+FC_FN(FC_PREFIX, cache_prefetch_remove_bucket)(struct FC_CACHE *fc,
+                                               unsigned bk)
+{
+    struct rix_hash_bucket_s *bucket = &fc->buckets[bk];
+
+    /* remove() first scans idx[] (CL1), then clears both idx[] and hash[]. */
+    __builtin_prefetch(&bucket->idx[0], 0, 1);
+    __builtin_prefetch(&bucket->idx[0], 1, 1);
+    __builtin_prefetch(&bucket->hash[0], 1, 1);
+}
+
 FC_IMPL_ATTR void
 FC_FN(FC_PREFIX, cache_expire_2stage)(struct FC_CACHE *fc,
                                       uint64_t now);
@@ -465,9 +477,9 @@ FC_FN(FC_PREFIX, cache_expire)(struct FC_CACHE *fc,
         if (now - entry->last_ts <= timeout)
             continue;
 
-        /* cur_hash tracks the current bucket, so remove() only needs this
-         * bucket line once it reaches the delayed stage. */
-        __builtin_prefetch(&fc->buckets[entry->cur_hash & bk_mask], 1, 1);
+        /* Warm both bucket lines used by remove(): idx[] scan, then clears. */
+        FC_CALL(FC_PREFIX, cache_prefetch_remove_bucket)(fc,
+                                                         entry->cur_hash & bk_mask);
         pending[slot] = entry;
     }
 
@@ -513,7 +525,7 @@ FC_FN(FC_PREFIX, cache_expire_2stage)(struct FC_CACHE *fc,
         struct FC_ENTRY *mid = &fc->pool[mid_idx];
         if (mid->last_ts != 0 && now - mid->last_ts > timeout) {
             unsigned bk = mid->cur_hash & fc->ht_head.rhh_mask;
-            __builtin_prefetch(&fc->buckets[bk], 1, 1);
+            FC_CALL(FC_PREFIX, cache_prefetch_remove_bucket)(fc, bk);
         }
 
         /* Stage 2: process current entry (bucket warm if expired) */

@@ -45,15 +45,18 @@ OPTLEVEL    ?= 3
 
 # -O3 for test/bench; -I$(FCACHEDIR) resolves #include "flow_cache.h" etc.
 CFLAGS       = -std=gnu11 -O$(OPTLEVEL) $(SIMD_FLAGS) $(WARN) \
-               -I$(TOPDIR)/include -I$(FCACHEDIR)
+               -I$(TOPDIR)/include -I$(FCACHEDIR) \
+               -DFLOW_CACHE_TEST_CC=\"$(CC)\" \
+               -DFLOW_CACHE_TEST_OPTLEVEL=$(OPTLEVEL)
 
 LIBFCACHE    = $(FCACHEDIR)/libfcache.a
 
 TEST_TARGET  = flow_cache_test
 TEST_SRC     = flow_cache_test.c
 TEST_HDRS    = flow_cache_test_body.h
+PERF_SCRIPT  = flow_cache_perf.sh
 
-.PHONY: all clean test bench
+.PHONY: all clean test bench perf
 
 all: $(TEST_TARGET)
 
@@ -70,6 +73,15 @@ test: $(TEST_TARGET)
 bench: $(TEST_TARGET)
 	./$(TEST_TARGET) 100000
 	./$(TEST_TARGET) 1000000
+
+perf: $(TEST_TARGET) $(PERF_SCRIPT)
+	CC=$(CC) OPTLEVEL=$(OPTLEVEL) SIMD=$(SIMD) \
+	PERF_CASE="$(PERF_CASE)" PERF_BACKEND="$(PERF_BACKEND)" \
+	PERF_EVENTS="$(PERF_EVENTS)" PERF_REPEAT="$(PERF_REPEAT)" \
+	PERF_ENTRIES="$(PERF_ENTRIES)" PERF_WARMUP="$(PERF_WARMUP)" \
+	PERF_SEED="$(PERF_SEED)" PERF_CPU="$(PERF_CPU)" \
+	PERF_STAT_REPEAT="$(PERF_STAT_REPEAT)" \
+	./$(PERF_SCRIPT)
 
 clean:
 	rm -f $(TEST_TARGET) *~ core core.*
