@@ -105,6 +105,10 @@ struct flowu_entry *flowu_cache_find(struct flowu_cache *fc, const struct flowu_
 struct flowu_entry *flowu_cache_insert(struct flowu_cache *fc, const struct flowu_key *key,
                                        uint64_t now)
 { return flowu_cache_ops_from(fc)->insert(fc, key, now); }
+void flowu_cache_insert_batch(struct flowu_cache *fc, const struct flowu_key *keys,
+                              unsigned nb_keys, uint64_t now,
+                              struct flowu_entry **results)
+{ flowu_cache_ops_from(fc)->insert_batch(fc, keys, nb_keys, now, results); }
 void flowu_cache_remove(struct flowu_cache *fc, struct flowu_entry *entry)
 { flowu_cache_ops_from(fc)->remove(fc, entry); }
 void flowu_cache_expire(struct flowu_cache *fc, uint64_t now)

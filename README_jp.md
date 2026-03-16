@@ -695,7 +695,7 @@ flow4_cache_flush(&fc);
 `samples/test/flow_cache_test --backend auto|gen|sse|avx2|avx512`
 でも backend を固定でき、各バリアントで実際に選ばれた backend を表示します。
 さらに perf 向けの単一 workload 実行として `--bench-case`,
-`--list-bench-cases`, `--json` も使えます。
+`--list-bench-cases`, `--json`, `--pause-before-measure` も使えます。
 packet loop 系の case には `pkt_hit_only`, `pkt_miss_only`,
 `pkt_std`（90% hit / 10% miss）, `pkt_tight` があります。
 組み込みの flow cache バリアントでは、hash stage に 20 バイト / 44 バイト
@@ -703,6 +703,9 @@ key 向けの固定長 CRC32 fast path も入り、ホットパスで汎用 `has
 ループを避けます。
 insert の fast path では、duplicate / empty-slot scan の前に
 2本の candidate bucket line も先に温めます。
+miss が多い batch では、`flow*_cache_insert_batch()` が miss 群の hash を
+先にまとめて作り、その plan から candidate bucket を温めて、各 key を
+再 hash せずに insert 段へ渡します。
 packet loop の perf case では、hit 確定後に後段更新用の CL1 も温め、
 hit-only が続くと `cache_expire()` の呼び出し間隔を最大 8 batch まで広げて
 steady-state 寄りの挙動を測ります。
@@ -927,6 +930,10 @@ make -C samples
 
 # perf stat / perf record 向けの単一 workload 実行
 ./samples/test/flow_cache_test --bench-case flow4:pkt_std --backend avx2 --json
+
+# measured loop 直前で一度停止し、その後に perf attach
+./samples/test/flow_cache_test --bench-case flow4:pkt_hit_only \
+    --backend avx2 --pause-before-measure --json
 
 # perf stat wrapper
 make -C samples/test perf PERF_CASE=flow4:pkt_std PERF_BACKEND=avx2

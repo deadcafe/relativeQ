@@ -309,6 +309,9 @@ called to initialize `entry->userdata`.
 The insert fast path also warms the two candidate bucket lines before
 the duplicate / empty-slot scan, so the common case does not wait for
 that bucket fetch as late.
+For miss-heavy batches, `cache_insert_batch()` precomputes hashes once,
+warms candidate buckets from that plan, and then enters the hashed
+insert path without re-hashing each key.
 
 Rationale:
 - The lookup just ran; bucket cache lines are still in L2 (~5 cy
@@ -756,7 +759,7 @@ between multiple precompiled backends.
 | `include/flow_cache_decl.h` | Cache struct, API declarations, inline helpers | public variant `.h` files |
 | `src/backend.h` | Backend ops table layout | fat-backend `.c` files |
 | `src/hash_direct.h` | direct-find `RIX_HASH_GENERATE_STATIC_EX` expansion | fat-backend `.c`, test-only raw-hash `.c` |
-| `src/body.h` | init, insert, lookup_batch, expire, stats, perf pkt-loop mixes | `.c` files |
+| `src/body.h` | init, insert, insert_batch, lookup_batch, expire, stats, perf pkt-loop mixes | `.c` files |
 | `test/fcache_test_body.h` | Test + benchmark functions | test `.c` |
 
 ### 11.3 Adding a new variant

@@ -126,6 +126,16 @@ flow4_cache_insert(struct flow4_cache *fc,
 }
 
 void
+flow4_cache_insert_batch(struct flow4_cache *fc,
+                         const struct flow4_key *keys,
+                         unsigned nb_keys,
+                         uint64_t now,
+                         struct flow4_entry **results)
+{
+    flow4_cache_ops_from(fc)->insert_batch(fc, keys, nb_keys, now, results);
+}
+
+void
 flow4_cache_remove(struct flow4_cache *fc, struct flow4_entry *entry)
 {
     flow4_cache_ops_from(fc)->remove(fc, entry);

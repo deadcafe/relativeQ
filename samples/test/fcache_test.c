@@ -12,6 +12,8 @@
 #include <inttypes.h>
 #include <sys/mman.h>
 #include <time.h>
+#include <signal.h>
+#include <unistd.h>
 #include <getopt.h>
 
 #include "flow_cache.h"
@@ -41,6 +43,24 @@ extern const struct flow4_ht_direct_ops flow4_ht_direct_ops_avx512;
 
 static int flow_cache_test_json = 0;
 static unsigned flow_cache_test_warmup = 50;
+
+#define FLOW_CACHE_TEST_MEASURE_CTRL_DECLARED 1
+int flow_cache_test_pause_before_measure = 0;
+
+void flow_cache_test_wait_for_measure(const char *phase);
+
+void
+flow_cache_test_wait_for_measure(const char *phase)
+{
+    if (!flow_cache_test_pause_before_measure)
+        return;
+
+    flow_cache_test_pause_before_measure = 0;
+    fprintf(stderr, "[perf-ready] pid=%ld phase=%s\n", (long)getpid(), phase);
+    fflush(stderr);
+    fflush(stdout);
+    raise(SIGSTOP);
+}
 
 typedef enum {
     FLOW_CACHE_BENCH_NONE = 0,
@@ -1076,6 +1096,7 @@ usage(const char *prog)
             "                     (default: auto)\n"
             "  -c, --bench-case C Run a single benchmark case for perf/stat collection\n"
             "  -j, --json         Print the selected benchmark result as one JSON line\n"
+            "  -P, --pause-before-measure  Stop once just before the measured loop\n"
             "  -r, --repeat N     Benchmark repeat count (default: auto)\n"
             "  -s, --seed N       Seed for random workload generation\n"
             "  -w, --warmup N     Warmup iterations for single benchmark cases\n"
@@ -1126,6 +1147,7 @@ main(int argc, char **argv)
         { "backend", required_argument, NULL, 'B' },
         { "bench-case", required_argument, NULL, 'c' },
         { "json",    no_argument,       NULL, 'j' },
+        { "pause-before-measure", no_argument, NULL, 'P' },
         { "repeat",  required_argument, NULL, 'r' },
         { "seed",    required_argument, NULL, 's' },
         { "warmup",  required_argument, NULL, 'w' },
@@ -1135,7 +1157,7 @@ main(int argc, char **argv)
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "n:b:B:c:jr:s:w:lh", long_opts, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "n:b:B:c:jPr:s:w:lh", long_opts, NULL)) != -1) {
         switch (opt) {
         case 'n':
             max_entries = flow_cache_pool_count((unsigned)strtoul(optarg, NULL, 0));
@@ -1162,6 +1184,9 @@ main(int argc, char **argv)
             break;
         case 'j':
             flow_cache_test_json = 1;
+            break;
+        case 'P':
+            flow_cache_test_pause_before_measure = 1;
             break;
         case 'r':
             repeat = (unsigned)strtoul(optarg, NULL, 0);

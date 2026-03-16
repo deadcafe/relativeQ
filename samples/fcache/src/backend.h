@@ -34,6 +34,11 @@ struct FCB_FN(FC_PREFIX, cache_ops) {
     struct FC_ENTRY *(*insert)(struct FC_CACHE *fc,
                                const struct FC_KEY *key,
                                uint64_t now);
+    void (*insert_batch)(struct FC_CACHE *fc,
+                         const struct FC_KEY *keys,
+                         unsigned nb_keys,
+                         uint64_t now,
+                         struct FC_ENTRY **results);
     void (*remove)(struct FC_CACHE *fc, struct FC_ENTRY *entry);
     void (*expire)(struct FC_CACHE *fc, uint64_t now);
     void (*expire_2stage)(struct FC_CACHE *fc, uint64_t now);

@@ -105,6 +105,10 @@ struct flow6_entry *flow6_cache_find(struct flow6_cache *fc, const struct flow6_
 struct flow6_entry *flow6_cache_insert(struct flow6_cache *fc, const struct flow6_key *key,
                                        uint64_t now)
 { return flow6_cache_ops_from(fc)->insert(fc, key, now); }
+void flow6_cache_insert_batch(struct flow6_cache *fc, const struct flow6_key *keys,
+                              unsigned nb_keys, uint64_t now,
+                              struct flow6_entry **results)
+{ flow6_cache_ops_from(fc)->insert_batch(fc, keys, nb_keys, now, results); }
 void flow6_cache_remove(struct flow6_cache *fc, struct flow6_entry *entry)
 { flow6_cache_ops_from(fc)->remove(fc, entry); }
 void flow6_cache_expire(struct flow6_cache *fc, uint64_t now)

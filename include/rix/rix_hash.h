@@ -459,23 +459,16 @@ name##_find(struct name *head,                                                \
 }                                                                             \
                                                                               \
 /* ================================================================== */      \
-/* Insert with cuckoo kickout                                         */      \
-/*                                                                    */      \
-/* Returns:                                                           */      \
-/*   NULL     - inserted successfully                                 */      \
-/*   elm      - table full (kickout exhausted)                        */      \
-/*   other    - duplicate found, returns the existing node            */      \
+/* Internal insert helper with precomputed hash                       */      \
 /* ================================================================== */      \
-attr struct type *                                                            \
-name##_insert(struct name *head,                                              \
-              struct rix_hash_bucket_s *buckets,                              \
-              struct type *base,                                              \
-              struct type *elm)                                               \
+static RIX_UNUSED RIX_FORCE_INLINE struct type *                              \
+name##_insert_hashed(struct name *head,                                       \
+                     struct rix_hash_bucket_s *buckets,                       \
+                     struct type *base,                                       \
+                     struct type *elm,                                        \
+                     union rix_hash_hash_u _h)                                \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
-    union rix_hash_hash_u _h =                                                \
-        hash_fn((const _RIX_HASH_KEY_TYPE(type, key_field) *)&elm->key_field, \
-                mask);                                                        \
     unsigned _bk0, _bk1;                                                      \
     uint32_t _fp;                                                             \
     uint32_t _hits_fp[2];                                                     \
@@ -596,6 +589,27 @@ name##_insert(struct name *head,                                              \
         /* Kickout exhausted; elm was not inserted */                         \
     }                                                                         \
     return elm; /* table full */                                              \
+}                                                                             \
+                                                                              \
+/* ================================================================== */      \
+/* Insert with cuckoo kickout                                         */      \
+/*                                                                    */      \
+/* Returns:                                                           */      \
+/*   NULL     - inserted successfully                                 */      \
+/*   elm      - table full (kickout exhausted)                        */      \
+/*   other    - duplicate found, returns the existing node            */      \
+/* ================================================================== */      \
+attr struct type *                                                            \
+name##_insert(struct name *head,                                              \
+              struct rix_hash_bucket_s *buckets,                              \
+              struct type *base,                                              \
+              struct type *elm)                                               \
+{                                                                             \
+    unsigned mask = head->rhh_mask;                                           \
+    union rix_hash_hash_u _h =                                                \
+        hash_fn((const _RIX_HASH_KEY_TYPE(type, key_field) *)&elm->key_field, \
+                mask);                                                        \
+    return name##_insert_hashed(head, buckets, base, elm, _h);                \
 }                                                                             \
                                                                               \
 /* ================================================================== */      \

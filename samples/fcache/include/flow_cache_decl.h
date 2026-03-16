@@ -506,6 +506,12 @@ struct FC_ENTRY *FCC_FN(FC_PREFIX, cache_insert)(struct FC_CACHE *fc,
                                        const struct FC_KEY *key,
                                        uint64_t now);
 
+void FCC_FN(FC_PREFIX, cache_insert_batch)(struct FC_CACHE *fc,
+                                 const struct FC_KEY *keys,
+                                 unsigned nb_keys,
+                                 uint64_t now,
+                                 struct FC_ENTRY **results);
+
 void FCC_FN(FC_PREFIX, cache_remove)(struct FC_CACHE *fc,
                             struct FC_ENTRY *entry);
 

@@ -694,7 +694,7 @@ flow4_cache_flush(&fc);
 For sample benchmarking/debugging, `samples/test/flow_cache_test` also accepts
 `--backend auto|gen|sse|avx2|avx512` and prints the actual backend selected per
 variant. For perf-friendly single-workload runs it also supports
-`--bench-case`, `--list-bench-cases`, and `--json`.
+`--bench-case`, `--list-bench-cases`, `--json`, and `--pause-before-measure`.
 Packet-loop cases include `pkt_hit_only`, `pkt_miss_only`, `pkt_std`
 (90% hit / 10% miss), and `pkt_tight`.
 For the built-in flow-cache variants, the hash stage also uses fixed-size
@@ -702,6 +702,9 @@ CRC32 fast paths for 20-byte and 44-byte keys, avoiding the generic
 `hash_bytes()` loop on the hot path.
 The insert fast path also warms the two candidate bucket lines before the
 duplicate / empty-slot scan.
+For miss-heavy batches, `flow*_cache_insert_batch()` precomputes the
+miss-group hashes, warms candidate buckets from that plan, and then runs
+the hashed insert path without re-hashing each key.
 For packet-loop perf cases, confirmed hits also prefetch CL1 before the
 post-lookup update, and hit-only streaks back off `cache_expire()` cadence
 up to 8 batches to model steady-state traffic more realistically.
@@ -924,6 +927,10 @@ make -C samples
 
 # Single workload for perf stat / perf record
 ./samples/test/flow_cache_test --bench-case flow4:pkt_std --backend avx2 --json
+
+# Pause once just before the measured loop, then attach perf manually
+./samples/test/flow_cache_test --bench-case flow4:pkt_hit_only \
+    --backend avx2 --pause-before-measure --json
 
 # Wrapper around perf stat
 make -C samples/test perf PERF_CASE=flow4:pkt_std PERF_BACKEND=avx2

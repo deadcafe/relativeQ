@@ -67,6 +67,7 @@ const struct flow4_cache_ops FC_BACKEND_OPS(flow4, FLOW_CACHE_BACKEND_NAME) = {
     FC_BACKEND_FN(flow4, FLOW_CACHE_BACKEND_NAME, cache_lookup_batch),
     FC_BACKEND_FN(flow4, FLOW_CACHE_BACKEND_NAME, cache_find),
     FC_BACKEND_FN(flow4, FLOW_CACHE_BACKEND_NAME, cache_insert),
+    FC_BACKEND_FN(flow4, FLOW_CACHE_BACKEND_NAME, cache_insert_batch),
     FC_BACKEND_FN(flow4, FLOW_CACHE_BACKEND_NAME, cache_remove),
     FC_BACKEND_FN(flow4, FLOW_CACHE_BACKEND_NAME, cache_expire),
     FC_BACKEND_FN(flow4, FLOW_CACHE_BACKEND_NAME, cache_expire_2stage),

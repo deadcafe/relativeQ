@@ -29,12 +29,22 @@
 extern flow_cache_backend_t flow_cache_test_backend;
 #endif
 
+#ifndef FLOW_CACHE_TEST_MEASURE_CTRL_DECLARED
+#define FLOW_CACHE_TEST_MEASURE_CTRL_DECLARED
+extern int flow_cache_test_pause_before_measure;
+void flow_cache_test_wait_for_measure(const char *phase);
+#endif
+
 #ifndef FLOW_CACHE_TEST_NOINLINE
 #if defined(__GNUC__) || defined(__clang__)
 #define FLOW_CACHE_TEST_NOINLINE __attribute__((noinline))
 #else
 #define FLOW_CACHE_TEST_NOINLINE
 #endif
+#endif
+
+#ifndef FLOW_CACHE_TEST_INSERT_BATCH_MIN
+#define FLOW_CACHE_TEST_INSERT_BATCH_MIN 64
 #endif
 
 #ifndef FLOW_CACHE_TEST_RESULT_TYPES_DEFINED
@@ -349,6 +359,7 @@ FCT_FN(FCT_PREFIX,measure_insert)(struct rix_hash_bucket_s *buckets, unsigned nb
     for (unsigned i = 0; i < max_entries; i++)
         FCT_MAKE_RANDOM_KEY(&prep.keys[i]);
 
+    flow_cache_test_wait_for_measure(FCT_VARIANT ":insert");
     unsigned inserted = 0;
     uint64_t total_cy = FCT_FN(FCT_PREFIX, run_insert_loop)(&prep, &inserted);
 
@@ -430,6 +441,7 @@ FCT_FN(FCT_PREFIX,measure_lookup_hit_rate)(struct rix_hash_bucket_s *buckets, un
                             BENCH_BATCH, prep.results);
     }
 
+    flow_cache_test_wait_for_measure(FCT_VARIANT ":lookup_hit_rate");
     uint64_t total_cy = FCT_FN(FCT_PREFIX, run_lookup_loop)(&prep);
 
     free(prep.all_batches);
@@ -491,6 +503,7 @@ FCT_FN(FCT_PREFIX,measure_single_find)(struct rix_hash_bucket_s *buckets, unsign
             FCT_MAKE_RANDOM_KEY(&prep.keys[i]);
     }
 
+    flow_cache_test_wait_for_measure(FCT_VARIANT ":find");
     uint64_t total_cy = FCT_FN(FCT_PREFIX, run_find_loop)(&prep);
 
     free(prep.keys);
@@ -531,6 +544,7 @@ FCT_FN(FCT_PREFIX,measure_expire_full)(struct rix_hash_bucket_s *buckets, unsign
     nanosleep(&delay, NULL);
     prep.later = flow_cache_rdtsc();
 
+    flow_cache_test_wait_for_measure(FCT_VARIANT ":expire");
     uint64_t total_cy = FCT_FN(FCT_PREFIX, run_expire_loop)(&prep);
 
     struct flow_cache_stats st;
@@ -581,6 +595,8 @@ FCT_FN(FCT_PREFIX, run_pkt_loop_inner)(struct FCT_FN(FCT_PREFIX, prepared_pkt_lo
         const struct FCT_KEY *batch_keys =
             prep->pkt_keys + (size_t)r * BENCH_BATCH;
         uint64_t now = flow_cache_rdtsc();
+        struct FCT_KEY miss_keys[BENCH_BATCH];
+        struct FCT_ENTRY *miss_results[BENCH_BATCH];
 
         uint64_t t0 = tsc_start();
         FC_CALL(FCT_PREFIX, cache_lookup_batch)(&prep->fc, batch_keys,
@@ -602,17 +618,32 @@ FCT_FN(FCT_PREFIX, run_pkt_loop_inner)(struct FCT_FN(FCT_PREFIX, prepared_pkt_lo
                 }
                 total_hits++;
             } else {
-                FCT_FN(FCT_PREFIX, flush_hit_update)(&pending_hit,
-                                                     &pending_packets, now);
-                struct FCT_ENTRY *e =
-                    FC_CALL(FCT_PREFIX, cache_insert)(&prep->fc, &batch_keys[i], now);
-                if (e)
-                    total_inserts++;
-                total_misses++;
+                miss_keys[batch_misses] = batch_keys[i];
                 batch_misses++;
+                total_misses++;
             }
         }
         FCT_FN(FCT_PREFIX, flush_hit_update)(&pending_hit, &pending_packets, now);
+
+        if (batch_misses > 0) {
+            if (batch_misses >= FLOW_CACHE_TEST_INSERT_BATCH_MIN) {
+                FC_CALL(FCT_PREFIX, cache_insert_batch)(&prep->fc, miss_keys,
+                                                        batch_misses, now,
+                                                        miss_results);
+                for (unsigned i = 0; i < batch_misses; i++) {
+                    if (miss_results[i] != NULL)
+                        total_inserts++;
+                }
+            } else {
+                for (unsigned i = 0; i < batch_misses; i++) {
+                    struct FCT_ENTRY *e =
+                        FC_CALL(FCT_PREFIX, cache_insert)(&prep->fc,
+                                                          &miss_keys[i], now);
+                    if (e != NULL)
+                        total_inserts++;
+                }
+            }
+        }
         total_lookup_cy += tsc_end() - t0;
 
         FC_CALL(FCT_PREFIX, cache_adjust_timeout)(&prep->fc, batch_misses);
@@ -702,6 +733,7 @@ FCT_FN(FCT_PREFIX,measure_pkt_loop_mix)(struct rix_hash_bucket_s *buckets, unsig
     }
     free(prefill_keys);
 
+    flow_cache_test_wait_for_measure(FCT_VARIANT ":pkt_loop");
     FCT_FN(FCT_PREFIX, run_pkt_loop_inner)(&prep, out);
 
     struct flow_cache_stats st;

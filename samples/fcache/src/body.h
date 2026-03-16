@@ -74,6 +74,63 @@ FC_FN(FC_PREFIX, cache_prefetch_hit_write)(struct FC_ENTRY *entry)
     __builtin_prefetch((char *)entry + FLOW_CACHE_LINE_SIZE, 1, 1);
 }
 
+static RIX_FORCE_INLINE void
+FC_FN(FC_PREFIX, cache_prefetch_insert_hash)(const struct FC_CACHE *fc,
+                                             union rix_hash_hash_u h)
+{
+    unsigned bk0, bk1;
+    uint32_t fp;
+    unsigned mask = fc->ht_head.rhh_mask;
+
+    _rix_hash_buckets(h, mask, &bk0, &bk1, &fp);
+    (void)fp;
+    _rix_hash_prefetch_bucket_insert(fc->buckets + bk0);
+    if (bk1 != bk0)
+        _rix_hash_prefetch_bucket_insert(fc->buckets + bk1);
+}
+
+static RIX_FORCE_INLINE struct FC_ENTRY *
+FC_FN(FC_PREFIX, cache_evict_bucket_oldest_hashed)(struct FC_CACHE *fc,
+                                                   union rix_hash_hash_u h)
+{
+    unsigned bk0, bk1;
+    uint32_t fp;
+    unsigned mask = fc->ht_head.rhh_mask;
+
+    _rix_hash_buckets(h, mask, &bk0, &bk1, &fp);
+    (void)fp;
+
+    struct FC_ENTRY *oldest = NULL;
+    uint64_t oldest_ts = UINT64_MAX;
+
+    for (int i = 0; i < 2; i++) {
+        struct rix_hash_bucket_s *bk = &fc->buckets[i == 0 ? bk0 : bk1];
+        for (unsigned s = 0; s < RIX_HASH_BUCKET_ENTRY_SZ; s++) {
+            unsigned nidx = bk->idx[s];
+            if (nidx == (unsigned)RIX_NIL)
+                continue;
+            struct FC_ENTRY *e =
+                FC_CALL(FC_HT_PREFIX, hptr)(fc->pool, nidx);
+            if (e->last_ts == 0)
+                continue;
+            if (e->last_ts < oldest_ts) {
+                oldest_ts = e->last_ts;
+                oldest = e;
+            }
+        }
+    }
+
+    if (oldest == NULL)
+        return NULL;
+
+    FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
+                                   fc->pool, oldest);
+    FC_CALL(FC_PREFIX, call_fini_cb)(fc, oldest, FLOW_CACHE_FINI_EVICTED);
+    oldest->last_ts = 0;
+    fc->stats.evictions++;
+    return oldest;
+}
+
 /*===========================================================================
  * Internal: fill-rate-driven expire pressure
  *
@@ -245,48 +302,6 @@ FC_FN(FC_PREFIX, cache_evict_one)(struct FC_CACHE *fc, uint64_t now)
  * Guarantees a free pool entry AND a free bucket slot for subsequent
  * ht_insert (fast path, no cuckoo needed).
  *===========================================================================*/
-static struct FC_ENTRY *
-FC_FN(FC_PREFIX, cache_evict_bucket_oldest)(struct FC_CACHE *fc,
-                                   const struct FC_KEY *key)
-{
-    unsigned mask = fc->ht_head.rhh_mask;
-    union rix_hash_hash_u h = FC_HT_HASH_FN(key, mask);
-    unsigned bk0, bk1;
-    uint32_t fp;
-    _rix_hash_buckets(h, mask, &bk0, &bk1, &fp);
-    (void)fp;
-
-    struct FC_ENTRY *oldest = NULL;
-    uint64_t oldest_ts = UINT64_MAX;
-
-    for (int i = 0; i < 2; i++) {
-        struct rix_hash_bucket_s *bk = &fc->buckets[i == 0 ? bk0 : bk1];
-        for (unsigned s = 0; s < RIX_HASH_BUCKET_ENTRY_SZ; s++) {
-            unsigned nidx = bk->idx[s];
-            if (nidx == (unsigned)RIX_NIL)
-                continue;
-            struct FC_ENTRY *e =
-                FC_CALL(FC_HT_PREFIX, hptr)(fc->pool, nidx);
-            if (e->last_ts == 0)
-                continue;
-            if (e->last_ts < oldest_ts) {
-                oldest_ts = e->last_ts;
-                oldest = e;
-            }
-        }
-    }
-
-    if (oldest == NULL)
-        return NULL;
-
-    FC_CALL(FC_HT_PREFIX, remove)(&fc->ht_head, fc->buckets,
-                                   fc->pool, oldest);
-    FC_CALL(FC_PREFIX, call_fini_cb)(fc, oldest, FLOW_CACHE_FINI_EVICTED);
-    oldest->last_ts = 0;
-    fc->stats.evictions++;
-    return oldest;
-}
-
 /*===========================================================================
  * Insert - never fails (cache semantics: forced eviction as last resort)
  *
@@ -294,10 +309,11 @@ FC_FN(FC_PREFIX, cache_evict_bucket_oldest)(struct FC_CACHE *fc,
  * The bucket eviction frees both a pool entry and a bucket slot, so
  * ht_insert always finds an empty slot in the fast path.
  *===========================================================================*/
-FC_IMPL_ATTR struct FC_ENTRY *
-FC_FN(FC_PREFIX, cache_insert)(struct FC_CACHE *fc,
-                     const struct FC_KEY *key,
-                     uint64_t now)
+static RIX_FORCE_INLINE struct FC_ENTRY *
+FC_FN(FC_PREFIX, cache_insert_hashed)(struct FC_CACHE *fc,
+                            const struct FC_KEY *key,
+                            union rix_hash_hash_u h,
+                            uint64_t now)
 {
     struct FC_ENTRY *entry = RIX_SLIST_FIRST(&fc->free_head, fc->pool);
 
@@ -306,7 +322,7 @@ FC_FN(FC_PREFIX, cache_insert)(struct FC_CACHE *fc,
         if (entry == NULL) {
             /* Pool exhausted, no expired entry found.
              * Force-evict the oldest entry in the target bucket. */
-            entry = FC_CALL(FC_PREFIX, cache_evict_bucket_oldest)(fc, key);
+            entry = FC_CALL(FC_PREFIX, cache_evict_bucket_oldest_hashed)(fc, h);
             if (entry == NULL)
                 return NULL;  /* both buckets empty - shouldn't happen */
         }
@@ -318,8 +334,8 @@ FC_FN(FC_PREFIX, cache_insert)(struct FC_CACHE *fc,
     entry->last_ts = now;
 
     struct FC_ENTRY *dup =
-        FC_CALL(FC_HT_PREFIX, insert)(&fc->ht_head, fc->buckets,
-                                       fc->pool, entry);
+        FC_CALL(FC_HT_PREFIX, insert_hashed)(&fc->ht_head, fc->buckets,
+                                             fc->pool, entry, h);
     if (dup == NULL) {
         /* New entry placed successfully - let caller initialize payload. */
         FC_CALL(FC_PREFIX, call_init_cb)(fc, entry);
@@ -338,6 +354,47 @@ FC_FN(FC_PREFIX, cache_insert)(struct FC_CACHE *fc,
     RIX_SLIST_INSERT_HEAD(&fc->free_head, fc->pool, entry, free_link);
     dup->last_ts = now;
     return dup;
+}
+
+FC_IMPL_ATTR struct FC_ENTRY *
+FC_FN(FC_PREFIX, cache_insert)(struct FC_CACHE *fc,
+                     const struct FC_KEY *key,
+                     uint64_t now)
+{
+    union rix_hash_hash_u h = FC_HT_HASH_FN(key, fc->ht_head.rhh_mask);
+
+    return FC_CALL(FC_PREFIX, cache_insert_hashed)(fc, key, h, now);
+}
+
+FC_IMPL_ATTR void
+FC_FN(FC_PREFIX, cache_insert_batch)(struct FC_CACHE *fc,
+                           const struct FC_KEY *keys,
+                           unsigned nb_keys,
+                           uint64_t now,
+                           struct FC_ENTRY **results)
+{
+    enum { FC_INSERT_BATCH_PLAN_KEYS = 64 };
+
+    for (unsigned base = 0; base < nb_keys; base += FC_INSERT_BATCH_PLAN_KEYS) {
+        union rix_hash_hash_u hashes[FC_INSERT_BATCH_PLAN_KEYS];
+        unsigned n = nb_keys - base;
+
+        if (n > FC_INSERT_BATCH_PLAN_KEYS)
+            n = FC_INSERT_BATCH_PLAN_KEYS;
+
+        for (unsigned i = 0; i < n; i++) {
+            hashes[i] = FC_HT_HASH_FN(&keys[base + i], fc->ht_head.rhh_mask);
+            FC_CALL(FC_PREFIX, cache_prefetch_insert_hash)(fc, hashes[i]);
+        }
+
+        for (unsigned i = 0; i < n; i++) {
+            struct FC_ENTRY *entry =
+                FC_CALL(FC_PREFIX, cache_insert_hashed)(fc, &keys[base + i],
+                                                        hashes[i], now);
+            if (results != NULL)
+                results[base + i] = entry;
+        }
+    }
 }
 
 /*===========================================================================
