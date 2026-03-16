@@ -736,10 +736,11 @@ between multiple precompiled backends.
 
 | File | Generates | Used by |
 |---|---|---|
-| `flow_cache_decl_private.h` | Cache struct, API declarations, inline helpers | `.h` files |
-| `flow_cache_backend_private.h` | Backend ops table layout | fat-backend `.c` files |
-| `flow_cache_body_private.h` | init, insert, lookup_batch, expire, stats | `.c` files |
-| `flow_cache_test_body.h` | Test + benchmark functions | test `.c` |
+| `include/flow_cache_decl.h` | Cache struct, API declarations, inline helpers | public variant `.h` files |
+| `src/backend.h` | Backend ops table layout | fat-backend `.c` files |
+| `src/hash_direct.h` | direct-find `RIX_HASH_GENERATE_STATIC_EX` expansion | fat-backend `.c`, test-only raw-hash `.c` |
+| `src/body.h` | init, insert, lookup_batch, expire, stats | `.c` files |
+| `test/fcache_test_body.h` | Test + benchmark functions | test `.c` |
 
 ### 11.3 Adding a new variant
 
@@ -747,9 +748,9 @@ To add a new flow cache variant (e.g., MPLS):
 
 1. Define key struct, entry struct, comparison function
 2. `RIX_HASH_HEAD` / `RIX_HASH_GENERATE`
-3. Set `FC_*` macros, `#include "flow_cache_decl_private.h"` in header (twice: once before structs, once after)
-4. Set `FC_*` macros, `#include "flow_cache_body_private.h"` in source
-5. Set `FCT_*` macros, `#include "flow_cache_test_body.h"` in test
+3. Set `FC_*` macros, `#include "flow_cache_decl.h"` in header (twice: once before structs, once after)
+4. Set `FC_*` macros, `#include "body.h"` in source
+5. Set `FCT_*` macros, `#include "fcache_test_body.h"` in test
 
 For a new variant, the preferred pattern is:
 1. thin public wrapper for runtime backend selection
@@ -763,30 +764,33 @@ samples/
   DESIGN.md                this document
   Makefile                 top-level: delegates to fcache/ and test/
 
-  fcache/                  library (builds libfcache.a and libfcache.so)
+  fcache/                  library
     Makefile
-    -- public headers --
-    flow_cache.h             umbrella: includes all three variant headers
-    flow4_cache.h            IPv4: key, entry, cmp, public API
-    flow6_cache.h            IPv6: key, entry, cmp, hash generate, template expand
-    flow_unified_cache.h     Unified: key (family+union), entry, cmp, template expand
-    -- private headers --
-    flow_cache_decl_private.h  template: base defs (Section 1) + cache struct/API decls (Section 2)
-    flow_cache_backend_private.h template: backend ops table
-    flow_cache_body_private.h  template: implementation (init/insert/lookup/expire)
-    -- sources --
-    flow4_cache.c            IPv4: public wrapper + backend selection
-    flow4_cache_backend.c    IPv4: backend template, compiled as gen/sse/avx2/avx512
-    flow6_cache.c            IPv6: public wrapper + backend selection
-    flow6_cache_backend.c    IPv6: backend template, compiled as gen/sse/avx2/avx512
-    flow_unified_cache.c     Unified: public wrapper + backend selection
-    flow_unified_cache_backend.c Unified: backend template, compiled as gen/sse/avx2/avx512
+    include/
+      flow_cache.h             umbrella: includes all three variant headers
+      flow_cache_decl.h        base defs (Section 1) + cache struct/API decls (Section 2)
+      flow4_cache.h            IPv4: key, entry, cmp, public API
+      flow6_cache.h            IPv6: key, entry, cmp, public API
+      flow_unified_cache.h     Unified: key (family+union), entry, cmp, public API
+    src/
+      backend.h               backend ops table
+      body.h                  implementation template (init/insert/lookup/expire)
+      hash_direct.h           direct-find hash generate template
+      flow4.c                 IPv4: public wrapper + backend selection
+      flow4_backend.c         IPv4: backend template, compiled as gen/sse/avx2/avx512
+      flow6.c                 IPv6: public wrapper + backend selection
+      flow6_backend.c         IPv6: backend template, compiled as gen/sse/avx2/avx512
+      flowu.c                 Unified: public wrapper + backend selection
+      flowu_backend.c         Unified: backend template, compiled as gen/sse/avx2/avx512
+    lib/                      build output (libfcache.a / libfcache.so)
 
   test/                    test and benchmark binary
     Makefile
-    flow_cache_test.c        correctness tests + benchmarks (all 3 variants)
-    flow_cache_test_body.h   template: test + benchmark functions
-    flow_cache_perf.sh       perf stat wrapper for single benchmark cases
+    fcache_test.c            correctness tests + benchmarks (all 3 variants)
+    fcache_test_body.h       template: test + benchmark functions
+    ht4_backend.c            flow4 raw-hash template, compiled as gen/sse/avx2/avx512
+    ht4.h                    declarations for raw flow4 hash test helpers
+    perf.sh                  perf stat wrapper for single benchmark cases
 ```
 
 ## 13. Build Dependencies

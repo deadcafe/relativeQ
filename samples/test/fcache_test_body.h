@@ -4,7 +4,7 @@
  * Copyright (c) 2026 deadcafe.beef@gmail.com
  * All rights reserved.
  *
- * flow_cache_test_body.h - Macro-templated test & benchmark functions.
+ * fcache_test_body.h - Macro-templated test & benchmark functions.
  *
  * Before including this file, define:
  *   FCT_PREFIX        e.g. flow4           (for function naming)

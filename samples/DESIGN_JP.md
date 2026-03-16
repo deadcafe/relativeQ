@@ -770,10 +770,11 @@ wrapper を追加で持つ。
 
 | ファイル | 生成内容 | 使用箇所 |
 |---|---|---|
-| `flow_cache_decl_private.h` | キャッシュ構造体、API宣言、インラインヘルパー | `.h` ファイル |
-| `flow_cache_backend_private.h` | backend ops テーブル定義 | fat-backend `.c` |
-| `flow_cache_body_private.h` | init、insert、lookup_batch、expire、stats | `.c` ファイル |
-| `flow_cache_test_body.h` | テスト+ベンチマーク関数 | テスト `.c` |
+| `include/flow_cache_decl.h` | キャッシュ構造体、API宣言、インラインヘルパー | 公開 variant `.h` |
+| `src/backend.h` | backend ops テーブル定義 | fat-backend `.c` |
+| `src/hash_direct.h` | direct-find 用 `RIX_HASH_GENERATE_STATIC_EX` 展開 | fat-backend `.c`、test 専用 raw-hash `.c` |
+| `src/body.h` | init、insert、lookup_batch、expire、stats | `.c` ファイル |
+| `test/fcache_test_body.h` | テスト+ベンチマーク関数 | テスト `.c` |
 
 ### 11.3 新バリアントの追加
 
@@ -781,9 +782,9 @@ wrapper を追加で持つ。
 
 1. キー構造体、エントリ構造体、比較関数を定義
 2. `RIX_HASH_HEAD` / `RIX_HASH_GENERATE`
-3. `FC_*` マクロを設定せずに `#include "flow_cache_decl_private.h"` を早期インクルード（Section 1のみ）し、構造体定義の後に `FC_*` マクロを設定して再度 `#include "flow_cache_decl_private.h"`（Section 2）
-4. `FC_*` マクロを設定し、ソースで `#include "flow_cache_body_private.h"`
-5. `FCT_*` マクロを設定し、テストで `#include "flow_cache_test_body.h"`
+3. `FC_*` マクロを設定せずに `#include "flow_cache_decl.h"` を早期インクルード（Section 1のみ）し、構造体定義の後に `FC_*` マクロを設定して再度 `#include "flow_cache_decl.h"`（Section 2）
+4. `FC_*` マクロを設定し、ソースで `#include "body.h"`
+5. `FCT_*` マクロを設定し、テストで `#include "fcache_test_body.h"`
 
 新バリアントでも推奨構成は同じ:
 1. ランタイム backend 選択を行う薄い公開 wrapper
@@ -797,31 +798,33 @@ samples/
   DESIGN.md                本文書（英語版）
   DESIGN_JP.md             本文書（日本語版）
 
-  fcache/                  ライブラリ（libfcache.a / libfcache.so）
+  fcache/                  ライブラリ
     Makefile
-
-    # 公開ヘッダ（ユーザーが直接 include する）
-    flow_cache.h             共通定義（TSC、stats、パイプラインパラメータ）
-    flow4_cache.h            IPv4: キー、エントリ、cmp、公開 API
-    flow4_cache.c            IPv4: 公開 wrapper + backend 選択
-    flow4_cache_backend.c    IPv4: backend テンプレート、gen/sse/avx2/avx512 として多重コンパイル
-    flow6_cache.h            IPv6: キー、エントリ、cmp、ハッシュ生成、テンプレート展開
-    flow6_cache.c            IPv6: 公開 wrapper + backend 選択
-    flow6_cache_backend.c    IPv6: backend テンプレート、gen/sse/avx2/avx512 として多重コンパイル
-    flow_unified_cache.h     統合: キー（family+union）、エントリ、cmp、テンプレート展開
-    flow_unified_cache.c     統合: 公開 wrapper + backend 選択
-    flow_unified_cache_backend.c Unified: backend テンプレート、gen/sse/avx2/avx512 として多重コンパイル
-
-    # 内部専用ヘッダ（ライブラリ内部のみ; _private サフィックス）
-    flow_cache_decl_private.h  テンプレート: キャッシュ構造体 + API宣言（Section 1: 一度のみ / Section 2: FC_PREFIX 毎）
-    flow_cache_backend_private.h backend ops テーブル定義
-    flow_cache_body_private.h  テンプレート: 実装（init/insert/lookup/expire）
+    include/
+      flow_cache.h             umbrella: 全 variant header を include
+      flow_cache_decl.h        共通定義 + cache struct/API 宣言テンプレート
+      flow4_cache.h            IPv4: キー、エントリ、cmp、公開 API
+      flow6_cache.h            IPv6: キー、エントリ、cmp、公開 API
+      flow_unified_cache.h     統合: キー（family+union）、エントリ、cmp、公開 API
+    src/
+      backend.h               backend ops テーブル定義
+      body.h                  実装テンプレート（init/insert/lookup/expire）
+      hash_direct.h           direct-find 用 hash 生成テンプレート
+      flow4.c                 IPv4: 公開 wrapper + backend 選択
+      flow4_backend.c         IPv4: backend テンプレート、gen/sse/avx2/avx512 として多重コンパイル
+      flow6.c                 IPv6: 公開 wrapper + backend 選択
+      flow6_backend.c         IPv6: backend テンプレート、gen/sse/avx2/avx512 として多重コンパイル
+      flowu.c                 統合: 公開 wrapper + backend 選択
+      flowu_backend.c         統合: backend テンプレート、gen/sse/avx2/avx512 として多重コンパイル
+    lib/                      生成物（libfcache.a / libfcache.so）
 
   test/                    テストバイナリ
     Makefile
-    flow_cache_test.c        正当性テスト + ベンチマーク（全3バリアント）
-    flow_cache_test_body.h   テンプレート: テスト + ベンチマーク関数
-    flow_cache_perf.sh       単一ベンチケース向け perf stat wrapper
+    fcache_test.c            正当性テスト + ベンチマーク（全3バリアント）
+    fcache_test_body.h       テンプレート: テスト + ベンチマーク関数
+    ht4_backend.c            flow4 raw-hash テンプレート、gen/sse/avx2/avx512 として多重コンパイル
+    ht4.h                    raw flow4 hash test helper の宣言
+    perf.sh                  単一ベンチケース向け perf stat wrapper
 ```
 
 ## 13. ビルド依存関係

@@ -4,7 +4,7 @@
  * Copyright (c) 2026 deadcafe.beef@gmail.com
  * All rights reserved.
  *
- * flow_cache_backend_private.h - private backend ops template
+ * backend.h - private backend ops template
  *
  * Intentionally has no include guard: include once per variant with
  * FC_PREFIX / FC_ENTRY / FC_KEY / FC_CACHE defined.
@@ -20,7 +20,6 @@ struct FCB_FN(FC_PREFIX, cache_ops) {
                  unsigned nb_bk,
                  struct FC_ENTRY *pool,
                  unsigned max_entries,
-                 flow_cache_backend_t backend,
                  uint64_t timeout_ms,
                  void (*init_cb)(struct FC_ENTRY *entry, void *arg),
                  void (*fini_cb)(struct FC_ENTRY *entry,

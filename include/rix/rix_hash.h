@@ -51,6 +51,16 @@
 
 #  include "rix_hash_arch.h"
 
+#  ifndef _RIX_HASH_FIND_U32X16
+#    define _RIX_HASH_FIND_U32X16(arr, val) \
+        rix_hash_arch->find_u32x16((arr), (val))
+#  endif
+
+#  ifndef _RIX_HASH_FIND_U32X16_2
+#    define _RIX_HASH_FIND_U32X16_2(arr, val0, val1, mask0, mask1) \
+        rix_hash_arch->find_u32x16_2((arr), (val0), (val1), (mask0), (mask1))
+#  endif
+
 /*===========================================================================
  * Fingerprint-variant bucket layout
  * 128 bytes = 2 x 64-byte cache lines, aligned to 64 bytes.
@@ -325,7 +335,7 @@ name##_scan_bk(struct rix_hash_find_ctx_s *ctx,                               \
                struct rix_hash_bucket_s *buckets __attribute__((unused)))     \
 {                                                                             \
     /* fp != 0: no spurious empty-slot matches; no _nilm filter needed. */    \
-    ctx->fp_hits[0] = rix_hash_arch->find_u32x16(ctx->bk[0]->hash, ctx->fp);  \
+    ctx->fp_hits[0] = _RIX_HASH_FIND_U32X16(ctx->bk[0]->hash, ctx->fp);       \
     ctx->fp_hits[1] = 0u; /* bk_1 deferred to cmp_key on bk_0 miss */         \
 }                                                                             \
                                                                               \
@@ -366,7 +376,7 @@ name##_cmp_key(struct rix_hash_find_ctx_s *ctx,                               \
     }                                                                         \
     /* Slow path: bk_0 miss -> lazily fetch and scan bk_1 (secondary) */       \
     {                                                                         \
-        _hits = rix_hash_arch->find_u32x16(ctx->bk[1]->hash, ctx->fp);        \
+        _hits = _RIX_HASH_FIND_U32X16(ctx->bk[1]->hash, ctx->fp);             \
         while (_hits) {                                                       \
             unsigned      _bit  = (unsigned)__builtin_ctz(_hits);             \
             _hits &= _hits - 1u;                                              \
@@ -471,8 +481,8 @@ name##_insert(struct name *head,                                              \
     for (int _i = 0; _i < 2; _i++) {                                          \
         struct rix_hash_bucket_s *_bk =                                       \
             buckets + (_i == 0 ? _bk0 : _bk1);                                \
-        _hits_fp[_i] = rix_hash_arch->find_u32x16(_bk->hash, _fp);            \
-        _hits_zero[_i] = rix_hash_arch->find_u32x16(_bk->hash, 0u);           \
+        _RIX_HASH_FIND_U32X16_2(_bk->hash, _fp, 0u,                           \
+                                &_hits_fp[_i], &_hits_zero[_i]);              \
     }                                                                         \
                                                                               \
     /* Duplicate check in both candidate buckets before inserting.            \
@@ -556,7 +566,7 @@ name##_insert(struct name *head,                                              \
                                                                               \
             /* Try to place victim in the alt bucket */                       \
             struct rix_hash_bucket_s *_alt = buckets + _alt_bk;               \
-            uint32_t _nilm = rix_hash_arch->find_u32x16(_alt->hash, 0u);      \
+            uint32_t _nilm = _RIX_HASH_FIND_U32X16(_alt->hash, 0u);           \
             if (_nilm) {                                                      \
                 unsigned _slot    = (unsigned)__builtin_ctz(_nilm);           \
                 _alt->hash[_slot] = _vic_fp;                                  \
@@ -595,7 +605,7 @@ name##_remove(struct name *head,                                              \
     /* hash_field & mask == current bucket (insert invariant) */              \
     unsigned _bk = (unsigned)(elm->hash_field & head->rhh_mask);              \
     struct rix_hash_bucket_s *_b = buckets + _bk;                             \
-    uint32_t _hits = rix_hash_arch->find_u32x16(_b->idx, (uint32_t)node_idx); \
+    uint32_t _hits = _RIX_HASH_FIND_U32X16(_b->idx, (uint32_t)node_idx);      \
     if (_hits) {                                                              \
         unsigned _slot   = (unsigned)__builtin_ctz(_hits);                    \
         _b->hash[_slot] = 0u;                                                 \
@@ -751,7 +761,7 @@ name##_scan_bk(struct rix_hash_find_ctx_s *ctx,                               \
                struct name *head __attribute__((unused)),                     \
                struct rix_hash_bucket_s *buckets __attribute__((unused)))     \
 {                                                                             \
-    ctx->fp_hits[0] = rix_hash_arch->find_u32x16(ctx->bk[0]->hash, ctx->fp);  \
+    ctx->fp_hits[0] = _RIX_HASH_FIND_U32X16(ctx->bk[0]->hash, ctx->fp);       \
     ctx->fp_hits[1] = 0u;                                                     \
 }                                                                             \
                                                                               \
@@ -788,7 +798,7 @@ name##_cmp_key(struct rix_hash_find_ctx_s *ctx,                               \
             return _node;                                                     \
     }                                                                         \
     {                                                                         \
-        _hits = rix_hash_arch->find_u32x16(ctx->bk[1]->hash, ctx->fp);        \
+        _hits = _RIX_HASH_FIND_U32X16(ctx->bk[1]->hash, ctx->fp);             \
         while (_hits) {                                                       \
             unsigned      _bit  = (unsigned)__builtin_ctz(_hits);             \
             _hits &= _hits - 1u;                                              \
@@ -880,11 +890,15 @@ name##_insert(struct name *head,                                              \
                 mask);                                                        \
     unsigned _bk0, _bk1;                                                      \
     uint32_t _fp;                                                             \
+    uint32_t _hits_fp[2];                                                     \
+    uint32_t _hits_zero[2];                                                   \
     _rix_hash_buckets(_h, mask, &_bk0, &_bk1, &_fp);                          \
     for (int _i = 0; _i < 2; _i++) {                                          \
         struct rix_hash_bucket_s *_bk =                                       \
             buckets + (_i == 0 ? _bk0 : _bk1);                                \
-        uint32_t _hits = rix_hash_arch->find_u32x16(_bk->hash, _fp);          \
+        _RIX_HASH_FIND_U32X16_2(_bk->hash, _fp, 0u,                           \
+                                &_hits_fp[_i], &_hits_zero[_i]);              \
+        uint32_t _hits = _hits_fp[_i];                                        \
         while (_hits) {                                                       \
             unsigned      _bit  = (unsigned)__builtin_ctz(_hits);             \
             _hits &= _hits - 1u;                                              \
@@ -897,7 +911,7 @@ name##_insert(struct name *head,                                              \
     for (int _i = 0; _i < 2; _i++) {                                          \
         unsigned _bki = (_i == 0) ? _bk0 : _bk1;                              \
         struct rix_hash_bucket_s *_bk = buckets + _bki;                       \
-        uint32_t _nilm = rix_hash_arch->find_u32x16(_bk->hash, 0u);           \
+        uint32_t _nilm = _hits_zero[_i];                                      \
         if (_nilm) {                                                          \
             unsigned _slot   = (unsigned)__builtin_ctz(_nilm);                \
             _bk->hash[_slot] = _fp;                                           \
@@ -926,7 +940,7 @@ name##_insert(struct name *head,                                              \
             unsigned _vic_bk1 = _vic_h.val32[1] & mask;                       \
             unsigned _alt_bk  = (_cur_bk == _vic_bk0) ? _vic_bk1 : _vic_bk0;  \
             struct rix_hash_bucket_s *_alt = buckets + _alt_bk;               \
-            uint32_t _nilm = rix_hash_arch->find_u32x16(_alt->hash, 0u);      \
+            uint32_t _nilm = _RIX_HASH_FIND_U32X16(_alt->hash, 0u);           \
             if (_nilm) {                                                      \
                 unsigned _slot    = (unsigned)__builtin_ctz(_nilm);           \
                 _alt->hash[_slot] = _vic_fp;                                  \
@@ -962,8 +976,8 @@ name##_remove(struct name *head,                                              \
     for (int _i = 0; _i < 2; _i++) {                                          \
         unsigned _bki = (_i == 0) ? _bk0 : _bk1;                              \
         struct rix_hash_bucket_s *_b = buckets + _bki;                        \
-        uint32_t _hits = rix_hash_arch->find_u32x16(_b->idx,                  \
-                                                    (uint32_t)node_idx);      \
+        uint32_t _hits = _RIX_HASH_FIND_U32X16(_b->idx,                       \
+                                               (uint32_t)node_idx);           \
         if (_hits) {                                                          \
             unsigned _slot   = (unsigned)__builtin_ctz(_hits);                \
             _b->hash[_slot] = 0u;                                             \

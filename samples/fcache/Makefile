@@ -1,12 +1,12 @@
 #
 # Copyright (c) 2026 deadcafe.beef@gmail.com
 #
-# samples/fcache/Makefile - Build libfcache.a and libfcache.so
+# samples/fcache/Makefile - Build libfcache into lib/
 #
 # Targets:
-#   all    - build both static and shared libraries (default)
-#   static - build libfcache.a only
-#   shared - build libfcache.so only
+#   all    - build both static and shared libraries into lib/ (default)
+#   static - build lib/libfcache.a only
+#   shared - build lib/libfcache.so only
 #   clean  - remove build artifacts
 #   install PREFIX=/path - install headers and libraries
 #
@@ -41,22 +41,30 @@ WARN         = $(WARN_COMMON) $(WARN_EXTRA)
 OPTLEVEL    ?= 3
 
 # -fPIC: required for .so, negligible cost on x86-64; one object set for both
-CFLAGS_BASE  = -std=gnu11 -O$(OPTLEVEL) $(WARN) -I$(TOPDIR)/include -fPIC
+CFLAGS_BASE  = -std=gnu11 -O$(OPTLEVEL) $(WARN) \
+               -I$(TOPDIR)/include -I$(CURDIR)/include -I$(CURDIR)/src -fPIC
 
-WRAPPER_SRCS = flow4_cache.c flow6_cache.c flow_unified_cache.c
-WRAPPER_OBJS = $(WRAPPER_SRCS:.c=.o)
-BACKEND_OBJS = flow4_cache_gen.o flow4_cache_sse.o flow4_cache_avx2.o flow4_cache_avx512.o \
-               flow6_cache_gen.o flow6_cache_sse.o flow6_cache_avx2.o flow6_cache_avx512.o \
-               flow_unified_cache_gen.o flow_unified_cache_sse.o \
-               flow_unified_cache_avx2.o flow_unified_cache_avx512.o
+SRCDIR       = src
+INCDIR       = include
+LIBDIR       = lib
+
+WRAPPER_OBJS = $(LIBDIR)/flow4.o $(LIBDIR)/flow6.o $(LIBDIR)/flowu.o
+BACKEND_OBJS = $(LIBDIR)/flow4_gen.o $(LIBDIR)/flow4_sse.o \
+               $(LIBDIR)/flow4_avx2.o $(LIBDIR)/flow4_avx512.o \
+               $(LIBDIR)/flow6_gen.o $(LIBDIR)/flow6_sse.o \
+               $(LIBDIR)/flow6_avx2.o $(LIBDIR)/flow6_avx512.o \
+               $(LIBDIR)/flowu_gen.o $(LIBDIR)/flowu_sse.o \
+               $(LIBDIR)/flowu_avx2.o $(LIBDIR)/flowu_avx512.o
 OBJS         = $(WRAPPER_OBJS) $(BACKEND_OBJS)
 
 # Public headers installed alongside the library
-PUB_HDRS     = flow_cache.h \
-               flow4_cache.h flow6_cache.h flow_unified_cache.h
+PUB_HDRS     = $(INCDIR)/flow_cache.h $(INCDIR)/flow_cache_decl.h \
+               $(INCDIR)/flow4_cache.h $(INCDIR)/flow6_cache.h \
+               $(INCDIR)/flow_unified_cache.h
 
-LIB_STATIC   = libfcache.a
-LIB_SHARED   = libfcache.so
+LIB_STATIC   = $(LIBDIR)/libfcache.a
+LIB_SHARED   = $(LIBDIR)/libfcache.so
+LIB_SONAME   = libfcache.so.1
 
 PREFIX       ?= /usr/local
 
@@ -69,45 +77,50 @@ static: $(LIB_STATIC)
 shared: $(LIB_SHARED)
 
 $(LIB_STATIC): $(OBJS)
+	@mkdir -p $(LIBDIR)
 	$(AR) rcs $@ $^
 
 $(LIB_SHARED): $(OBJS)
-	$(CC) -shared -Wl,-soname,$(LIB_SHARED).1 -o $@ $^
+	@mkdir -p $(LIBDIR)
+	$(CC) -shared -Wl,-soname,$(LIB_SONAME) -o $@ $^
 
-%.o: %.c
+$(LIBDIR):
+	mkdir -p $@
+
+$(LIBDIR)/%.o: $(SRCDIR)/%.c | $(LIBDIR)
 	$(CC) $(CFLAGS_BASE) $(CFLAGS_LOCAL) -c -o $@ $<
 
-flow4_cache.o: CFLAGS_LOCAL =
+$(LIBDIR)/flow4.o: CFLAGS_LOCAL =
 
-flow6_cache.o: CFLAGS_LOCAL =
+$(LIBDIR)/flow6.o: CFLAGS_LOCAL =
 
-flow_unified_cache.o: CFLAGS_LOCAL =
+$(LIBDIR)/flowu.o: CFLAGS_LOCAL =
 
-flow4_cache_gen.o: flow4_cache_backend.c
+$(LIBDIR)/flow4_gen.o: $(SRCDIR)/flow4_backend.c | $(LIBDIR)
 	$(CC) $(CFLAGS_BASE) -DFLOW_CACHE_BACKEND_NAME=gen -c -o $@ $<
-flow4_cache_sse.o: flow4_cache_backend.c
+$(LIBDIR)/flow4_sse.o: $(SRCDIR)/flow4_backend.c | $(LIBDIR)
 	$(CC) $(CFLAGS_BASE) -msse4.2 -DFLOW_CACHE_BACKEND_NAME=sse -c -o $@ $<
-flow4_cache_avx2.o: flow4_cache_backend.c
+$(LIBDIR)/flow4_avx2.o: $(SRCDIR)/flow4_backend.c | $(LIBDIR)
 	$(CC) $(CFLAGS_BASE) -mavx2 -msse4.2 -DFLOW_CACHE_BACKEND_NAME=avx2 -c -o $@ $<
-flow4_cache_avx512.o: flow4_cache_backend.c
+$(LIBDIR)/flow4_avx512.o: $(SRCDIR)/flow4_backend.c | $(LIBDIR)
 	$(CC) $(CFLAGS_BASE) -mavx512f -mavx2 -msse4.2 -DFLOW_CACHE_BACKEND_NAME=avx512 -c -o $@ $<
 
-flow6_cache_gen.o: flow6_cache_backend.c
+$(LIBDIR)/flow6_gen.o: $(SRCDIR)/flow6_backend.c | $(LIBDIR)
 	$(CC) $(CFLAGS_BASE) -DFLOW_CACHE_BACKEND_NAME=gen -c -o $@ $<
-flow6_cache_sse.o: flow6_cache_backend.c
+$(LIBDIR)/flow6_sse.o: $(SRCDIR)/flow6_backend.c | $(LIBDIR)
 	$(CC) $(CFLAGS_BASE) -msse4.2 -DFLOW_CACHE_BACKEND_NAME=sse -c -o $@ $<
-flow6_cache_avx2.o: flow6_cache_backend.c
+$(LIBDIR)/flow6_avx2.o: $(SRCDIR)/flow6_backend.c | $(LIBDIR)
 	$(CC) $(CFLAGS_BASE) -mavx2 -msse4.2 -DFLOW_CACHE_BACKEND_NAME=avx2 -c -o $@ $<
-flow6_cache_avx512.o: flow6_cache_backend.c
+$(LIBDIR)/flow6_avx512.o: $(SRCDIR)/flow6_backend.c | $(LIBDIR)
 	$(CC) $(CFLAGS_BASE) -mavx512f -mavx2 -msse4.2 -DFLOW_CACHE_BACKEND_NAME=avx512 -c -o $@ $<
 
-flow_unified_cache_gen.o: flow_unified_cache_backend.c
+$(LIBDIR)/flowu_gen.o: $(SRCDIR)/flowu_backend.c | $(LIBDIR)
 	$(CC) $(CFLAGS_BASE) -DFLOW_CACHE_BACKEND_NAME=gen -c -o $@ $<
-flow_unified_cache_sse.o: flow_unified_cache_backend.c
+$(LIBDIR)/flowu_sse.o: $(SRCDIR)/flowu_backend.c | $(LIBDIR)
 	$(CC) $(CFLAGS_BASE) -msse4.2 -DFLOW_CACHE_BACKEND_NAME=sse -c -o $@ $<
-flow_unified_cache_avx2.o: flow_unified_cache_backend.c
+$(LIBDIR)/flowu_avx2.o: $(SRCDIR)/flowu_backend.c | $(LIBDIR)
 	$(CC) $(CFLAGS_BASE) -mavx2 -msse4.2 -DFLOW_CACHE_BACKEND_NAME=avx2 -c -o $@ $<
-flow_unified_cache_avx512.o: flow_unified_cache_backend.c
+$(LIBDIR)/flowu_avx512.o: $(SRCDIR)/flowu_backend.c | $(LIBDIR)
 	$(CC) $(CFLAGS_BASE) -mavx512f -mavx2 -msse4.2 -DFLOW_CACHE_BACKEND_NAME=avx512 -c -o $@ $<
 
 clean:

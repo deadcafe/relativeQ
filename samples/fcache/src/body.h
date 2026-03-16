@@ -16,14 +16,14 @@
  *
  * INTERNAL USE ONLY.
  * This is a private implementation header of the fcache library.
- * Do not include it directly; it is included by flow4_cache.c,
- * flow6_cache.c, and flow_unified_cache.c only.
+ * Do not include it directly; it is included by src/flow4.c,
+ * src/flow6.c, and src/flowu.c only.
  */
 
 #include <assert.h>
 #include <string.h>
 
-/* token-paste helpers (definitions only; calls use FC_CALL from flow_cache_decl_private.h) */
+/* token-paste helpers (definitions only; calls use FC_CALL from flow_cache_decl.h) */
 #define _FC_FN_CAT(a, b, c)  a ## b ## c
 #define FC_FN_CAT(a, b, c)   _FC_FN_CAT(a, b, c)
 #define FC_FN(prefix, suffix) FC_FN_CAT(prefix, _, suffix)
@@ -150,7 +150,6 @@ FC_FN(FC_PREFIX, cache_init)(struct FC_CACHE *fc,
                    unsigned nb_bk,
                    struct FC_ENTRY *pool,
                    unsigned max_entries,
-                   flow_cache_backend_t backend,
                    uint64_t timeout_ms,
                    void (*init_cb)(struct FC_ENTRY *entry, void *arg),
                    void (*fini_cb)(struct FC_ENTRY *entry,
@@ -158,25 +157,6 @@ FC_FN(FC_PREFIX, cache_init)(struct FC_CACHE *fc,
                    void *cb_arg)
 {
     memset(fc, 0, sizeof(*fc));
-
-    switch (backend) {
-    case FLOW_CACHE_BACKEND_GEN:
-        rix_hash_arch_init(0);
-        break;
-    case FLOW_CACHE_BACKEND_SSE:
-        rix_hash_arch_init(RIX_HASH_ARCH_SSE);
-        break;
-    case FLOW_CACHE_BACKEND_AVX2:
-        rix_hash_arch_init(RIX_HASH_ARCH_AVX2);
-        break;
-    case FLOW_CACHE_BACKEND_AVX512:
-        rix_hash_arch_init(RIX_HASH_ARCH_AVX512);
-        break;
-    case FLOW_CACHE_BACKEND_AUTO:
-    default:
-        rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
-        break;
-    }
 
     FC_CALL(FC_HT_PREFIX, init)(&fc->ht_head, nb_bk);
     fc->buckets = buckets;
@@ -264,9 +244,7 @@ FC_FN(FC_PREFIX, cache_evict_bucket_oldest)(struct FC_CACHE *fc,
                                    const struct FC_KEY *key)
 {
     unsigned mask = fc->ht_head.rhh_mask;
-    union rix_hash_hash_u h =
-        rix_hash_arch->hash_bytes((const void *)key, sizeof(struct FC_KEY),
-                                  mask);
+    union rix_hash_hash_u h = FC_HT_HASH_FN(key, mask);
     unsigned bk0, bk1;
     uint32_t fp;
     _rix_hash_buckets(h, mask, &bk0, &bk1, &fp);

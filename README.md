@@ -82,20 +82,30 @@ include/
 samples/
   DESIGN.md         design document
   DESIGN_JP.md      design document (Japanese)
-  fcache/           library (libfcache.a / libfcache.so)
-    flow_cache.h            umbrella: includes all three variant headers
-    flow4_cache.h           IPv4 5-tuple flow cache  (20-byte key)
-    flow4_cache.c           IPv4 public wrapper + backend selection
-    flow4_cache_backend.c   IPv4 backend template, compiled as gen/sse/avx2/avx512
-    flow6_cache.h/.c        IPv6 5-tuple flow cache  (44-byte key)
-    flow_unified_cache.h/.c IPv4+IPv6 in one table (44-byte key, family field)
-    flow_cache_decl_private.h  template: cache struct + API (internal)
-    flow_cache_backend_private.h template: backend ops table (internal)
-    flow_cache_body_private.h  template: implementation (internal)
+  fcache/           library
+    include/
+      flow_cache.h            umbrella: includes all three variant headers
+      flow_cache_decl.h       shared declarations used by variant headers
+      flow4_cache.h           IPv4 5-tuple flow cache  (20-byte key)
+      flow6_cache.h           IPv6 5-tuple flow cache  (44-byte key)
+      flow_unified_cache.h    IPv4+IPv6 in one table (44-byte key, family field)
+    src/
+      flow4.c                 IPv4 public wrapper + backend selection
+      flow4_backend.c         IPv4 backend template, compiled as gen/sse/avx2/avx512
+      flow6.c                 IPv6 public wrapper + backend selection
+      flow6_backend.c         IPv6 backend template, compiled as gen/sse/avx2/avx512
+      flowu.c                 Unified public wrapper + backend selection
+      flowu_backend.c         Unified backend template, compiled as gen/sse/avx2/avx512
+      backend.h               backend ops table (internal)
+      body.h                  implementation template (internal)
+      hash_direct.h           direct-find hash generate helper (internal)
+    lib/                      build output (libfcache.a / libfcache.so)
   test/
-    flow_cache_test.c       correctness tests + benchmarks (all 3 variants)
-    flow_cache_test_body.h  template: test + benchmark functions (internal)
-    flow_cache_perf.sh      perf stat wrapper for single-workload runs
+    fcache_test.c           correctness tests + benchmarks (all 3 variants)
+    fcache_test_body.h      template: test + benchmark functions (internal)
+    ht4_backend.c           test-only raw-hash template, compiled as gen/sse/avx2/avx512
+    ht4.h                   test-only declarations for raw flow4 hash benches
+    perf.sh                 perf stat wrapper for single-workload runs
 ```
 
 ---

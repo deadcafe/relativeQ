@@ -24,7 +24,7 @@
 #define FC_ENTRY        flow6_entry
 #define FC_KEY          flow6_key
 #define FC_CACHE        flow6_cache
-#include "flow_cache_backend_private.h"
+#include "backend.h"
 #undef FC_CACHE
 #undef FC_KEY
 #undef FC_ENTRY
@@ -36,22 +36,28 @@ flow6_ht_hash_fn(const struct flow6_key *key, uint32_t mask)
     return rix_hash_hash_bytes_fast(key, sizeof(*key), mask);
 }
 
-RIX_HASH_GENERATE_STATIC_EX(flow6_ht, flow6_entry, key, cur_hash,
-                            flow6_cmp, flow6_ht_hash_fn)
+#define FC_HASH_DIRECT_HT_PREFIX flow6_ht
+#define FC_HASH_DIRECT_ENTRY     flow6_entry
+#define FC_HASH_DIRECT_CMP_FN    flow6_cmp
+#define FC_HASH_DIRECT_HASH_FN   flow6_ht_hash_fn
+#define FC_HASH_DIRECT_TARGET    FLOW_CACHE_BACKEND_NAME
+#include "hash_direct.h"
 
 #define FC_PREFIX       FC_BACKEND_PREFIX(flow6, FLOW_CACHE_BACKEND_NAME)
 #define FC_ENTRY        flow6_entry
 #define FC_KEY          flow6_key
 #define FC_CACHE        flow6_cache
 #define FC_HT_PREFIX    flow6_ht
+#define FC_HT_HASH_FN   flow6_ht_hash_fn
 #define FC_FREE_HEAD    flow6_free_head
 #define FC_IMPL_ATTR    static
-#include "flow_cache_body_private.h"
+#include "body.h"
 #undef FC_PREFIX
 #undef FC_ENTRY
 #undef FC_KEY
 #undef FC_CACHE
 #undef FC_HT_PREFIX
+#undef FC_HT_HASH_FN
 #undef FC_FREE_HEAD
 #undef FC_IMPL_ATTR
 

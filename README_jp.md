@@ -83,20 +83,30 @@ include/
 samples/
   DESIGN.md         設計ドキュメント
   DESIGN_JP.md      設計ドキュメント (日本語)
-  fcache/           ライブラリ (libfcache.a / libfcache.so)
-    flow_cache.h            傘ヘッダ: 3 バリアント全体をインクルード
-    flow4_cache.h           IPv4 5 タプルフローキャッシュ (20 バイトキー)
-    flow4_cache.c           IPv4 公開 wrapper + backend 選択
-    flow4_cache_backend.c   IPv4 backend テンプレート、gen/sse/avx2/avx512 として多重コンパイル
-    flow6_cache.h/.c        IPv6 5 タプルフローキャッシュ (44 バイトキー)
-    flow_unified_cache.h/.c IPv4+IPv6 統合テーブル (44 バイトキー、family フィールド)
-    flow_cache_decl_private.h  テンプレート: キャッシュ構造体 + API (内部用)
-    flow_cache_backend_private.h テンプレート: backend ops テーブル (内部用)
-    flow_cache_body_private.h  テンプレート: 実装 (内部用)
+  fcache/           ライブラリ
+    include/
+      flow_cache.h            傘ヘッダ: 3 バリアント全体をインクルード
+      flow_cache_decl.h       バリアント header が使う共通宣言
+      flow4_cache.h           IPv4 5 タプルフローキャッシュ (20 バイトキー)
+      flow6_cache.h           IPv6 5 タプルフローキャッシュ (44 バイトキー)
+      flow_unified_cache.h    IPv4+IPv6 統合テーブル (44 バイトキー、family フィールド)
+    src/
+      flow4.c                 IPv4 公開 wrapper + backend 選択
+      flow4_backend.c         IPv4 backend テンプレート、gen/sse/avx2/avx512 として多重コンパイル
+      flow6.c                 IPv6 公開 wrapper + backend 選択
+      flow6_backend.c         IPv6 backend テンプレート、gen/sse/avx2/avx512 として多重コンパイル
+      flowu.c                 Unified 公開 wrapper + backend 選択
+      flowu_backend.c         Unified backend テンプレート、gen/sse/avx2/avx512 として多重コンパイル
+      backend.h               backend ops テーブル (内部用)
+      body.h                  実装テンプレート (内部用)
+      hash_direct.h           direct-find 用 hash 生成 helper (内部用)
+    lib/                      生成物 (libfcache.a / libfcache.so)
   test/
-    flow_cache_test.c       正確性テスト + ベンチマーク (全 3 バリアント)
-    flow_cache_test_body.h  テンプレート: テスト・ベンチマーク関数 (内部用)
-    flow_cache_perf.sh      単一 workload 向け perf stat wrapper
+    fcache_test.c           正確性テスト + ベンチマーク (全 3 バリアント)
+    fcache_test_body.h      テンプレート: テスト・ベンチマーク関数 (内部用)
+    ht4_backend.c           test 専用 raw-hash テンプレート、gen/sse/avx2/avx512 として多重コンパイル
+    ht4.h                   test 専用 raw flow4 hash ベンチ宣言
+    perf.sh                 単一 workload 向け perf stat wrapper
 ```
 
 ---

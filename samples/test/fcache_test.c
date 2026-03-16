@@ -15,9 +15,15 @@
 #include <getopt.h>
 
 #include "flow_cache.h"
+#include "ht4.h"
 
 #define FLOW_CACHE_TEST_BACKEND_DECLARED 1
 flow_cache_backend_t flow_cache_test_backend = FLOW_CACHE_BACKEND_AUTO;
+
+extern const struct flow4_ht_direct_ops flow4_ht_direct_ops_gen;
+extern const struct flow4_ht_direct_ops flow4_ht_direct_ops_sse;
+extern const struct flow4_ht_direct_ops flow4_ht_direct_ops_avx2;
+extern const struct flow4_ht_direct_ops flow4_ht_direct_ops_avx512;
 
 #ifndef FLOW_CACHE_TEST_CC
 #define FLOW_CACHE_TEST_CC "cc"
@@ -135,6 +141,9 @@ flow_cache_test_selected_backend(const char *variant,
                                  void *pool,
                                  unsigned max_entries);
 
+static const struct flow4_ht_direct_ops *
+flow4_ht_direct_ops_from(flow_cache_backend_t backend);
+
 /*===========================================================================
  * Test payload overlay: cast entry->userdata to this struct in unit tests.
  * Demonstrates the caller-defined CL1 usage pattern.
@@ -159,20 +168,6 @@ flow6_test_init_cb(struct flow6_entry *e, void *arg __attribute__((unused)))
     memset(&e->userdata, 0, sizeof(e->userdata));
 }
 
-/*
- * flow4_ht functions needed by flow4_bench_single_find (ht_find) and
- * flow4_bench_bk0_rate (ht_init, ht_insert) which probe raw hash table
- * internals directly.  flow6_ht / flowu_ht are only accessed via the
- * cache API, so no generate is needed for them here.
- */
-static inline union rix_hash_hash_u
-flow4_ht_hash_fn(const struct flow4_key *key, uint32_t mask)
-{
-    return rix_hash_hash_bytes_fast(key, sizeof(*key), mask);
-}
-
-RIX_HASH_GENERATE_STATIC_EX(flow4_ht, flow4_entry, key, cur_hash,
-                            flow4_cmp, flow4_ht_hash_fn)
 
 /*===========================================================================
  * TSC helpers (lfence/rdtscp for precise measurement)
@@ -461,6 +456,22 @@ flow_cache_test_selected_backend(const char *variant,
     return flowu_cache_backend(&fc);
 }
 
+static const struct flow4_ht_direct_ops *
+flow4_ht_direct_ops_from(flow_cache_backend_t backend)
+{
+    switch (backend) {
+    case FLOW_CACHE_BACKEND_AVX512:
+        return &flow4_ht_direct_ops_avx512;
+    case FLOW_CACHE_BACKEND_AVX2:
+        return &flow4_ht_direct_ops_avx2;
+    case FLOW_CACHE_BACKEND_SSE:
+        return &flow4_ht_direct_ops_sse;
+    case FLOW_CACHE_BACKEND_GEN:
+    default:
+        return &flow4_ht_direct_ops_gen;
+    }
+}
+
 /*===========================================================================
  * Bench parameters
  *===========================================================================*/
@@ -639,6 +650,8 @@ flow4_bench_single_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     printf("\n[B-IPv4] single find (no pipeline) - hit vs miss latency\n");
 
     struct flow4_cache fc;
+    struct flow4_ht_direct_head ht_head;
+    const struct flow4_ht_direct_ops *ht_ops;
     flow4_cache_init(&fc, buckets, nb_bk, pool, max_entries,
                      flow_cache_test_backend, 0, NULL, NULL, NULL);
 
@@ -660,6 +673,9 @@ flow4_bench_single_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     }
 #undef FCT_MAKE_RANDOM_KEY
     printf("    filled: %u entries\n", actual_fill);
+
+    ht_ops = flow4_ht_direct_ops_from(flow4_cache_backend(&fc));
+    memcpy(&ht_head, &fc.ht_head, sizeof(fc.ht_head));
 
     if (actual_fill < 256) {
         printf("    SKIP: too few entries\n");
@@ -685,7 +701,7 @@ flow4_bench_single_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
         for (unsigned i = 0; i < nkeys; i++) {
             uint64_t t0 = tsc_start();
             struct flow4_entry *e __attribute__((unused)) =
-                flow4_ht_find(&fc.ht_head, fc.buckets, fc.pool, &hkeys[i]);
+                ht_ops->find(&ht_head, fc.buckets, fc.pool, &hkeys[i]);
             uint64_t t1 = tsc_end();
             total_cy += t1 - t0;
         }
@@ -698,7 +714,7 @@ flow4_bench_single_find(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
         for (unsigned i = 0; i < nkeys; i++) {
             uint64_t t0 = tsc_start();
             struct flow4_entry *e __attribute__((unused)) =
-                flow4_ht_find(&fc.ht_head, fc.buckets, fc.pool, &mkeys[i]);
+                ht_ops->find(&ht_head, fc.buckets, fc.pool, &mkeys[i]);
             uint64_t t1 = tsc_end();
             total_cy += t1 - t0;
         }
@@ -748,17 +764,26 @@ flow4_bench_bk0_rate(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
     if (nb_bk_local > nb_bk)
         nb_bk_local = nb_bk;
     unsigned total_slots = nb_bk_local * RIX_HASH_BUCKET_ENTRY_SZ;
+    flow_cache_backend_t selected_backend =
+        flow_cache_test_selected_backend("flow4", buckets, nb_bk_local,
+                                         pool, max_entries);
+    const struct flow4_ht_direct_ops *ht_ops =
+        flow4_ht_direct_ops_from(selected_backend);
 
     printf("\n[B-IPv4] bk[0] placement rate vs fill rate\n");
     printf("    max_entries=%u  nb_bk=%u  total_slots=%u\n",
            max_entries, nb_bk_local, total_slots);
+    printf("    selected backend: %s\n",
+           flow_cache_backend_name(selected_backend));
 
     printf("\n    fill%%   entries   bk0%%    bk1%%\n");
     printf("    -----   -------   -----   -----\n");
 
     for (unsigned pct = 10; pct <= 90; pct += 10) {
-        struct flow4_ht ht_head;
-        flow4_ht_init(&ht_head, nb_bk_local);
+        struct flow4_ht_direct_head ht_head;
+
+        memset(&ht_head, 0, sizeof(ht_head));
+        ht_ops->init(&ht_head, nb_bk_local);
         memset(buckets, 0, (size_t)nb_bk_local * sizeof(*buckets));
         memset(pool, 0, (size_t)max_entries * sizeof(*pool));
 
@@ -774,7 +799,7 @@ flow4_bench_bk0_rate(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
             e->last_ts = 1;  /* non-zero = valid */
 
             struct flow4_entry *dup =
-                flow4_ht_insert(&ht_head, buckets, pool, e);
+                ht_ops->insert(&ht_head, buckets, pool, e);
             if (dup == NULL)
                 inserted++;
             else
@@ -793,8 +818,7 @@ flow4_bench_bk0_rate(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
             if (e->last_ts == 0)
                 continue;
             union rix_hash_hash_u h =
-                rix_hash_arch->hash_bytes((const void *)&e->key,
-                                          sizeof(struct flow4_key), mask);
+                flow4_ht_hash_fn(&e->key, mask);
             unsigned bk0 = h.val32[0] & mask;
             unsigned cur_bk = e->cur_hash & mask;
             if (cur_bk == bk0)
@@ -822,7 +846,7 @@ flow4_bench_bk0_rate(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
 #define FCT_VARIANT       "flow4"
 #define FCT_KEY_BYTES     20
 #define FCT_MAKE_RANDOM_KEY(kp)  make_random_key4(kp)
-#include "flow_cache_test_body.h"
+#include "fcache_test_body.h"
 #undef FCT_PREFIX
 #undef FCT_KEY
 #undef FCT_ENTRY
@@ -843,7 +867,7 @@ flow4_bench_bk0_rate(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
 #define FCT_VARIANT       "flow6"
 #define FCT_KEY_BYTES     44
 #define FCT_MAKE_RANDOM_KEY(kp)  make_random_key6(kp)
-#include "flow_cache_test_body.h"
+#include "fcache_test_body.h"
 #undef FCT_PREFIX
 #undef FCT_KEY
 #undef FCT_ENTRY
@@ -864,7 +888,7 @@ flow4_bench_bk0_rate(struct rix_hash_bucket_s *buckets, unsigned nb_bk,
 #define FCT_VARIANT       "flowu"
 #define FCT_KEY_BYTES     44
 #define FCT_MAKE_RANDOM_KEY(kp)  make_random_keyu(kp)
-#include "flow_cache_test_body.h"
+#include "fcache_test_body.h"
 #undef FCT_PREFIX
 #undef FCT_KEY
 #undef FCT_ENTRY

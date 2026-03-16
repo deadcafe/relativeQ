@@ -9,7 +9,7 @@
 #   bench - build and run benchmarks (two pool sizes)
 #   clean - remove build artifacts
 #
-# The test binary links against ../fcache/libfcache.a.
+# The test binary links against ../fcache/lib/libfcache.a.
 # If the library is out of date, it is rebuilt automatically.
 #
 
@@ -43,25 +43,39 @@ endif
 WARN         = $(WARN_COMMON) $(WARN_EXTRA)
 OPTLEVEL    ?= 3
 
-# -O3 for test/bench; -I$(FCACHEDIR) resolves #include "flow_cache.h" etc.
-CFLAGS       = -std=gnu11 -O$(OPTLEVEL) $(SIMD_FLAGS) $(WARN) \
-               -I$(TOPDIR)/include -I$(FCACHEDIR) \
+# -O3 for test/bench; -I$(FCACHEDIR)/include resolves public headers.
+CFLAGS_BASE  = -std=gnu11 -O$(OPTLEVEL) $(WARN) \
+               -I$(TOPDIR)/include -I$(FCACHEDIR)/include -I$(FCACHEDIR)/src \
                -DFLOW_CACHE_TEST_CC=\"$(CC)\" \
                -DFLOW_CACHE_TEST_OPTLEVEL=$(OPTLEVEL)
+CFLAGS       = $(CFLAGS_BASE) $(SIMD_FLAGS)
 
-LIBFCACHE    = $(FCACHEDIR)/libfcache.a
+LIBFCACHE    = $(FCACHEDIR)/lib/libfcache.a
 
 TEST_TARGET  = flow_cache_test
-TEST_SRC     = flow_cache_test.c
-TEST_HDRS    = flow_cache_test_body.h
-PERF_SCRIPT  = flow_cache_perf.sh
+TEST_SRC     = fcache_test.c
+TEST_HDRS    = fcache_test_body.h ht4.h
+TEST_OBJS    = ht4_gen.o ht4_sse.o ht4_avx2.o ht4_avx512.o
+PERF_SCRIPT  = perf.sh
 
 .PHONY: all clean test bench perf
 
 all: $(TEST_TARGET)
 
-$(TEST_TARGET): $(TEST_SRC) $(TEST_HDRS) $(LIBFCACHE)
-	$(CC) $(CFLAGS) -o $@ $(TEST_SRC) $(LIBFCACHE)
+$(TEST_TARGET): $(TEST_SRC) $(TEST_HDRS) $(TEST_OBJS) $(LIBFCACHE)
+	$(CC) $(CFLAGS) -o $@ $(TEST_SRC) $(TEST_OBJS) $(LIBFCACHE)
+
+ht4_gen.o: ht4_backend.c $(TEST_HDRS)
+	$(CC) $(CFLAGS_BASE) -DHT4_BACKEND_NAME=gen -c -o $@ $<
+
+ht4_sse.o: ht4_backend.c $(TEST_HDRS)
+	$(CC) $(CFLAGS_BASE) -msse4.2 -DHT4_BACKEND_NAME=sse -c -o $@ $<
+
+ht4_avx2.o: ht4_backend.c $(TEST_HDRS)
+	$(CC) $(CFLAGS_BASE) -mavx2 -msse4.2 -DHT4_BACKEND_NAME=avx2 -c -o $@ $<
+
+ht4_avx512.o: ht4_backend.c $(TEST_HDRS)
+	$(CC) $(CFLAGS_BASE) -mavx512f -mavx2 -msse4.2 -DHT4_BACKEND_NAME=avx512 -c -o $@ $<
 
 # Rebuild library if its sources changed (propagate SIMD selection)
 $(LIBFCACHE):
@@ -84,4 +98,4 @@ perf: $(TEST_TARGET) $(PERF_SCRIPT)
 	./$(PERF_SCRIPT)
 
 clean:
-	rm -f $(TEST_TARGET) *~ core core.*
+	rm -f $(TEST_TARGET) $(TEST_OBJS) *~ core core.*

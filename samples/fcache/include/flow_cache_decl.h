@@ -20,7 +20,7 @@
  * Typical usage in a variant header (e.g. flow4_cache.h):
  *
  *   // Early include: Section 1 only (FC_PREFIX not yet defined)
- *   #include "flow_cache_decl_private.h"
+ *   #include "flow_cache_decl.h"
  *
  *   struct flow4_entry { FLOW_CACHE_CL(0); ... };  // uses Section 1 macros
  *   ...
@@ -29,14 +29,14 @@
  *   #define FC_PREFIX    flow4
  *   #define FC_ENTRY     flow4_entry
  *   ...
- *   #include "flow_cache_decl_private.h"
+ *   #include "flow_cache_decl.h"
  *   #undef FC_PREFIX
  *   ...
  *
- * INTERNAL USE ONLY.
- * This is a private implementation header of the fcache library.
- * Do not include it directly; use flow_cache.h (or a variant header
- * such as flow4_cache.h) instead.
+ * Public support header.
+ * Variant headers include this internally. Applications normally include
+ * flow_cache.h (or a variant header such as flow4_cache.h) instead of
+ * including this file directly.
  */
 
 /*===========================================================================

@@ -13,7 +13,7 @@
 #define FC_ENTRY        flow4_entry
 #define FC_KEY          flow4_key
 #define FC_CACHE        flow4_cache
-#include "flow_cache_backend_private.h"
+#include "backend.h"
 #undef FC_CACHE
 #undef FC_KEY
 #undef FC_ENTRY
@@ -90,7 +90,7 @@ flow4_cache_init(struct flow4_cache *fc,
     const struct flow4_cache_ops *ops =
         flow4_cache_select_ops(backend, &backend_id);
 
-    ops->init(fc, buckets, nb_bk, pool, max_entries, backend_id, timeout_ms,
+    ops->init(fc, buckets, nb_bk, pool, max_entries, timeout_ms,
               init_cb, fini_cb, cb_arg);
     fc->ops = ops;
     fc->backend_id = backend_id;
