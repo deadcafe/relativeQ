@@ -112,6 +112,14 @@ rix_hash_prefetch_key(const void *key)
     __builtin_prefetch(key, 0, 0);
 }
 
+/* Candidate-bucket insert path: hash[] is read first, idx[] is written on hit. */
+static RIX_FORCE_INLINE void
+_rix_hash_prefetch_bucket_insert(struct rix_hash_bucket_s *bucket)
+{
+    __builtin_prefetch(&bucket->hash[0], 0, 1);
+    __builtin_prefetch(&bucket->idx[0], 1, 1);
+}
+
 /*===========================================================================
  * Internal bucket-index arithmetic helpers
  *===========================================================================*/
@@ -475,6 +483,9 @@ name##_insert(struct name *head,                                              \
     _rix_hash_buckets(_h, mask, &_bk0, &_bk1, &_fp);                          \
     /* Store h.val32[0] in hash_field initially; updated later if bk1 chosen */\
     elm->hash_field = _h.val32[0];                                            \
+    _rix_hash_prefetch_bucket_insert(buckets + _bk0);                         \
+    if (_bk1 != _bk0)                                                         \
+        _rix_hash_prefetch_bucket_insert(buckets + _bk1);                     \
                                                                               \
     /* Scan both candidate buckets once up front so duplicate detection and   \
      * empty-slot search reuse the same CL0 load. */                          \
@@ -566,6 +577,7 @@ name##_insert(struct name *head,                                              \
                                                                               \
             /* Try to place victim in the alt bucket */                       \
             struct rix_hash_bucket_s *_alt = buckets + _alt_bk;               \
+            _rix_hash_prefetch_bucket_insert(_alt);                           \
             uint32_t _nilm = _RIX_HASH_FIND_U32X16(_alt->hash, 0u);           \
             if (_nilm) {                                                      \
                 unsigned _slot    = (unsigned)__builtin_ctz(_nilm);           \

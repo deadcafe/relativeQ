@@ -261,27 +261,35 @@ This is why the 75% threshold is important (§8).
 Stage 0: hash_key       compute hash, prefetch bucket[0] CL0
 Stage 1: scan_bk        SIMD fingerprint scan in bucket[0]
 Stage 2: prefetch_node  prefetch flow_entry CL0 for candidates
-Stage 3: cmp_key        full key comparison, return hit/NULL
+Stage 3: cmp_key        full key comparison, return hit/NULL, then warm CL1 on hit
 ```
 
 ### 6.2 N-ahead software pipeline
 
-Process nb_pkts packets with BATCH-wide steps, KPD batches ahead:
+Process `nb_pkts` packets in `STEP_KEYS`-wide steps. Each stage runs
+`AHEAD_KEYS` keys ahead of the next stage:
 
 ```
-BATCH = 8          (keys processed per step)
-KPD   = 8          (pipeline depth in batches)
-DIST  = BATCH*KPD  (= 64 keys ahead)
+STEP_KEYS   = 16   (keys processed per step)
+AHEAD_STEPS = 8    (how many steps each stage runs ahead)
+AHEAD_KEYS  = 128  (= STEP_KEYS * AHEAD_STEPS)
 ```
 
 ```c
-for (i = 0; i < nb_pkts + 3 * DIST; i += BATCH) {
-    if (i                  < nb_pkts) hash_key_n      (i,        BATCH);
-    if (i >= DIST       && ...)       scan_bk_n       (i-DIST,   BATCH);
-    if (i >= 2*DIST     && ...)       prefetch_node_n (i-2*DIST, BATCH);
-    if (i >= 3*DIST     && ...)       cmp_key_n       (i-3*DIST, BATCH);
+for (i = 0; i < nb_pkts + 3 * AHEAD_KEYS; i += STEP_KEYS) {
+    if (i                        < nb_pkts) hash_key_n      (i,              STEP_KEYS);
+    if (i >= AHEAD_KEYS       && ...)       scan_bk_n       (i-AHEAD_KEYS,   STEP_KEYS);
+    if (i >= 2*AHEAD_KEYS     && ...)       prefetch_node_n (i-2*AHEAD_KEYS, STEP_KEYS);
+    if (i >= 3*AHEAD_KEYS     && ...)       cmp_key_n       (i-3*AHEAD_KEYS, STEP_KEYS);
 }
 ```
+
+`AHEAD_KEYS` is a software-pipeline distance. It does not mean that the code
+issues 128 hardware prefetches at once.
+
+For flow-cache packet loops, a confirmed hit also triggers a CL1 write-prefetch
+so the following `cache_touch()` and payload counter update do not stall on
+the second cache line.
 
 ### 6.3 Timestamp
 
@@ -298,6 +306,10 @@ On cache miss, insert a new entry **immediately** (not deferred to
 slow path).  After a successful insert, `init_cb(entry, cb_arg)` is
 called to initialize `entry->userdata`.
 
+The insert fast path also warms the two candidate bucket lines before
+the duplicate / empty-slot scan, so the common case does not wait for
+that bucket fetch as late.
+
 Rationale:
 - The lookup just ran; bucket cache lines are still in L2 (~5 cy
   access vs ~200 cy DRAM).  Insert cost drops significantly.
@@ -305,6 +317,11 @@ Rationale:
   flow will hit immediately.
 - Payload layout (counters, action, QoS class, etc.) is defined
   entirely by the caller — the library imposes no schema on CL1.
+
+For the benchmark packet loop, consecutive hits to the same entry are also
+coalesced into one `cache_touch()` plus one payload update, and a zero-miss
+streak backs off the expire cadence up to 8 batches. This keeps the benchmark
+closer to a steady-state hit-heavy datapath than calling expire every batch.
 
 ### 7.2 Processing flow
 
@@ -739,7 +756,7 @@ between multiple precompiled backends.
 | `include/flow_cache_decl.h` | Cache struct, API declarations, inline helpers | public variant `.h` files |
 | `src/backend.h` | Backend ops table layout | fat-backend `.c` files |
 | `src/hash_direct.h` | direct-find `RIX_HASH_GENERATE_STATIC_EX` expansion | fat-backend `.c`, test-only raw-hash `.c` |
-| `src/body.h` | init, insert, lookup_batch, expire, stats | `.c` files |
+| `src/body.h` | init, insert, lookup_batch, expire, stats, perf pkt-loop mixes | `.c` files |
 | `test/fcache_test_body.h` | Test + benchmark functions | test `.c` |
 
 ### 11.3 Adding a new variant
@@ -1257,9 +1274,9 @@ For high-throughput bulk lookups (e.g., packet processing), use the
 4-stage pipeline to hide DRAM latency:
 
 ```c
-#define BATCH  8
-#define KPD    8
-#define DIST   (BATCH * KPD)   /* 64 keys ahead */
+#define STEP_KEYS   16
+#define AHEAD_STEPS 8
+#define AHEAD_KEYS  (STEP_KEYS * AHEAD_STEPS)   /* 128 keys ahead */
 
 void
 batch_find(struct my_ht *ht,
@@ -1270,33 +1287,33 @@ batch_find(struct my_ht *ht,
            struct my_node **results)
 {
     struct rix_hash_find_ctx_s ctx[nb_keys];
-    unsigned total = nb_keys + 3 * DIST;
+    unsigned total = nb_keys + 3 * AHEAD_KEYS;
 
-    for (unsigned i = 0; i < total; i += BATCH) {
+    for (unsigned i = 0; i < total; i += STEP_KEYS) {
         /* Stage 0: hash + prefetch bucket */
         if (i < nb_keys) {
-            unsigned n = (i + BATCH <= nb_keys) ? BATCH : nb_keys - i;
+            unsigned n = (i + STEP_KEYS <= nb_keys) ? STEP_KEYS : nb_keys - i;
             for (unsigned j = 0; j < n; j++)
                 my_ht_hash_key(&ctx[i+j], ht, bk, &keys[i+j]);
         }
         /* Stage 1: SIMD fingerprint scan */
-        if (i >= DIST && i - DIST < nb_keys) {
-            unsigned b = i - DIST;
-            unsigned n = (b + BATCH <= nb_keys) ? BATCH : nb_keys - b;
+        if (i >= AHEAD_KEYS && i - AHEAD_KEYS < nb_keys) {
+            unsigned b = i - AHEAD_KEYS;
+            unsigned n = (b + STEP_KEYS <= nb_keys) ? STEP_KEYS : nb_keys - b;
             for (unsigned j = 0; j < n; j++)
                 my_ht_scan_bk(&ctx[b+j], ht, bk);
         }
         /* Stage 2: prefetch candidate node */
-        if (i >= 2*DIST && i - 2*DIST < nb_keys) {
-            unsigned b = i - 2*DIST;
-            unsigned n = (b + BATCH <= nb_keys) ? BATCH : nb_keys - b;
+        if (i >= 2*AHEAD_KEYS && i - 2*AHEAD_KEYS < nb_keys) {
+            unsigned b = i - 2*AHEAD_KEYS;
+            unsigned n = (b + STEP_KEYS <= nb_keys) ? STEP_KEYS : nb_keys - b;
             for (unsigned j = 0; j < n; j++)
                 my_ht_prefetch_node(&ctx[b+j], base);
         }
         /* Stage 3: full key comparison */
-        if (i >= 3*DIST && i - 3*DIST < nb_keys) {
-            unsigned b = i - 3*DIST;
-            unsigned n = (b + BATCH <= nb_keys) ? BATCH : nb_keys - b;
+        if (i >= 3*AHEAD_KEYS && i - 3*AHEAD_KEYS < nb_keys) {
+            unsigned b = i - 3*AHEAD_KEYS;
+            unsigned n = (b + STEP_KEYS <= nb_keys) ? STEP_KEYS : nb_keys - b;
             for (unsigned j = 0; j < n; j++)
                 results[b+j] = my_ht_cmp_key(&ctx[b+j], base);
         }

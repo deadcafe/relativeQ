@@ -695,9 +695,16 @@ For sample benchmarking/debugging, `samples/test/flow_cache_test` also accepts
 `--backend auto|gen|sse|avx2|avx512` and prints the actual backend selected per
 variant. For perf-friendly single-workload runs it also supports
 `--bench-case`, `--list-bench-cases`, and `--json`.
+Packet-loop cases include `pkt_hit_only`, `pkt_miss_only`, `pkt_std`
+(90% hit / 10% miss), and `pkt_tight`.
 For the built-in flow-cache variants, the hash stage also uses fixed-size
 CRC32 fast paths for 20-byte and 44-byte keys, avoiding the generic
 `hash_bytes()` loop on the hot path.
+The insert fast path also warms the two candidate bucket lines before the
+duplicate / empty-slot scan.
+For packet-loop perf cases, confirmed hits also prefetch CL1 before the
+post-lookup update, and hit-only streaks back off `cache_expire()` cadence
+up to 8 batches to model steady-state traffic more realistically.
 
 ### Packet processing loop
 
@@ -871,6 +878,21 @@ make CC=clang OPTLEVEL=3
 ```
 
 The current tree is expected to build with both GCC and Clang in this mode.
+
+For `samples/fcache`, the lookup pipeline constants default to
+`FLOW_CACHE_LOOKUP_STEP_KEYS=16`,
+`FLOW_CACHE_LOOKUP_AHEAD_STEPS=8`, and
+`FLOW_CACHE_LOOKUP_AHEAD_KEYS=128`.
+`AHEAD_KEYS` is the software-pipeline stage distance, not a count of
+hardware prefetch requests.
+You can override them for tuning runs via `EXTRA_CFLAGS`:
+
+```sh
+make -C samples/fcache static CC=gcc OPTLEVEL=3 \
+     EXTRA_CFLAGS='-DFLOW_CACHE_LOOKUP_STEP_KEYS=8 -DFLOW_CACHE_LOOKUP_AHEAD_KEYS=64'
+make -C samples/test all CC=gcc OPTLEVEL=3 \
+     EXTRA_CFLAGS='-DFLOW_CACHE_LOOKUP_STEP_KEYS=8 -DFLOW_CACHE_LOOKUP_AHEAD_KEYS=64'
+```
 
 For address/UB sanitizers during development:
 

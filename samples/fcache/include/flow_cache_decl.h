@@ -339,9 +339,16 @@ flow_cache_nb_bk_hint(unsigned max_entries)
 #define FLOW_CACHE_CL(n) \
     char _cl##n[0] __attribute__((aligned(FLOW_CACHE_LINE_SIZE)))
 
-#define FLOW_CACHE_BATCH   8    /* keys per pipeline step */
-#define FLOW_CACHE_KPD     8    /* pipeline depth (batches ahead) */
-#define FLOW_CACHE_DIST    (FLOW_CACHE_BATCH * FLOW_CACHE_KPD)  /* 64 */
+#ifndef FLOW_CACHE_LOOKUP_STEP_KEYS
+#define FLOW_CACHE_LOOKUP_STEP_KEYS   16   /* keys processed per pipeline step */
+#endif
+#ifndef FLOW_CACHE_LOOKUP_AHEAD_STEPS
+#define FLOW_CACHE_LOOKUP_AHEAD_STEPS 8    /* how many steps each stage runs ahead */
+#endif
+#ifndef FLOW_CACHE_LOOKUP_AHEAD_KEYS
+#define FLOW_CACHE_LOOKUP_AHEAD_KEYS \
+    (FLOW_CACHE_LOOKUP_STEP_KEYS * FLOW_CACHE_LOOKUP_AHEAD_STEPS) /* 128 keys */
+#endif
 
 /*===========================================================================
  * Expire tuning parameters

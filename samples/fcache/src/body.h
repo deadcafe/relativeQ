@@ -68,6 +68,12 @@ FC_FN(FC_PREFIX, call_fini_cb)(struct FC_CACHE *fc,
         fc->fini_cb(entry, reason, fc->cb_arg);
 }
 
+static RIX_FORCE_INLINE void
+FC_FN(FC_PREFIX, cache_prefetch_hit_write)(struct FC_ENTRY *entry)
+{
+    __builtin_prefetch((char *)entry + FLOW_CACHE_LINE_SIZE, 1, 1);
+}
+
 /*===========================================================================
  * Internal: fill-rate-driven expire pressure
  *
@@ -344,53 +350,55 @@ FC_FN(FC_PREFIX, cache_lookup_batch)(struct FC_CACHE *fc,
                            struct FC_ENTRY **results)
 {
     struct rix_hash_find_ctx_s ctx[nb_pkts];
+    uint64_t hit_count = 0;
 
-    const unsigned DIST = FLOW_CACHE_DIST;
-    const unsigned BATCH = FLOW_CACHE_BATCH;
-    const unsigned total = nb_pkts + 3 * DIST;
+    const unsigned ahead_keys = FLOW_CACHE_LOOKUP_AHEAD_KEYS;
+    const unsigned step_keys = FLOW_CACHE_LOOKUP_STEP_KEYS;
+    const unsigned total = nb_pkts + 3 * ahead_keys;
 
-    for (unsigned i = 0; i < total; i += BATCH) {
+    for (unsigned i = 0; i < total; i += step_keys) {
         if (i < nb_pkts) {
-            unsigned n = (i + BATCH <= nb_pkts) ? BATCH : (nb_pkts - i);
+            unsigned n = (i + step_keys <= nb_pkts) ? step_keys : (nb_pkts - i);
             for (unsigned j = 0; j < n; j++)
                 FC_CALL(FC_HT_PREFIX, hash_key)(&ctx[i + j],
                                                   &fc->ht_head, fc->buckets,
                                                   &keys[i + j]);
         }
 
-        if (i >= DIST && i - DIST < nb_pkts) {
-            unsigned base = i - DIST;
-            unsigned n = (base + BATCH <= nb_pkts) ? BATCH : (nb_pkts - base);
+        if (i >= ahead_keys && i - ahead_keys < nb_pkts) {
+            unsigned base = i - ahead_keys;
+            unsigned n = (base + step_keys <= nb_pkts) ? step_keys : (nb_pkts - base);
             for (unsigned j = 0; j < n; j++)
                 FC_CALL(FC_HT_PREFIX, scan_bk)(&ctx[base + j],
                                                 &fc->ht_head, fc->buckets);
         }
 
-        if (i >= 2 * DIST && i - 2 * DIST < nb_pkts) {
-            unsigned base = i - 2 * DIST;
-            unsigned n = (base + BATCH <= nb_pkts) ? BATCH : (nb_pkts - base);
+        if (i >= 2 * ahead_keys && i - 2 * ahead_keys < nb_pkts) {
+            unsigned base = i - 2 * ahead_keys;
+            unsigned n = (base + step_keys <= nb_pkts) ? step_keys : (nb_pkts - base);
             for (unsigned j = 0; j < n; j++)
                 FC_CALL(FC_HT_PREFIX, prefetch_node)(&ctx[base + j],
                                                       fc->pool);
         }
 
-        if (i >= 3 * DIST && i - 3 * DIST < nb_pkts) {
-            unsigned base = i - 3 * DIST;
-            unsigned n = (base + BATCH <= nb_pkts) ? BATCH : (nb_pkts - base);
-            for (unsigned j = 0; j < n; j++)
-                results[base + j] =
-                    FC_CALL(FC_HT_PREFIX, cmp_key)(&ctx[base + j],
-                                                    fc->pool);
+        if (i >= 3 * ahead_keys && i - 3 * ahead_keys < nb_pkts) {
+            unsigned base = i - 3 * ahead_keys;
+            unsigned n = (base + step_keys <= nb_pkts) ? step_keys : (nb_pkts - base);
+            for (unsigned j = 0; j < n; j++) {
+                struct FC_ENTRY *entry =
+                    FC_CALL(FC_HT_PREFIX, cmp_key)(&ctx[base + j], fc->pool);
+                results[base + j] = entry;
+                if (entry != NULL) {
+                    FC_CALL(FC_PREFIX, cache_prefetch_hit_write)(entry);
+                    hit_count++;
+                }
+            }
         }
     }
 
     fc->stats.lookups += nb_pkts;
-    for (unsigned i = 0; i < nb_pkts; i++) {
-        if (results[i])
-            fc->stats.hits++;
-        else
-            fc->stats.misses++;
-    }
+    fc->stats.hits += hit_count;
+    fc->stats.misses += nb_pkts - hit_count;
 }
 
 /*===========================================================================

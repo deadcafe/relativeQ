@@ -49,6 +49,8 @@ typedef enum {
     FLOW_CACHE_BENCH_FLOW4_FIND_SINGLE_HIT,
     FLOW_CACHE_BENCH_FLOW4_FIND_SINGLE_MISS,
     FLOW_CACHE_BENCH_FLOW4_EXPIRE_FULL,
+    FLOW_CACHE_BENCH_FLOW4_PKT_HIT_ONLY,
+    FLOW_CACHE_BENCH_FLOW4_PKT_MISS_ONLY,
     FLOW_CACHE_BENCH_FLOW4_PKT_STD,
     FLOW_CACHE_BENCH_FLOW4_PKT_TIGHT,
     FLOW_CACHE_BENCH_FLOW6_INSERT,
@@ -56,6 +58,8 @@ typedef enum {
     FLOW_CACHE_BENCH_FLOW6_FIND_SINGLE_HIT,
     FLOW_CACHE_BENCH_FLOW6_FIND_SINGLE_MISS,
     FLOW_CACHE_BENCH_FLOW6_EXPIRE_FULL,
+    FLOW_CACHE_BENCH_FLOW6_PKT_HIT_ONLY,
+    FLOW_CACHE_BENCH_FLOW6_PKT_MISS_ONLY,
     FLOW_CACHE_BENCH_FLOW6_PKT_STD,
     FLOW_CACHE_BENCH_FLOW6_PKT_TIGHT,
     FLOW_CACHE_BENCH_FLOWU_INSERT,
@@ -63,6 +67,8 @@ typedef enum {
     FLOW_CACHE_BENCH_FLOWU_FIND_SINGLE_HIT,
     FLOW_CACHE_BENCH_FLOWU_FIND_SINGLE_MISS,
     FLOW_CACHE_BENCH_FLOWU_EXPIRE_FULL,
+    FLOW_CACHE_BENCH_FLOWU_PKT_HIT_ONLY,
+    FLOW_CACHE_BENCH_FLOWU_PKT_MISS_ONLY,
     FLOW_CACHE_BENCH_FLOWU_PKT_STD,
     FLOW_CACHE_BENCH_FLOWU_PKT_TIGHT,
 } flow_cache_bench_case_t;
@@ -78,6 +84,8 @@ static const struct flow_cache_bench_case_desc flow_cache_bench_cases[] = {
     { "flow4:find_single_hit",   FLOW_CACHE_BENCH_FLOW4_FIND_SINGLE_HIT },
     { "flow4:find_single_miss",  FLOW_CACHE_BENCH_FLOW4_FIND_SINGLE_MISS },
     { "flow4:expire_full",       FLOW_CACHE_BENCH_FLOW4_EXPIRE_FULL },
+    { "flow4:pkt_hit_only",      FLOW_CACHE_BENCH_FLOW4_PKT_HIT_ONLY },
+    { "flow4:pkt_miss_only",     FLOW_CACHE_BENCH_FLOW4_PKT_MISS_ONLY },
     { "flow4:pkt_std",           FLOW_CACHE_BENCH_FLOW4_PKT_STD },
     { "flow4:pkt_tight",         FLOW_CACHE_BENCH_FLOW4_PKT_TIGHT },
     { "flow6:insert",            FLOW_CACHE_BENCH_FLOW6_INSERT },
@@ -85,6 +93,8 @@ static const struct flow_cache_bench_case_desc flow_cache_bench_cases[] = {
     { "flow6:find_single_hit",   FLOW_CACHE_BENCH_FLOW6_FIND_SINGLE_HIT },
     { "flow6:find_single_miss",  FLOW_CACHE_BENCH_FLOW6_FIND_SINGLE_MISS },
     { "flow6:expire_full",       FLOW_CACHE_BENCH_FLOW6_EXPIRE_FULL },
+    { "flow6:pkt_hit_only",      FLOW_CACHE_BENCH_FLOW6_PKT_HIT_ONLY },
+    { "flow6:pkt_miss_only",     FLOW_CACHE_BENCH_FLOW6_PKT_MISS_ONLY },
     { "flow6:pkt_std",           FLOW_CACHE_BENCH_FLOW6_PKT_STD },
     { "flow6:pkt_tight",         FLOW_CACHE_BENCH_FLOW6_PKT_TIGHT },
     { "flowu:insert",            FLOW_CACHE_BENCH_FLOWU_INSERT },
@@ -92,6 +102,8 @@ static const struct flow_cache_bench_case_desc flow_cache_bench_cases[] = {
     { "flowu:find_single_hit",   FLOW_CACHE_BENCH_FLOWU_FIND_SINGLE_HIT },
     { "flowu:find_single_miss",  FLOW_CACHE_BENCH_FLOWU_FIND_SINGLE_MISS },
     { "flowu:expire_full",       FLOW_CACHE_BENCH_FLOWU_EXPIRE_FULL },
+    { "flowu:pkt_hit_only",      FLOW_CACHE_BENCH_FLOWU_PKT_HIT_ONLY },
+    { "flowu:pkt_miss_only",     FLOW_CACHE_BENCH_FLOWU_PKT_MISS_ONLY },
     { "flowu:pkt_std",           FLOW_CACHE_BENCH_FLOWU_PKT_STD },
     { "flowu:pkt_tight",         FLOW_CACHE_BENCH_FLOWU_PKT_TIGHT },
 };
@@ -974,6 +986,12 @@ run_bench_case(flow_cache_bench_case_t bench_case,
     case FLOW_CACHE_BENCH_FLOW4_EXPIRE_FULL:
         flow4_perf_expire_full_case(buckets, nb_bk, pool4, max_entries, repeat);
         return 0;
+    case FLOW_CACHE_BENCH_FLOW4_PKT_HIT_ONLY:
+        flow4_perf_pkt_hit_only_case(buckets, nb_bk, pool4, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOW4_PKT_MISS_ONLY:
+        flow4_perf_pkt_miss_only_case(buckets, nb_bk, pool4, max_entries, repeat);
+        return 0;
     case FLOW_CACHE_BENCH_FLOW4_PKT_STD:
         flow4_perf_pkt_std_case(buckets, nb_bk, pool4, max_entries, repeat);
         return 0;
@@ -995,6 +1013,12 @@ run_bench_case(flow_cache_bench_case_t bench_case,
     case FLOW_CACHE_BENCH_FLOW6_EXPIRE_FULL:
         flow6_perf_expire_full_case(buckets, nb_bk, pool6, max_entries, repeat);
         return 0;
+    case FLOW_CACHE_BENCH_FLOW6_PKT_HIT_ONLY:
+        flow6_perf_pkt_hit_only_case(buckets, nb_bk, pool6, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOW6_PKT_MISS_ONLY:
+        flow6_perf_pkt_miss_only_case(buckets, nb_bk, pool6, max_entries, repeat);
+        return 0;
     case FLOW_CACHE_BENCH_FLOW6_PKT_STD:
         flow6_perf_pkt_std_case(buckets, nb_bk, pool6, max_entries, repeat);
         return 0;
@@ -1015,6 +1039,12 @@ run_bench_case(flow_cache_bench_case_t bench_case,
         return 0;
     case FLOW_CACHE_BENCH_FLOWU_EXPIRE_FULL:
         flowu_perf_expire_full_case(buckets, nb_bk, poolu, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOWU_PKT_HIT_ONLY:
+        flowu_perf_pkt_hit_only_case(buckets, nb_bk, poolu, max_entries, repeat);
+        return 0;
+    case FLOW_CACHE_BENCH_FLOWU_PKT_MISS_ONLY:
+        flowu_perf_pkt_miss_only_case(buckets, nb_bk, poolu, max_entries, repeat);
         return 0;
     case FLOW_CACHE_BENCH_FLOWU_PKT_STD:
         flowu_perf_pkt_std_case(buckets, nb_bk, poolu, max_entries, repeat);

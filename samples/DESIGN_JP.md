@@ -261,27 +261,35 @@ DRAMアクセスを最小化する。
 Stage 0: hash_key       ハッシュ計算、bucket[0] CL0をプリフェッチ
 Stage 1: scan_bk        バケット[0]内でSIMDフィンガープリントスキャン
 Stage 2: prefetch_node  候補ノードの flow_entry CL0をプリフェッチ
-Stage 3: cmp_key        完全キー比較、ヒット/NULLを返す
+Stage 3: cmp_key        完全キー比較、ヒット/NULLを返し、hit時はCL1も温める
 ```
 
 ### 6.2 N-aheadソフトウェアパイプライン
 
-nb_pktsパケットをBATCH幅のステップで、KPDバッチ先行して処理:
+`nb_pkts` パケットを `STEP_KEYS` 幅のステップで処理し、
+各段を `AHEAD_KEYS` キーぶん先行させる:
 
 ```
-BATCH = 8          (ステップあたりの処理キー数)
-KPD   = 8          (バッチ単位のパイプライン深度)
-DIST  = BATCH*KPD  (= 64キー先行)
+STEP_KEYS   = 16   (ステップあたりの処理キー数)
+AHEAD_STEPS = 8    (各段が何ステップ先行するか)
+AHEAD_KEYS  = 128  (= STEP_KEYS * AHEAD_STEPS)
 ```
 
 ```c
-for (i = 0; i < nb_pkts + 3 * DIST; i += BATCH) {
-    if (i                  < nb_pkts) hash_key_n      (i,        BATCH);
-    if (i >= DIST       && ...)       scan_bk_n       (i-DIST,   BATCH);
-    if (i >= 2*DIST     && ...)       prefetch_node_n (i-2*DIST, BATCH);
-    if (i >= 3*DIST     && ...)       cmp_key_n       (i-3*DIST, BATCH);
+for (i = 0; i < nb_pkts + 3 * AHEAD_KEYS; i += STEP_KEYS) {
+    if (i                        < nb_pkts) hash_key_n      (i,              STEP_KEYS);
+    if (i >= AHEAD_KEYS       && ...)       scan_bk_n       (i-AHEAD_KEYS,   STEP_KEYS);
+    if (i >= 2*AHEAD_KEYS     && ...)       prefetch_node_n (i-2*AHEAD_KEYS, STEP_KEYS);
+    if (i >= 3*AHEAD_KEYS     && ...)       cmp_key_n       (i-3*AHEAD_KEYS, STEP_KEYS);
 }
 ```
+
+`AHEAD_KEYS` は software pipeline の段間距離であり、
+一度に 128 回 hardware prefetch を発行する意味ではない。
+
+flow cache の packet loop では、hit 確定後に CL1 への write-prefetch も打ち、
+直後の `cache_touch()` と payload カウンタ更新が 2 本目の cache line 待ちで
+止まりにくいようにしている。
 
 ### 6.3 タイムスタンプ
 
@@ -298,6 +306,10 @@ for (i = 0; i < nb_pkts + 3 * DIST; i += BATCH) {
 （スローパスへの遅延なし）。挿入成功後、`init_cb(entry, cb_arg)` が
 呼び出されて `entry->userdata` を初期化する。
 
+insert の fast path では、duplicate / empty-slot scan の前に
+2本の candidate bucket line を先に温める。これにより common case で
+bucket fetch 待ちが後段にずれ込みにくい。
+
 根拠:
 - ルックアップ直後で、バケットのキャッシュラインはまだL2にある
   （約5 cyアクセス vs 約200 cy DRAM）。挿入コストが大幅に低下。
@@ -305,6 +317,11 @@ for (i = 0; i < nb_pkts + 3 * DIST; i += BATCH) {
   パケットは即座にヒットする。
 - ペイロードレイアウト（カウンタ、アクション、QoSクラス等）は
   呼び出し元が自由に定義できる — ライブラリはCL1に何も課さない。
+
+ベンチマーク用 packet loop では、同じ entry への連続 hit を
+1回の `cache_touch()` と 1回の payload 更新にまとめ、さらに zero-miss が
+続く間は expire cadence を最大 8 batch まで広げる。毎 batch expire を
+呼ぶより、steady-state の hit-heavy datapath に近い測り方になる。
 
 ### 7.2 処理フロー
 
@@ -773,7 +790,7 @@ wrapper を追加で持つ。
 | `include/flow_cache_decl.h` | キャッシュ構造体、API宣言、インラインヘルパー | 公開 variant `.h` |
 | `src/backend.h` | backend ops テーブル定義 | fat-backend `.c` |
 | `src/hash_direct.h` | direct-find 用 `RIX_HASH_GENERATE_STATIC_EX` 展開 | fat-backend `.c`、test 専用 raw-hash `.c` |
-| `src/body.h` | init、insert、lookup_batch、expire、stats | `.c` ファイル |
+| `src/body.h` | init、insert、lookup_batch、expire、stats、perf pkt-loop mix | `.c` ファイル |
 | `test/fcache_test_body.h` | テスト+ベンチマーク関数 | テスト `.c` |
 
 ### 11.3 新バリアントの追加
@@ -1288,9 +1305,9 @@ my_ht_walk(&ht, buckets, pool, print_cb, NULL);
 DRAMレイテンシを隠蔽する4段パイプラインを使用:
 
 ```c
-#define BATCH  8
-#define KPD    8
-#define DIST   (BATCH * KPD)   /* 64キー先行 */
+#define STEP_KEYS   16
+#define AHEAD_STEPS 8
+#define AHEAD_KEYS  (STEP_KEYS * AHEAD_STEPS)   /* 128キー先行 */
 
 void
 batch_find(struct my_ht *ht,
@@ -1301,33 +1318,33 @@ batch_find(struct my_ht *ht,
            struct my_node **results)
 {
     struct rix_hash_find_ctx_s ctx[nb_keys];
-    unsigned total = nb_keys + 3 * DIST;
+    unsigned total = nb_keys + 3 * AHEAD_KEYS;
 
-    for (unsigned i = 0; i < total; i += BATCH) {
+    for (unsigned i = 0; i < total; i += STEP_KEYS) {
         /* Stage 0: ハッシュ + バケットプリフェッチ */
         if (i < nb_keys) {
-            unsigned n = (i + BATCH <= nb_keys) ? BATCH : nb_keys - i;
+            unsigned n = (i + STEP_KEYS <= nb_keys) ? STEP_KEYS : nb_keys - i;
             for (unsigned j = 0; j < n; j++)
                 my_ht_hash_key(&ctx[i+j], ht, bk, &keys[i+j]);
         }
         /* Stage 1: SIMDフィンガープリントスキャン */
-        if (i >= DIST && i - DIST < nb_keys) {
-            unsigned b = i - DIST;
-            unsigned n = (b + BATCH <= nb_keys) ? BATCH : nb_keys - b;
+        if (i >= AHEAD_KEYS && i - AHEAD_KEYS < nb_keys) {
+            unsigned b = i - AHEAD_KEYS;
+            unsigned n = (b + STEP_KEYS <= nb_keys) ? STEP_KEYS : nb_keys - b;
             for (unsigned j = 0; j < n; j++)
                 my_ht_scan_bk(&ctx[b+j], ht, bk);
         }
         /* Stage 2: 候補ノードのプリフェッチ */
-        if (i >= 2*DIST && i - 2*DIST < nb_keys) {
-            unsigned b = i - 2*DIST;
-            unsigned n = (b + BATCH <= nb_keys) ? BATCH : nb_keys - b;
+        if (i >= 2*AHEAD_KEYS && i - 2*AHEAD_KEYS < nb_keys) {
+            unsigned b = i - 2*AHEAD_KEYS;
+            unsigned n = (b + STEP_KEYS <= nb_keys) ? STEP_KEYS : nb_keys - b;
             for (unsigned j = 0; j < n; j++)
                 my_ht_prefetch_node(&ctx[b+j], base);
         }
         /* Stage 3: 完全キー比較 */
-        if (i >= 3*DIST && i - 3*DIST < nb_keys) {
-            unsigned b = i - 3*DIST;
-            unsigned n = (b + BATCH <= nb_keys) ? BATCH : nb_keys - b;
+        if (i >= 3*AHEAD_KEYS && i - 3*AHEAD_KEYS < nb_keys) {
+            unsigned b = i - 3*AHEAD_KEYS;
+            unsigned n = (b + STEP_KEYS <= nb_keys) ? STEP_KEYS : nb_keys - b;
             for (unsigned j = 0; j < n; j++)
                 results[b+j] = my_ht_cmp_key(&ctx[b+j], base);
         }

@@ -42,12 +42,14 @@ endif
 
 WARN         = $(WARN_COMMON) $(WARN_EXTRA)
 OPTLEVEL    ?= 3
+EXTRA_CFLAGS ?=
 
 # -O3 for test/bench; -I$(FCACHEDIR)/include resolves public headers.
 CFLAGS_BASE  = -std=gnu11 -O$(OPTLEVEL) $(WARN) \
                -I$(TOPDIR)/include -I$(FCACHEDIR)/include -I$(FCACHEDIR)/src \
                -DFLOW_CACHE_TEST_CC=\"$(CC)\" \
-               -DFLOW_CACHE_TEST_OPTLEVEL=$(OPTLEVEL)
+               -DFLOW_CACHE_TEST_OPTLEVEL=$(OPTLEVEL) \
+               $(EXTRA_CFLAGS)
 CFLAGS       = $(CFLAGS_BASE) $(SIMD_FLAGS)
 
 LIBFCACHE    = $(FCACHEDIR)/lib/libfcache.a

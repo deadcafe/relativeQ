@@ -696,9 +696,16 @@ flow4_cache_flush(&fc);
 でも backend を固定でき、各バリアントで実際に選ばれた backend を表示します。
 さらに perf 向けの単一 workload 実行として `--bench-case`,
 `--list-bench-cases`, `--json` も使えます。
+packet loop 系の case には `pkt_hit_only`, `pkt_miss_only`,
+`pkt_std`（90% hit / 10% miss）, `pkt_tight` があります。
 組み込みの flow cache バリアントでは、hash stage に 20 バイト / 44 バイト
 key 向けの固定長 CRC32 fast path も入り、ホットパスで汎用 `hash_bytes()`
 ループを避けます。
+insert の fast path では、duplicate / empty-slot scan の前に
+2本の candidate bucket line も先に温めます。
+packet loop の perf case では、hit 確定後に後段更新用の CL1 も温め、
+hit-only が続くと `cache_expire()` の呼び出し間隔を最大 8 batch まで広げて
+steady-state 寄りの挙動を測ります。
 
 ### パケット処理ループ
 
@@ -874,6 +881,21 @@ make CC=clang OPTLEVEL=3
 ```
 
 現状ツリーはこの条件で GCC / Clang の両方でビルドできる前提です。
+
+`samples/fcache` の lookup pipeline 定数の既定値は
+`FLOW_CACHE_LOOKUP_STEP_KEYS=16`,
+`FLOW_CACHE_LOOKUP_AHEAD_STEPS=8`,
+`FLOW_CACHE_LOOKUP_AHEAD_KEYS=128` です。
+`AHEAD_KEYS` は hardware prefetch 回数ではなく、
+software pipeline の段間距離です。
+tuning 比較では `EXTRA_CFLAGS` で上書きできます:
+
+```sh
+make -C samples/fcache static CC=gcc OPTLEVEL=3 \
+     EXTRA_CFLAGS='-DFLOW_CACHE_LOOKUP_STEP_KEYS=8 -DFLOW_CACHE_LOOKUP_AHEAD_KEYS=64'
+make -C samples/test all CC=gcc OPTLEVEL=3 \
+     EXTRA_CFLAGS='-DFLOW_CACHE_LOOKUP_STEP_KEYS=8 -DFLOW_CACHE_LOOKUP_AHEAD_KEYS=64'
+```
 
 開発時のサニタイザ:
 

@@ -39,10 +39,12 @@ endif
 
 WARN         = $(WARN_COMMON) $(WARN_EXTRA)
 OPTLEVEL    ?= 3
+EXTRA_CFLAGS ?=
 
 # -fPIC: required for .so, negligible cost on x86-64; one object set for both
 CFLAGS_BASE  = -std=gnu11 -O$(OPTLEVEL) $(WARN) \
-               -I$(TOPDIR)/include -I$(CURDIR)/include -I$(CURDIR)/src -fPIC
+               -I$(TOPDIR)/include -I$(CURDIR)/include -I$(CURDIR)/src -fPIC \
+               $(EXTRA_CFLAGS)
 
 SRCDIR       = src
 INCDIR       = include
