@@ -400,11 +400,12 @@ FC_FN(FC_PREFIX, cache_insert_batch)(struct FC_CACHE *fc,
 /*===========================================================================
  * Pipelined batch lookup
  *===========================================================================*/
-FC_IMPL_ATTR void
-FC_FN(FC_PREFIX, cache_lookup_batch)(struct FC_CACHE *fc,
-                           const struct FC_KEY *keys,
-                           unsigned nb_pkts,
-                           struct FC_ENTRY **results)
+FC_IMPL_ATTR unsigned
+FC_FN(FC_PREFIX, cache_lookup_touch_batch)(struct FC_CACHE *fc,
+                                 const struct FC_KEY *keys,
+                                 unsigned nb_pkts,
+                                 uint64_t now,
+                                 struct FC_ENTRY **results)
 {
     struct rix_hash_find_ctx_s ctx[nb_pkts];
     uint64_t hit_count = 0;
@@ -412,6 +413,7 @@ FC_FN(FC_PREFIX, cache_lookup_batch)(struct FC_CACHE *fc,
     const unsigned ahead_keys = FLOW_CACHE_LOOKUP_AHEAD_KEYS;
     const unsigned step_keys = FLOW_CACHE_LOOKUP_STEP_KEYS;
     const unsigned total = nb_pkts + 3 * ahead_keys;
+    const int do_touch = (now != 0);
 
     for (unsigned i = 0; i < total; i += step_keys) {
         if (i < nb_pkts) {
@@ -446,6 +448,8 @@ FC_FN(FC_PREFIX, cache_lookup_batch)(struct FC_CACHE *fc,
                     FC_CALL(FC_HT_PREFIX, cmp_key)(&ctx[base + j], fc->pool);
                 results[base + j] = entry;
                 if (entry != NULL) {
+                    if (do_touch)
+                        entry->last_ts = now;
                     FC_CALL(FC_PREFIX, cache_prefetch_hit_write)(entry);
                     hit_count++;
                 }
@@ -456,6 +460,16 @@ FC_FN(FC_PREFIX, cache_lookup_batch)(struct FC_CACHE *fc,
     fc->stats.lookups += nb_pkts;
     fc->stats.hits += hit_count;
     fc->stats.misses += nb_pkts - hit_count;
+    return nb_pkts - (unsigned)hit_count;
+}
+
+FC_IMPL_ATTR void
+FC_FN(FC_PREFIX, cache_lookup_batch)(struct FC_CACHE *fc,
+                           const struct FC_KEY *keys,
+                           unsigned nb_pkts,
+                           struct FC_ENTRY **results)
+{
+    (void)FC_CALL(FC_PREFIX, cache_lookup_touch_batch)(fc, keys, nb_pkts, 0, results);
 }
 
 /*===========================================================================

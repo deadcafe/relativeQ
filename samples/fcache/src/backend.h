@@ -30,6 +30,11 @@ struct FCB_FN(FC_PREFIX, cache_ops) {
                          const struct FC_KEY *keys,
                          unsigned nb_pkts,
                          struct FC_ENTRY **results);
+    unsigned (*lookup_touch_batch)(struct FC_CACHE *fc,
+                                   const struct FC_KEY *keys,
+                                   unsigned nb_pkts,
+                                   uint64_t now,
+                                   struct FC_ENTRY **results);
     struct FC_ENTRY *(*find)(struct FC_CACHE *fc, const struct FC_KEY *key);
     struct FC_ENTRY *(*insert)(struct FC_CACHE *fc,
                                const struct FC_KEY *key,

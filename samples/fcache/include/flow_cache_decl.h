@@ -498,6 +498,12 @@ void FCC_FN(FC_PREFIX, cache_lookup_batch)(struct FC_CACHE *fc,
                                  unsigned nb_pkts,
                                  struct FC_ENTRY **results);
 
+unsigned FCC_FN(FC_PREFIX, cache_lookup_touch_batch)(struct FC_CACHE *fc,
+                                           const struct FC_KEY *keys,
+                                           unsigned nb_pkts,
+                                           uint64_t now,
+                                           struct FC_ENTRY **results);
+
 struct FC_ENTRY *FCC_FN(FC_PREFIX, cache_find)(struct FC_CACHE *fc,
                                      const struct FC_KEY *key);
 

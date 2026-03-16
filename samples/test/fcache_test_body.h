@@ -35,6 +35,11 @@ extern int flow_cache_test_pause_before_measure;
 void flow_cache_test_wait_for_measure(const char *phase);
 #endif
 
+#ifndef FLOW_CACHE_TEST_MEASURE_CHILD_DECLARED
+#define FLOW_CACHE_TEST_MEASURE_CHILD_DECLARED
+extern int flow_cache_test_measure_child;
+#endif
+
 #ifndef FLOW_CACHE_TEST_NOINLINE
 #if defined(__GNUC__) || defined(__clang__)
 #define FLOW_CACHE_TEST_NOINLINE __attribute__((noinline))
@@ -564,20 +569,41 @@ struct FCT_FN(FCT_PREFIX, prepared_pkt_loop) {
 
 static inline void
 FCT_FN(FCT_PREFIX, flush_hit_update)(struct FCT_ENTRY **pending_entry,
-                                     unsigned *pending_packets,
-                                     uint64_t now)
+                                     unsigned *pending_packets)
 {
     struct FCT_ENTRY *entry = *pending_entry;
 
     if (entry == NULL)
         return;
 
-    FC_CALL(FCT_PREFIX, cache_touch)(entry, now);
     TP(entry)->packets += *pending_packets;
     TP(entry)->bytes += (uint64_t)(*pending_packets) * 64u;
 
     *pending_entry = NULL;
     *pending_packets = 0;
+}
+
+static inline unsigned
+FCT_FN(FCT_PREFIX, expire_target_interval)(unsigned batch_misses)
+{
+    if (batch_misses == 0)
+        return 8;
+    if (batch_misses <= BENCH_BATCH / 16)
+        return 4;
+    if (batch_misses <= BENCH_BATCH / 8)
+        return 2;
+    return 1;
+}
+
+static inline unsigned
+FCT_FN(FCT_PREFIX, expire_step_interval)(unsigned current,
+                                         unsigned target)
+{
+    if (current < target)
+        return current << 1;
+    if (current > target)
+        return current >> 1;
+    return current;
 }
 
 static FLOW_CACHE_TEST_NOINLINE void
@@ -599,12 +625,13 @@ FCT_FN(FCT_PREFIX, run_pkt_loop_inner)(struct FCT_FN(FCT_PREFIX, prepared_pkt_lo
         struct FCT_ENTRY *miss_results[BENCH_BATCH];
 
         uint64_t t0 = tsc_start();
-        FC_CALL(FCT_PREFIX, cache_lookup_batch)(&prep->fc, batch_keys,
-                                                BENCH_BATCH, prep->results);
-
-        unsigned batch_misses = 0;
+        unsigned batch_misses =
+            FC_CALL(FCT_PREFIX, cache_lookup_touch_batch)(&prep->fc, batch_keys,
+                                                          BENCH_BATCH, now,
+                                                          prep->results);
         struct FCT_ENTRY *pending_hit = NULL;
         unsigned pending_packets = 0;
+        unsigned miss_pos = 0;
 
         for (unsigned i = 0; i < BENCH_BATCH; i++) {
             if (prep->results[i] != NULL) {
@@ -612,18 +639,18 @@ FCT_FN(FCT_PREFIX, run_pkt_loop_inner)(struct FCT_FN(FCT_PREFIX, prepared_pkt_lo
                     pending_packets++;
                 } else {
                     FCT_FN(FCT_PREFIX, flush_hit_update)(&pending_hit,
-                                                         &pending_packets, now);
+                                                         &pending_packets);
                     pending_hit = prep->results[i];
                     pending_packets = 1;
                 }
                 total_hits++;
             } else {
-                miss_keys[batch_misses] = batch_keys[i];
-                batch_misses++;
+                miss_keys[miss_pos] = batch_keys[i];
+                miss_pos++;
                 total_misses++;
             }
         }
-        FCT_FN(FCT_PREFIX, flush_hit_update)(&pending_hit, &pending_packets, now);
+        FCT_FN(FCT_PREFIX, flush_hit_update)(&pending_hit, &pending_packets);
 
         if (batch_misses > 0) {
             if (batch_misses >= FLOW_CACHE_TEST_INSERT_BATCH_MIN) {
@@ -648,12 +675,9 @@ FCT_FN(FCT_PREFIX, run_pkt_loop_inner)(struct FCT_FN(FCT_PREFIX, prepared_pkt_lo
 
         FC_CALL(FCT_PREFIX, cache_adjust_timeout)(&prep->fc, batch_misses);
 
-        if (batch_misses == 0) {
-            if (expire_interval < 8)
-                expire_interval <<= 1;
-        } else {
-            expire_interval = 1;
-        }
+        expire_interval =
+            FCT_FN(FCT_PREFIX, expire_step_interval)(expire_interval,
+                FCT_FN(FCT_PREFIX, expire_target_interval)(batch_misses));
 
         expire_batches++;
         if (expire_batches >= expire_interval) {
@@ -733,14 +757,42 @@ FCT_FN(FCT_PREFIX,measure_pkt_loop_mix)(struct rix_hash_bucket_s *buckets, unsig
     }
     free(prefill_keys);
 
-    flow_cache_test_wait_for_measure(FCT_VARIANT ":pkt_loop");
-    FCT_FN(FCT_PREFIX, run_pkt_loop_inner)(&prep, out);
+    if (flow_cache_test_measure_child) {
+        struct flow_cache_pkt_bench_result *shared_out =
+            mmap(NULL, sizeof(*shared_out),
+                 PROT_READ | PROT_WRITE,
+                 MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        assert(shared_out != MAP_FAILED);
 
-    struct flow_cache_stats st;
-    FC_CALL(FCT_PREFIX, cache_stats)(&prep.fc, &st);
-    out->total_evictions = st.evictions;
-    out->final_entries = st.nb_entries;
-    out->total_slots = total_slots;
+        pid_t pid = fork();
+        assert(pid >= 0);
+        if (pid == 0) {
+            struct flow_cache_stats st;
+
+            flow_cache_test_wait_for_measure(FCT_VARIANT ":pkt_loop");
+            FCT_FN(FCT_PREFIX, run_pkt_loop_inner)(&prep, shared_out);
+            FC_CALL(FCT_PREFIX, cache_stats)(&prep.fc, &st);
+            shared_out->total_evictions = st.evictions;
+            shared_out->final_entries = st.nb_entries;
+            shared_out->total_slots = total_slots;
+            _exit(0);
+        }
+
+        int status = 0;
+        waitpid(pid, &status, 0);
+        assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+        *out = *shared_out;
+        munmap(shared_out, sizeof(*shared_out));
+    } else {
+        struct flow_cache_stats st;
+
+        flow_cache_test_wait_for_measure(FCT_VARIANT ":pkt_loop");
+        FCT_FN(FCT_PREFIX, run_pkt_loop_inner)(&prep, out);
+        FC_CALL(FCT_PREFIX, cache_stats)(&prep.fc, &st);
+        out->total_evictions = st.evictions;
+        out->final_entries = st.nb_entries;
+        out->total_slots = total_slots;
+    }
 
     free(prep.pkt_keys);
     free(prep.results);

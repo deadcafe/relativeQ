@@ -694,7 +694,8 @@ flow4_cache_flush(&fc);
 For sample benchmarking/debugging, `samples/test/flow_cache_test` also accepts
 `--backend auto|gen|sse|avx2|avx512` and prints the actual backend selected per
 variant. For perf-friendly single-workload runs it also supports
-`--bench-case`, `--list-bench-cases`, `--json`, and `--pause-before-measure`.
+`--bench-case`, `--list-bench-cases`, `--json`, `--measure-child`, and
+`--pause-before-measure`.
 Packet-loop cases include `pkt_hit_only`, `pkt_miss_only`, `pkt_std`
 (90% hit / 10% miss), and `pkt_tight`.
 For the built-in flow-cache variants, the hash stage also uses fixed-size
@@ -706,8 +707,9 @@ For miss-heavy batches, `flow*_cache_insert_batch()` precomputes the
 miss-group hashes, warms candidate buckets from that plan, and then runs
 the hashed insert path without re-hashing each key.
 For packet-loop perf cases, confirmed hits also prefetch CL1 before the
-post-lookup update, and hit-only streaks back off `cache_expire()` cadence
-up to 8 batches to model steady-state traffic more realistically.
+post-lookup update, and the benchmark backs off `cache_expire()` by
+miss-rate tier: 1 / 2 / 4 / 8 batches. This avoids snapping straight back
+to every-batch expire on a small miss count.
 
 ### Packet processing loop
 
@@ -768,6 +770,7 @@ unsigned flow_cache_nb_bk_hint(max_entries);              /* bucket count for ~5
 
 /* Lookup */
 void           flow4_cache_lookup_batch(fc, keys, nb_pkts, results);
+unsigned       flow4_cache_lookup_touch_batch(fc, keys, nb_pkts, now, results);
 struct flow4_entry *flow4_cache_find   (fc, key);   /* single, no pipeline */
 
 /* Mutation */

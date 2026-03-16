@@ -322,9 +322,10 @@ miss が多い batch では、`cache_insert_batch()` が hash を一度だけ
   呼び出し元が自由に定義できる — ライブラリはCL1に何も課さない。
 
 ベンチマーク用 packet loop では、同じ entry への連続 hit を
-1回の `cache_touch()` と 1回の payload 更新にまとめ、さらに zero-miss が
-続く間は expire cadence を最大 8 batch まで広げる。毎 batch expire を
-呼ぶより、steady-state の hit-heavy datapath に近い測り方になる。
+1回の `cache_touch()` と 1回の payload 更新にまとめる。expire cadence は
+miss 率に応じて 1 / 2 / 4 / 8 batch の目標値を選び、各 batch で 1 段ずつ
+その値へ寄せる。少数 miss で即 every-batch に戻さないため、steady-state
+寄りの datapath を測りやすい。
 
 ### 7.2 処理フロー
 
@@ -715,6 +716,11 @@ void PREFIX_cache_lookup_batch(struct PREFIX_cache *fc,
                                const struct PREFIX_key *keys,
                                unsigned nb_pkts,
                                struct PREFIX_entry **results);
+unsigned PREFIX_cache_lookup_touch_batch(struct PREFIX_cache *fc,
+                                         const struct PREFIX_key *keys,
+                                         unsigned nb_pkts,
+                                         uint64_t now,
+                                         struct PREFIX_entry **results);
 
 /* 挿入 — ミス時に呼び出し、常に成功（3段フォールバック）。
  * 成功後 init_cb(entry, cb_arg) が自動呼び出しされる。*/

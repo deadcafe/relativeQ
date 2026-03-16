@@ -111,6 +111,17 @@ flow4_cache_lookup_batch(struct flow4_cache *fc,
     flow4_cache_ops_from(fc)->lookup_batch(fc, keys, nb_pkts, results);
 }
 
+unsigned
+flow4_cache_lookup_touch_batch(struct flow4_cache *fc,
+                               const struct flow4_key *keys,
+                               unsigned nb_pkts,
+                               uint64_t now,
+                               struct flow4_entry **results)
+{
+    return flow4_cache_ops_from(fc)->lookup_touch_batch(fc, keys, nb_pkts,
+                                                        now, results);
+}
+
 struct flow4_entry *
 flow4_cache_find(struct flow4_cache *fc, const struct flow4_key *key)
 {

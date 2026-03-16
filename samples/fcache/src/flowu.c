@@ -100,6 +100,11 @@ void flowu_cache_flush(struct flowu_cache *fc) { flowu_cache_ops_from(fc)->flush
 void flowu_cache_lookup_batch(struct flowu_cache *fc, const struct flowu_key *keys,
                               unsigned nb_pkts, struct flowu_entry **results)
 { flowu_cache_ops_from(fc)->lookup_batch(fc, keys, nb_pkts, results); }
+unsigned flowu_cache_lookup_touch_batch(struct flowu_cache *fc,
+                                        const struct flowu_key *keys,
+                                        unsigned nb_pkts, uint64_t now,
+                                        struct flowu_entry **results)
+{ return flowu_cache_ops_from(fc)->lookup_touch_batch(fc, keys, nb_pkts, now, results); }
 struct flowu_entry *flowu_cache_find(struct flowu_cache *fc, const struct flowu_key *key)
 { return flowu_cache_ops_from(fc)->find(fc, key); }
 struct flowu_entry *flowu_cache_insert(struct flowu_cache *fc, const struct flowu_key *key,

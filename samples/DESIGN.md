@@ -322,9 +322,10 @@ Rationale:
   entirely by the caller — the library imposes no schema on CL1.
 
 For the benchmark packet loop, consecutive hits to the same entry are also
-coalesced into one `cache_touch()` plus one payload update, and a zero-miss
-streak backs off the expire cadence up to 8 batches. This keeps the benchmark
-closer to a steady-state hit-heavy datapath than calling expire every batch.
+coalesced into one `cache_touch()` plus one payload update. The expire cadence
+is then selected from miss-rate tiers (1 / 2 / 4 / 8 batches) and moved one
+step per batch toward that target, so a light miss rate does not immediately
+collapse the benchmark back to every-batch expire.
 
 ### 7.2 Processing flow
 
@@ -681,6 +682,11 @@ void PREFIX_cache_lookup_batch(struct PREFIX_cache *fc,
                                const struct PREFIX_key *keys,
                                unsigned nb_pkts,
                                struct PREFIX_entry **results);
+unsigned PREFIX_cache_lookup_touch_batch(struct PREFIX_cache *fc,
+                                         const struct PREFIX_key *keys,
+                                         unsigned nb_pkts,
+                                         uint64_t now,
+                                         struct PREFIX_entry **results);
 
 /* Insert — called on miss, bucket L2 warm; always succeeds (3-tier fallback).
  * init_cb(entry, cb_arg) is called after successful insert. */
