@@ -399,8 +399,9 @@ TAILQベースのLRUは毎ヒット時にprev/nextノードへの書き込みが
 
 ### 8.2 適応的エクスパイア（常時実行）
 
-毎バッチ後にエクスパイアを無条件実行する。スキャン量と実効タイムアウトは
-ワークロードに応じて自動調整される。
+`cache_expire()` は毎バッチ呼ぶ前提の API で、スキャン量と実効タイムアウトは
+ワークロードに応じて自動調整される。さらに、大きくて高圧なプールでは
+内部で `cache_expire_2stage()` へ切り替わる。
 
 #### 充填率駆動スキャン量（16段階レベル）
 
@@ -504,10 +505,17 @@ void cache_expire(struct cache *fc, uint64_t now)
 ```
 
 2段パイプラインバリアント（`cache_expire_2stage`）は中距離（`pf_dist/2`）で
-期限切れ候補のバケットをさらに追加プリフェッチし、`hash_remove` 時のDRAM
-アクセスをさらに削減する。プールがLLCに収まらず、かつエビクション率が
-高い場合に有効。デフォルトの `cache_expire()` も高圧時には内部でこの
-2stage 経路へ自動切替する。
+期限切れ候補のバケットをさらに追加プリフェッチし、`hash_remove` 時の DRAM
+アクセスをさらに削減する。プールが LLC に収まらず、かつエビクション率が
+高い場合に有効。デフォルトの `cache_expire()` がこの 2stage 経路へ自動切替
+する条件は次の 2 つである。
+
+- `max_entries >= 4096`
+- `cache_expire_level() >= 4`
+
+`cache_expire_level() >= 4` は、2 の冪プールでは概ね 75% 超の高充填域に対応する。
+そのため standard sizing の packet-loop ベンチでは通常の buffered default path
+が使われ、tight sizing や full-expire 条件で 2stage が効く。
 
 組み込みの flow cache key では、key サイズがコンパイル時に確定している場合
 に汎用 CRC32 byte-loop を通さない fixed-size hash fast path も使う。現状の
@@ -1000,9 +1008,6 @@ DRAM-cold条件として優秀。
 
 ### 14.5 改善の余地
 
-**性能面**
-
-- `expire_2stage` の効果が定量的に未検証。デフォルトのバッファ付き
   expire との比較ベンチマークがあると判断材料になる
 - バッチ insert（ミスが複数ある場合のパイプライン化）は未実装。
   ミス率が高い場合の改善余地がある

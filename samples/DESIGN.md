@@ -399,8 +399,9 @@ Instead: **timestamp-only approach**.
 
 ### 8.2 Adaptive expire (unconditional, fill-level-driven)
 
-`cache_expire()` runs unconditionally every batch.  Scan depth and
-effective timeout auto-scale with workload — no threshold check needed.
+`cache_expire()` is intended to be called every batch. Scan depth and
+effective timeout auto-scale with workload, and on large high-pressure
+pools it also switches internally to `cache_expire_2stage()`.
 
 #### Fill-level-driven scan depth (16 levels)
 
@@ -475,8 +476,16 @@ The two-stage variant (`cache_expire_2stage`) adds an extra mid-distance
 bucket prefetch (`pf_dist/2`) for candidates about to be hash_removed,
 reducing DRAM stalls further when the pool is DRAM-resident and eviction
 rate is high. The default `cache_expire()` path switches to `2stage`
-automatically once pressure rises enough (currently expire level >= 4 on
-reasonably large pools).
+automatically only when:
+
+- `max_entries >= 4096`
+- `cache_expire_level() >= 4`
+
+`cache_expire_level() >= 4` corresponds to the point where fill pressure
+has reached the top scan tier, which is roughly beyond 75% occupancy for
+power-of-two pools. Standard-sizing packet-loop benchmarks stay below that
+zone, so they normally use the buffered default path, while tight/full
+configurations are the ones that exercise `2stage`.
 
 For built-in flow-cache keys, the hash stage also bypasses the generic
 byte-loop CRC helper when the key size is known at compile time.  The
@@ -971,10 +980,6 @@ rare in real workloads.
 
 ### 15.5 Areas for improvement
 
-**Performance**
-
-- `expire_2stage` benefit not yet quantified.  A buffered-default vs
-  extra-two-stage benchmark would help guide usage decisions.
 - Batch insert (pipeline across multiple misses) not implemented.
   Potential improvement when miss rate is high.
 
