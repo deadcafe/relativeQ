@@ -60,7 +60,9 @@ TEST_HDRS    = fcache_test_body.h ht4.h
 TEST_OBJS    = ht4_gen.o ht4_sse.o ht4_avx2.o ht4_avx512.o
 PERF_SCRIPT  = perf.sh
 
-.PHONY: all clean test bench perf
+.PHONY: all clean test bench perf matrix
+
+VARIANT ?= flow4
 
 all: $(TEST_TARGET)
 
@@ -98,6 +100,9 @@ perf: $(TEST_TARGET) $(PERF_SCRIPT)
 	PERF_SEED="$(PERF_SEED)" PERF_CPU="$(PERF_CPU)" \
 	PERF_STAT_REPEAT="$(PERF_STAT_REPEAT)" \
 	./$(PERF_SCRIPT)
+
+matrix:
+	./run_fc2_bench_matrix.sh $(VARIANT)
 
 clean:
 	rm -f $(TEST_TARGET) $(TEST_OBJS) *~ core core.*

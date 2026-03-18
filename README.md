@@ -805,7 +805,10 @@ kicks:      0 / 0 / 1 / 2
 Previously validated combinations can be replayed with:
 
 ```sh
-./tests/fcache2/run_fc2_bench_matrix.sh
+./samples/test/run_fc2_bench_matrix.sh flow4
+make -C samples/test matrix VARIANT=flow4
+make -C samples/fcache2 matrix
+make -C tests/fcache2 matrix
 ```
 
 ### Packet processing loop

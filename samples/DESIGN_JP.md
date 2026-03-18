@@ -248,6 +248,15 @@ thresholds: 70 / 73 / 75 / 77
 kicks:      0 / 0 / 1 / 2
 ```
 
+現時点で確認済みの matrix をまとめて再実行する script は次に置く。
+
+```sh
+./samples/test/run_fc2_bench_matrix.sh flow4
+make -C samples/test matrix VARIANT=flow4
+make -C samples/fcache2 matrix
+make -C tests/fcache2 matrix
+```
+
 IPv6キー（44B）はCL0に4Bのリザーブ付きで収まる。
 IPv4キー（20B）はCL0に28Bのリザーブ付きで収まる — パディングは
 多いがエントリサイズは同じなので、プールメモリは同一。

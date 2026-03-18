@@ -61,7 +61,7 @@ bench: $(BENCH)
 	./$(BENCH)
 
 matrix: $(BENCH)
-	./run_fc2_bench_matrix.sh
+	../../samples/test/run_fc2_bench_matrix.sh flow4
 
 clean:
 	rm -f $(TARGET) $(BENCH) *.o *~ core core.*

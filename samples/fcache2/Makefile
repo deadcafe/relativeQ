@@ -43,11 +43,14 @@ LIB_SONAME   = libfcache2.so.1
 
 PREFIX       ?= /usr/local
 
-.PHONY: all static shared clean install
+.PHONY: all static shared matrix clean install
 
 all: static shared
 static: $(LIB_STATIC)
 shared: $(LIB_SHARED)
+
+matrix:
+	../test/run_fc2_bench_matrix.sh flow4
 
 $(LIBDIR):
 	mkdir -p $@

@@ -256,6 +256,15 @@ thresholds: 70 / 73 / 75 / 77
 kicks:      0 / 0 / 1 / 2
 ```
 
+The replay script for the currently validated matrix lives under:
+
+```sh
+./samples/test/run_fc2_bench_matrix.sh flow4
+make -C samples/test matrix VARIANT=flow4
+make -C samples/fcache2 matrix
+make -C tests/fcache2 matrix
+```
+
 ## 5. Hash Table Configuration
 
 - Hash variant: `rix_hash.h` fingerprint (arbitrary key size, cmp_fn)
