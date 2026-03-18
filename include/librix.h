@@ -40,7 +40,9 @@
  *   Hash Tables (rix/rix_hash.h, rix/rix_hash32.h, rix/rix_hash64.h)
  *     RIX_HASH    -- cuckoo hash, 16-way bucket, fingerprint in bucket,
  *                    variable-length key in node.  O(1) remove via
- *                    cur_hash field.
+ *                    cur_hash field.  SLOT variants additionally keep the
+ *                    current slot in the node and remove without scanning
+ *                    idx[16].
  *     RIX_HASH32  -- cuckoo hash, uint32_t key stored in bucket
  *     RIX_HASH64  -- cuckoo hash, uint64_t key stored in bucket
  *

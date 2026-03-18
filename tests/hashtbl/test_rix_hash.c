@@ -39,11 +39,21 @@ mykey_cmp(const void *a, const void *b)
 {
     __m128i va = _mm_loadu_si128((const __m128i *)a);
     __m128i vb = _mm_loadu_si128((const __m128i *)b);
-    return _mm_movemask_epi8(_mm_cmpeq_epi8(va, vb)) == 0xffff;
+    return (_mm_movemask_epi8(_mm_cmpeq_epi8(va, vb)) == 0xffff) ? 0 : 1;
 }
 
 RIX_HASH_HEAD(myht);
 RIX_HASH_GENERATE(myht, mynode, key, cur_hash, mykey_cmp)
+
+struct mynode_slot {
+    uint32_t  cur_hash; /* hash_field: hash of the current bucket */
+    uint16_t  slot;     /* slot_field: slot in current bucket */
+    uint16_t  _pad;
+    struct mykey key;
+};
+
+RIX_HASH_HEAD(myht_slot);
+RIX_HASH_GENERATE_SLOT(myht_slot, mynode_slot, key, cur_hash, slot, mykey_cmp)
 
 /* ================================================================== */
 /* nohf variant: no hash_field (8-byte node)                           */
@@ -69,6 +79,10 @@ static struct mynode_nohf       g_nohf[NB_BASIC];
 static struct rix_hash_bucket_s g_bk_nohf[NB_BK_BASIC] __attribute__((aligned(64)));
 static struct myht_nohf         g_head_nohf;
 
+static struct mynode_slot       g_slot[NB_BASIC];
+static struct rix_hash_bucket_s g_bk_slot[NB_BK_BASIC] __attribute__((aligned(64)));
+static struct myht_slot         g_head_slot;
+
 static void
 basic_init(void)
 {
@@ -93,6 +107,75 @@ basic_insert_all(void)
     if (g_head.rhh_nb != NB_BASIC)
         FAILF("nb after all inserts: expected %u got %u",
               NB_BASIC, g_head.rhh_nb);
+}
+
+static void
+slot_basic_init(void)
+{
+    memset(g_slot,    0, sizeof(g_slot));
+    memset(g_bk_slot, 0, sizeof(g_bk_slot));
+    RIX_HASH_INIT(myht_slot, &g_head_slot, NB_BK_BASIC);
+    for (unsigned i = 0; i < NB_BASIC; i++) {
+        g_slot[i].key.hi = (uint64_t)(i + 1);
+        g_slot[i].key.lo = 0xDEADC0DE00000000ULL;
+    }
+}
+
+static void
+slot_basic_insert_all(void)
+{
+    for (unsigned i = 0; i < NB_BASIC; i++) {
+        struct mynode_slot *ret =
+            myht_slot_insert(&g_head_slot, g_bk_slot, g_slot, &g_slot[i]);
+        if (ret != NULL)
+            FAILF("slot insert[%u] failed (ret=%p)", i, (void *)ret);
+    }
+    if (g_head_slot.rhh_nb != NB_BASIC)
+        FAILF("slot nb after all inserts: expected %u got %u",
+              NB_BASIC, g_head_slot.rhh_nb);
+}
+
+static void
+slot_verify_node(struct myht_slot *head,
+                 struct rix_hash_bucket_s *bk,
+                 struct mynode_slot *base,
+                 struct mynode_slot *node)
+{
+    unsigned node_idx = RIX_IDX_FROM_PTR(base, node);
+    unsigned bucket = node->cur_hash & head->rhh_mask;
+    unsigned slot = (unsigned)node->slot;
+    struct rix_hash_bucket_s *b = bk + bucket;
+
+    if (slot >= RIX_HASH_BUCKET_ENTRY_SZ)
+        FAILF("slot invariant: node_idx=%u slot=%u out of range", node_idx, slot);
+    if (b->idx[slot] != node_idx)
+        FAILF("slot invariant: node_idx=%u bucket=%u slot=%u idx=%u",
+              node_idx, bucket, slot, b->idx[slot]);
+    if (b->hash[slot] == 0u)
+        FAILF("slot invariant: node_idx=%u bucket=%u slot=%u fp=0",
+              node_idx, bucket, slot);
+}
+
+static void
+slot_verify_present(struct myht_slot *head,
+                    struct rix_hash_bucket_s *bk,
+                    struct mynode_slot *base,
+                    const unsigned char *present,
+                    unsigned N)
+{
+    for (unsigned i = 0; i < N; i++) {
+        struct mynode_slot *node = &base[i];
+        struct mynode_slot *found =
+            myht_slot_find(head, bk, base, &node->key);
+        if (present[i + 1]) {
+            if (found != node)
+                FAILF("slot verify find[%u]: expected %p got %p",
+                      i + 1, (void *)node, (void *)found);
+            slot_verify_node(head, bk, base, node);
+        } else if (found != NULL) {
+            FAILF("slot verify find absent[%u]: got %p", i + 1, (void *)found);
+        }
+    }
 }
 
 /* ================================================================== */
@@ -207,6 +290,81 @@ test_duplicate(void)
               (void *)&g_basic[0], (void *)r2);
     if (g_head.rhh_nb != 1u)
         FAILF("nb must still be 1 after key-dup, got %u", g_head.rhh_nb);
+}
+
+static void
+test_slot_insert_find_remove(void)
+{
+    printf("[T] slot insert/find/remove\n");
+    slot_basic_init();
+    slot_basic_insert_all();
+
+    for (unsigned i = 0; i < NB_BASIC; i++) {
+        struct mynode_slot *f =
+            myht_slot_find(&g_head_slot, g_bk_slot, g_slot, &g_slot[i].key);
+        if (f == NULL)
+            FAILF("slot find[%u] returned NULL", i);
+        if (f != &g_slot[i])
+            FAILF("slot find[%u] returned wrong node %p expected %p",
+                  i, (void *)f, (void *)&g_slot[i]);
+        slot_verify_node(&g_head_slot, g_bk_slot, g_slot, &g_slot[i]);
+    }
+
+    for (unsigned i = 0; i < NB_BASIC; i += 2) {
+        struct mynode_slot *rem =
+            myht_slot_remove(&g_head_slot, g_bk_slot, g_slot, &g_slot[i]);
+        if (rem != &g_slot[i])
+            FAILF("slot remove[%u] returned wrong node", i);
+    }
+    if (g_head_slot.rhh_nb != NB_BASIC / 2)
+        FAILF("slot nb after removals: expected %u got %u",
+              NB_BASIC / 2, g_head_slot.rhh_nb);
+
+    for (unsigned i = 0; i < NB_BASIC; i++) {
+        struct mynode_slot *f =
+            myht_slot_find(&g_head_slot, g_bk_slot, g_slot, &g_slot[i].key);
+        if (i % 2 == 0) {
+            if (f != NULL)
+                FAILF("slot removed node[%u] still found", i);
+        } else {
+            if (f == NULL || f != &g_slot[i])
+                FAILF("slot remaining node[%u] not found or wrong", i);
+            slot_verify_node(&g_head_slot, g_bk_slot, g_slot, &g_slot[i]);
+        }
+    }
+
+    if (myht_slot_remove(&g_head_slot, g_bk_slot, g_slot, &g_slot[0]) != NULL)
+        FAIL("slot re-remove of already-removed node should return NULL");
+}
+
+static void
+test_slot_duplicate(void)
+{
+    printf("[T] slot duplicate insert\n");
+    slot_basic_init();
+
+    struct mynode_slot *r0 =
+        myht_slot_insert(&g_head_slot, g_bk_slot, g_slot, &g_slot[0]);
+    if (r0 != NULL)
+        FAIL("slot first insert must return NULL");
+
+    struct mynode_slot *r1 =
+        myht_slot_insert(&g_head_slot, g_bk_slot, g_slot, &g_slot[0]);
+    if (r1 != &g_slot[0])
+        FAILF("slot dup insert must return existing node %p, got %p",
+              (void *)&g_slot[0], (void *)r1);
+    slot_verify_node(&g_head_slot, g_bk_slot, g_slot, &g_slot[0]);
+
+    struct mynode_slot dup;
+    memset(&dup, 0, sizeof(dup));
+    dup.key = g_slot[0].key;
+    struct mynode_slot *r2 =
+        myht_slot_insert(&g_head_slot, g_bk_slot, g_slot, &dup);
+    if (r2 != &g_slot[0])
+        FAILF("slot key-dup insert must return existing node %p, got %p",
+              (void *)&g_slot[0], (void *)r2);
+    if (g_head_slot.rhh_nb != 1u)
+        FAILF("slot nb must still be 1 after dup, got %u", g_head_slot.rhh_nb);
 }
 
 /* ================================================================== */
@@ -462,6 +620,109 @@ test_fuzz(unsigned seed, unsigned N, unsigned nb_bk, unsigned ops)
     myht_walk(&head, bk, nodes, walk_count_cb, &walk_cnt);
     if (walk_cnt != in_table)
         FAILF("fuzz walk: expected %u got %u", in_table, walk_cnt);
+
+    free(present);
+    free(bk);
+    free(nodes);
+}
+
+static void
+test_slot_fuzz(unsigned seed, unsigned N, unsigned nb_bk, unsigned ops)
+{
+    printf("[T] slot fuzz seed=%u N=%u nb_bk=%u ops=%u\n",
+           seed, N, nb_bk, ops);
+    xr_fuzz = seed ? seed : 0xC0FFEE11u;
+
+    struct mynode_slot *nodes =
+        (struct mynode_slot *)calloc((size_t)N, sizeof(struct mynode_slot));
+    if (!nodes) { perror("calloc slot nodes"); exit(1); }
+    for (unsigned i = 0; i < N; i++) {
+        nodes[i].key.hi = (uint64_t)(i + 1);
+        nodes[i].key.lo = 0;
+    }
+
+    struct rix_hash_bucket_s *bk = NULL;
+    size_t bk_sz = (size_t)nb_bk * sizeof(*bk);
+    if (posix_memalign((void **)&bk, 64, bk_sz) != 0) {
+        perror("posix_memalign"); exit(1);
+    }
+    memset(bk, 0, bk_sz);
+
+    struct myht_slot head;
+    RIX_HASH_INIT(myht_slot, &head, nb_bk);
+
+    unsigned char *present = (unsigned char *)calloc((size_t)N + 1, 1);
+    if (!present) { perror("calloc slot present"); exit(1); }
+    unsigned in_table = 0;
+
+    for (unsigned step = 0; step < ops; step++) {
+        unsigned op = xorshift32() % 100;
+
+        if (op < 60) {
+            unsigned idx = rnd_in(1, N);
+            struct mynode_slot *elm = &nodes[idx - 1];
+            struct mynode_slot *ret = myht_slot_insert(&head, bk, nodes, elm);
+
+            if (present[idx]) {
+                if (ret != elm)
+                    FAILF("slot fuzz insert dup[%u]: expected %p got %p",
+                          idx, (void *)elm, (void *)ret);
+            } else {
+                if (ret == elm) {
+                    /* table full – acceptable */
+                } else if (ret != NULL) {
+                    FAILF("slot fuzz insert[%u]: unexpected ret %p",
+                          idx, (void *)ret);
+                } else {
+                    present[idx] = 1;
+                    in_table++;
+                    slot_verify_node(&head, bk, nodes, elm);
+                }
+            }
+        } else if (op < 80) {
+            unsigned idx = rnd_in(1, N);
+            struct mynode_slot *elm = &nodes[idx - 1];
+            struct mynode_slot *ret = myht_slot_remove(&head, bk, nodes, elm);
+
+            if (present[idx]) {
+                if (ret != elm)
+                    FAILF("slot fuzz remove[%u]: expected %p got %p",
+                          idx, (void *)elm, (void *)ret);
+                present[idx] = 0;
+                in_table--;
+            } else {
+                if (ret != NULL)
+                    FAILF("slot fuzz remove absent[%u]: expected NULL got %p",
+                          idx, (void *)ret);
+            }
+        } else {
+            unsigned idx = rnd_in(1, N);
+            struct mynode_slot *elm = &nodes[idx - 1];
+            struct mynode_slot *ret = myht_slot_find(&head, bk, nodes, &elm->key);
+
+            if (present[idx]) {
+                if (ret != elm)
+                    FAILF("slot fuzz find[%u]: expected %p got %p",
+                          idx, (void *)elm, (void *)ret);
+                slot_verify_node(&head, bk, nodes, elm);
+            } else {
+                if (ret != NULL)
+                    FAILF("slot fuzz find absent[%u]: expected NULL got %p",
+                          idx, (void *)ret);
+            }
+        }
+
+        if ((step & 0x3FFu) == 0u) {
+            if (head.rhh_nb != in_table)
+                FAILF("slot fuzz step %u: rhh_nb=%u model=%u",
+                      step, head.rhh_nb, in_table);
+            slot_verify_present(&head, bk, nodes, present, N);
+        }
+    }
+
+    if (head.rhh_nb != in_table)
+        FAILF("slot fuzz final: rhh_nb=%u model=%u", head.rhh_nb, in_table);
+    slot_verify_present(&head, bk, nodes, present, N);
 
     free(present);
     free(bk);
@@ -731,6 +992,9 @@ main(int argc, char **argv)
     test_staged_find();
     test_walk();
     test_fuzz(seed, N, nb_bk, ops);
+    test_slot_insert_find_remove();
+    test_slot_duplicate();
+    test_slot_fuzz(seed, N, nb_bk, ops);
 
     test_nohf_insert_find_remove();
     test_nohf_duplicate();

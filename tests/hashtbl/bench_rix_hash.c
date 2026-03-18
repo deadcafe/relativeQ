@@ -42,7 +42,7 @@ struct mynode {
 static RIX_FORCE_INLINE int
 mykey_cmp(const void *a, const void *b)
 {
-    return *(const uint64_t *)a == *(const uint64_t *)b;
+    return (*(const uint64_t *)a != *(const uint64_t *)b) ? 1 : 0;
 }
 
 RIX_HASH_HEAD(myht);
