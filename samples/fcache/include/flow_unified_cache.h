@@ -112,7 +112,7 @@ struct flowu_entry {
 static inline int __attribute__((nonnull(1,2)))
 flowu_cmp(const void *a, const void *b)
 {
-    return memcmp(a, b, sizeof(struct flowu_key)) == 0;
+    return memcmp(a, b, sizeof(struct flowu_key));
 }
 
 /*===========================================================================

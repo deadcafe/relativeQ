@@ -100,6 +100,13 @@ samples/
       body.h                  implementation template (internal)
       hash_direct.h           direct-find hash generate helper (internal)
     lib/                      build output (libfcache.a / libfcache.so)
+  fcache2/          experimental action-cache redesign (flow4-only)
+    include/
+      flow_cache2.h          umbrella for fcache2 public headers
+      flow4_cache2.h         flow4 action-cache API
+    src/
+      flow4.c                flow4-only implementation
+    lib/                     build output (libfcache2.a / libfcache2.so)
   test/
     fcache_test.c           correctness tests + benchmarks (all 3 variants)
     fcache_test_body.h      template: test + benchmark functions (internal)
@@ -458,8 +465,9 @@ path is the right choice.
 
 ### RIX_HASH (fingerprint, variable-length key)
 
-Node struct must include a `uint32_t` field to store the current-bucket fingerprint
-(needed for O(1) remove).
+Node struct must include a `hash_field` integer that stores the current-bucket
+hash. `SLOT` variants additionally store the current slot in a caller-defined
+integer `slot_field`.
 
 ```c
 #include "rix/rix_hash.h"
@@ -468,7 +476,7 @@ Node struct must include a `uint32_t` field to store the current-bucket fingerpr
 typedef struct mynode mynode;
 struct mynode {
     uint8_t  key[16];    /* variable-length key field */
-    uint32_t cur_hash;   /* fingerprint field (any name) */
+    uint32_t cur_hash;   /* current-bucket hash (any name) */
     uint32_t value;
 };
 
@@ -479,6 +487,17 @@ RIX_HASH_GENERATE(myht, mynode, key, cur_hash, my_cmp_fn)
  * RIX_HASH_GENERATE_EX(myht, mynode, key, cur_hash,
  *                      my_cmp_fn, my_hash_fn)
  */
+
+typedef struct mynode_slot mynode_slot;
+struct mynode_slot {
+    uint8_t  key[16];
+    uint32_t cur_hash;
+    uint16_t slot;
+    uint16_t value;
+};
+
+RIX_HASH_HEAD(myht_slot);
+RIX_HASH_GENERATE_SLOT(myht_slot, mynode_slot, key, cur_hash, slot, my_cmp_fn)
 
 /* 3. Optional: enable SIMD in this source file */
 rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
@@ -502,8 +521,8 @@ mynode *dup = myht_insert(&head, buckets, pool, &pool[i]);
 /* Find by key pointer */
 mynode *hit = myht_find(&head, buckets, pool, key_ptr);
 
-/* Remove by key pointer */
-mynode *rem = myht_remove(&head, buckets, pool, key_ptr);
+/* Remove by node pointer */
+mynode *rem = myht_remove(&head, buckets, pool, &pool[i]);
 
 /* Walk all entries: cb returns 0 to continue, non-zero to stop */
 myht_walk(&head, buckets, pool, cb, arg);
@@ -534,11 +553,25 @@ Bulk variants: `_key1` / `_key2` / `_key4` / `_key8` (suffix = count).
 |---------|-------|
 | External linkage | `RIX_HASH_GENERATE(name, type, key_field, hash_field, cmp_fn)` |
 | External linkage + custom hash | `RIX_HASH_GENERATE_EX(name, type, key_field, hash_field, cmp_fn, hash_fn)` |
+| External linkage + slot-aware remove | `RIX_HASH_GENERATE_SLOT(name, type, key_field, hash_field, slot_field, cmp_fn)` |
+| External linkage + slot-aware remove + custom hash | `RIX_HASH_GENERATE_SLOT_EX(name, type, key_field, hash_field, slot_field, cmp_fn, hash_fn)` |
 | `static` linkage | `RIX_HASH_GENERATE_STATIC(name, type, key_field, hash_field, cmp_fn)` |
 | `static` linkage + custom hash | `RIX_HASH_GENERATE_STATIC_EX(name, type, key_field, hash_field, cmp_fn, hash_fn)` |
+| `static` linkage + slot-aware remove | `RIX_HASH_GENERATE_STATIC_SLOT(name, type, key_field, hash_field, slot_field, cmp_fn)` |
+| `static` linkage + slot-aware remove + custom hash | `RIX_HASH_GENERATE_STATIC_SLOT_EX(name, type, key_field, hash_field, slot_field, cmp_fn, hash_fn)` |
 
 `cmp_fn` signature: `int cmp_fn(const type *a, const type *b)` -- returns 0 if equal.
 `hash_fn` signature: `union rix_hash_hash_u hash_fn(const key_type *key, uint32_t mask)`.
+`slot_field` may be any caller-defined integer type that can represent
+`[0, RIX_HASH_BUCKET_ENTRY_SZ - 1]`.
+
+SLOT variants maintain:
+
+- `node->hash_field & mask == current_bucket`
+- `buckets[current_bucket].idx[node->slot_field] == node_idx`
+
+This makes `remove()` direct-slot and avoids the `idx[16]` scan used by the
+non-SLOT variants.
 
 ---
 
@@ -710,6 +743,70 @@ For packet-loop perf cases, confirmed hits also prefetch CL1 before the
 post-lookup update, and the benchmark backs off `cache_expire()` by
 miss-rate tier: 1 / 2 / 4 / 8 batches. This avoids snapping straight back
 to every-batch expire on a small miss count.
+
+### `fcache2` (experimental redesign)
+
+`samples/fcache2/` is a separate flow4-only prototype that keeps the `fcache`
+lookup pipeline, but changes only the entry layout and aging policy.
+
+- single-cache-line flow4 entry (64B, CL0-only)
+- `RIX_HASH_GENERATE_SLOT_EX` for slot-aware remove
+- `lookup_batch()` returns `entry_idx` only; it does not return
+  a direct entry pointer or AP payload
+- `fill_miss_batch()` only installs missed keys and returns the resulting
+  `entry_idx`
+- `fc2_flow4_cache_maintain()` scans a caller-selected bucket window for
+  idle/background reclaim without forcing a global walk
+- current flow4 implementation follows the same 4-stage batch lookup
+  pipeline as `fcache` (`hash_key -> scan_bk -> prefetch_node -> cmp_key`)
+  and binds the staged fingerprint scans directly to AVX2 helpers
+- `fill_miss_batch()` uses the same prehashed, bucket-prefetch insert plan
+  shape as `fcache`, then applies local pressure relief before insert
+- insert-time local pressure relief is limited to the candidate bucket only:
+  it staged-prefetches the occupied entries in that bucket, evaluates the
+  full bucket, and reclaims at most one oldest expired victim; the density
+  trigger is tightened as global fill rises (`15/16 -> 14/16 -> 13/16`)
+- idle/background maintenance uses grouped bucket walks with bucket prefetch
+  and staged entry prefetch; each visited bucket evaluates all expired
+  entries and removes them via `remove_at()`
+- `fc2_flow4_cache_stats()` exposes lookup/fill counts plus local-relief and
+  maintenance call/check/eviction counters for verification
+- bucket and entry prefetch are routed through shared `rix_hash` helpers,
+  so lookup/insert/maintenance paths use the same prefetch vocabulary
+
+`fcache2` intentionally has no built-in hit-path governor and no global expire
+walk.  The design goal is to keep pure search equivalent to `fcache`, then
+compare only the aging policy:
+
+- local insert-bucket relief (fill-linked `15/16 -> 14/16 -> 13/16` +
+  sampled `8-of-16`)
+- explicit idle/background maintenance (`16x1`)
+
+Current scope is intentionally narrow: flow4 only, idx-oriented results, and
+side-by-side comparison with `fcache`.
+
+For the current `fc2` bench, the preferred entry points are the parameterized
+bench modes in `tests/fcache2/fc2_bench`:
+
+```sh
+./tests/fcache2/fc2_bench rate_compare <desired_entries> <start_fill_pct> <hit_pct> <pps>
+./tests/fcache2/fc2_bench rate_compare_timeout <desired_entries> <start_fill_pct> <hit_pct> <pps> <timeout_ms>
+./tests/fcache2/fc2_bench rate_fc2_only <desired_entries> <start_fill_pct> <hit_pct> <pps>
+./tests/fcache2/fc2_bench rate_trace_custom <desired_entries> <start_fill_pct> <hit_pct> <pps> <timeout_ms> <soak_mul> <report_ms> <fill0> <fill1> <fill2> <fill3> <k0> <k1> <k2> <k3> [kick_scale]
+```
+
+The current accepted fill-control trace profile is:
+
+```text
+thresholds: 70 / 73 / 75 / 77
+kicks:      0 / 0 / 1 / 2
+```
+
+Previously validated combinations can be replayed with:
+
+```sh
+./tests/fcache2/run_fc2_bench_matrix.sh
+```
 
 ### Packet processing loop
 

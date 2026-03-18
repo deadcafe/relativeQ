@@ -58,7 +58,7 @@ struct flow6_entry {
 static inline int __attribute__((nonnull(1,2)))
 flow6_cmp(const void *a, const void *b)
 {
-    return memcmp(a, b, sizeof(struct flow6_key)) == 0;
+    return memcmp(a, b, sizeof(struct flow6_key));
 }
 
 /*===========================================================================

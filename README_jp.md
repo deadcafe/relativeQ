@@ -101,6 +101,13 @@ samples/
       body.h                  実装テンプレート (内部用)
       hash_direct.h           direct-find 用 hash 生成 helper (内部用)
     lib/                      生成物 (libfcache.a / libfcache.so)
+  fcache2/          experimental action-cache 再設計 (flow4 のみ)
+    include/
+      flow_cache2.h          fcache2 公開ヘッダの傘
+      flow4_cache2.h         flow4 action-cache API
+    src/
+      flow4.c                flow4 専用実装
+    lib/                     生成物 (libfcache2.a / libfcache2.so)
   test/
     fcache_test.c           正確性テスト + ベンチマーク (全 3 バリアント)
     fcache_test_body.h      テンプレート: テスト・ベンチマーク関数 (内部用)
@@ -459,8 +466,9 @@ AVX2 以降の CPU では AVX2 パスが最適です。
 
 ### RIX_HASH (フィンガープリント、可変長キー)
 
-ノード構造体に現在バケットのフィンガープリントを格納する `uint32_t`
-フィールドが必要 (O(1) 削除に使用)。
+ノード構造体には、現在所属している bucket に対応する hash を保持する
+`hash_field` 整数 field が必要です。`SLOT` variant では、さらに現在の
+slot を保持する呼び出し側定義の整数 `slot_field` を持ちます。
 
 ```c
 #include "rix/rix_hash.h"
@@ -469,7 +477,7 @@ AVX2 以降の CPU では AVX2 パスが最適です。
 typedef struct mynode mynode;
 struct mynode {
     uint8_t  key[16];    /* キーフィールド (可変長) */
-    uint32_t cur_hash;   /* フィンガープリントフィールド (名前は任意) */
+    uint32_t cur_hash;   /* current-bucket hash (名前は任意) */
     uint32_t value;
 };
 
@@ -480,6 +488,17 @@ RIX_HASH_GENERATE(myht, mynode, key, cur_hash, my_cmp_fn)
  * RIX_HASH_GENERATE_EX(myht, mynode, key, cur_hash,
  *                      my_cmp_fn, my_hash_fn)
  */
+
+typedef struct mynode_slot mynode_slot;
+struct mynode_slot {
+    uint8_t  key[16];
+    uint32_t cur_hash;
+    uint16_t slot;
+    uint16_t value;
+};
+
+RIX_HASH_HEAD(myht_slot);
+RIX_HASH_GENERATE_SLOT(myht_slot, mynode_slot, key, cur_hash, slot, my_cmp_fn)
 
 /* 3. 任意: このソースファイルで SIMD を有効化 */
 rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
@@ -503,8 +522,8 @@ mynode *dup = myht_insert(&head, buckets, pool, &pool[i]);
 /* キーポインタで検索 */
 mynode *hit = myht_find(&head, buckets, pool, key_ptr);
 
-/* キーポインタで削除 */
-mynode *rem = myht_remove(&head, buckets, pool, key_ptr);
+/* ノードポインタで削除 */
+mynode *rem = myht_remove(&head, buckets, pool, &pool[i]);
 
 /* 全エントリ巡回: cb が 0 を返す間継続、非 0 で停止 */
 myht_walk(&head, buckets, pool, cb, arg);
@@ -535,11 +554,25 @@ myht_cmp_key4 (ctx, pool, results);
 |-----------|-------|
 | 外部リンケージ | `RIX_HASH_GENERATE(name, type, key_field, hash_field, cmp_fn)` |
 | 外部リンケージ + custom hash | `RIX_HASH_GENERATE_EX(name, type, key_field, hash_field, cmp_fn, hash_fn)` |
+| 外部リンケージ + slot-aware remove | `RIX_HASH_GENERATE_SLOT(name, type, key_field, hash_field, slot_field, cmp_fn)` |
+| 外部リンケージ + slot-aware remove + custom hash | `RIX_HASH_GENERATE_SLOT_EX(name, type, key_field, hash_field, slot_field, cmp_fn, hash_fn)` |
 | `static` リンケージ | `RIX_HASH_GENERATE_STATIC(name, type, key_field, hash_field, cmp_fn)` |
 | `static` リンケージ + custom hash | `RIX_HASH_GENERATE_STATIC_EX(name, type, key_field, hash_field, cmp_fn, hash_fn)` |
+| `static` リンケージ + slot-aware remove | `RIX_HASH_GENERATE_STATIC_SLOT(name, type, key_field, hash_field, slot_field, cmp_fn)` |
+| `static` リンケージ + slot-aware remove + custom hash | `RIX_HASH_GENERATE_STATIC_SLOT_EX(name, type, key_field, hash_field, slot_field, cmp_fn, hash_fn)` |
 
 `cmp_fn` シグネチャ: `int cmp_fn(const type *a, const type *b)` -- 等しければ 0 を返す。
 `hash_fn` シグネチャ: `union rix_hash_hash_u hash_fn(const key_type *key, uint32_t mask)`。
+`slot_field` は `[0, RIX_HASH_BUCKET_ENTRY_SZ - 1]` を表現できる
+呼び出し側定義の整数型であれば十分です。
+
+`SLOT` variant は次を維持します。
+
+- `node->hash_field & mask == current_bucket`
+- `buckets[current_bucket].idx[node->slot_field] == node_idx`
+
+これにより `remove()` は direct-slot になり、非 `SLOT` variant のような
+`idx[16]` scan を行いません。
 
 ---
 
@@ -710,6 +743,70 @@ miss が多い batch では、`flow*_cache_insert_batch()` が miss 群の hash 
 packet loop の perf case では、hit 確定後に後段更新用の CL1 も温め、
 `cache_expire()` の呼び出し間隔を miss 率に応じて 1 / 2 / 4 / 8 batch に
 後退させ、少数 miss で即 every-batch に戻りすぎないようにしています。
+
+### `fcache2` (experimental redesign)
+
+`samples/fcache2/` は、`fcache` の lookup pipeline を維持したまま、
+entry layout と aging policy だけを切り替える flow4 専用プロトタイプです。
+
+- 現在の flow4 entry は single-cache-line の 64B
+- `RIX_HASH_GENERATE_SLOT_EX` による slot-aware remove
+- `lookup_batch()` は `entry_idx` だけを返し、direct pointer
+  や AP payload は返さない
+- `fill_miss_batch()` は miss key を登録し、結果として得られた
+  `entry_idx` を返す
+- `fc2_flow4_cache_maintain()` が、caller が指定した bucket 範囲だけを
+  idle/background 用に舐める reclaim API を提供する
+- 現在の flow4 実装は `fcache` と同じ 4-stage batch lookup
+  (`hash_key -> scan_bk -> prefetch_node -> cmp_key`) を使い、
+  staged fingerprint scan を AVX2 helper に直接結び付けている
+- `fill_miss_batch()` も `fcache` と同じ prehash + bucket prefetch 型の
+  insert plan を使い、その上に local pressure relief を載せている
+- insert 前 local pressure relief は candidate bucket のみを対象にし、
+  bucket 内の occupied entry を staged prefetch して full-bucket 評価を行い、
+  最古の expired victim を最大 1 件だけ選ぶ。bucket の密度閾値は
+  global fill の上昇に合わせて `15/16 -> 14/16 -> 13/16` と前倒しされる
+- idle/background maintenance は grouped bucket walk を使い、
+  bucket prefetch と staged entry prefetch の上で各 bucket の expired entry
+  を全件 `remove_at()` で回収する
+- `fc2_flow4_cache_stats()` で lookup/fill と local relief / maintenance の
+  call/check/eviction を確認できる
+- bucket / entry の prefetch は `rix_hash` の共通 helper に寄せてあり、
+  lookup / insert / maintenance で同じ語彙で追える
+
+`fcache2` には built-in の hit-path governor も global expire walk も
+ありません。pure search は `fcache` と同等に保ち、比較対象は aging
+policy のみです。
+
+- insert-bucket relief (fill 連動の `15/16 -> 14/16 -> 13/16` +
+  sampled `8-of-16`)
+- 明示的な idle/background maintenance (`16x1`)
+
+現時点のスコープは意図的に絞ってあり、flow4 のみ、idx 指向の result API、
+そして既存 `fcache` との横並び比較用です。
+
+現在の `fc2` bench は、`tests/fcache2/fc2_bench` の引数付き mode を使うのが
+前提です。
+
+```sh
+./tests/fcache2/fc2_bench rate_compare <desired_entries> <start_fill_pct> <hit_pct> <pps>
+./tests/fcache2/fc2_bench rate_compare_timeout <desired_entries> <start_fill_pct> <hit_pct> <pps> <timeout_ms>
+./tests/fcache2/fc2_bench rate_fc2_only <desired_entries> <start_fill_pct> <hit_pct> <pps>
+./tests/fcache2/fc2_bench rate_trace_custom <desired_entries> <start_fill_pct> <hit_pct> <pps> <timeout_ms> <soak_mul> <report_ms> <fill0> <fill1> <fill2> <fill3> <k0> <k1> <k2> <k3> [kick_scale]
+```
+
+現時点の採用 trace profile は次です。
+
+```text
+thresholds: 70 / 73 / 75 / 77
+kicks:      0 / 0 / 1 / 2
+```
+
+既知の検証組み合わせは次で一括再実行できます。
+
+```sh
+./tests/fcache2/run_fc2_bench_matrix.sh
+```
 
 ### パケット処理ループ
 

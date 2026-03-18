@@ -206,6 +206,48 @@ CL1 (64 bytes) — ユーザーペイロード:
   `init_cb`（insert後）と `fini_cb`（エビクション前）、またはヒット後に
   直接アクセスする。ルックアップホットパスでCL1をコールドに保てる。
 
+### 4.4 `fcache2` の方向性
+
+`samples/fcache2/` は、`fcache` の lookup pipeline を維持したまま、
+entry layout と aging policy だけを切り替える flow4 専用の別設計です。
+
+- 現在の flow4 entry は single-cache-line の 64B に収まる
+- `lookup_batch()` は `entry_idx` だけを返す
+- `fill_miss_batch()` は miss key を登録し、その結果の `entry_idx` を返す
+- `fc2_flow4_cache_maintain()` が full-table expire walk を使わずに、
+  指定した bucket 範囲だけを idle/background reclaim できる
+- insert path では、candidate bucket が高密度のときに、通常 insert の
+  前に local pressure relief を行う。密度閾値は global fill の上昇に
+  合わせて `15/16 -> 14/16 -> 13/16` と前倒しされる
+- `fc2_flow4_cache_stats()` で lookup/fill と local relief / maintenance の
+  counter を出せる
+- 現在の flow4 実装は `fcache` と同じ 4-stage batch lookup を土台にし、
+  staged fingerprint scan を AVX2 helper に直接結び付けている
+- `fill_miss_batch()` も `fcache` と同じ prehash + bucket prefetch 型の
+  insert plan を使い、その上に local pressure relief を載せている
+- local pressure relief は selected candidate bucket を staged entry
+  prefetch で full-bucket 評価し、最古の expired victim を最大 1 件選ぶ
+- idle/background maintenance は同じ bucket-budget API を保つが、実装は
+  grouped bucket walk に変わっており、bucket prefetch と staged entry
+  prefetch の上で visited bucket の expired entry を全件 reclaim する
+- bucket 削除は `remove_at()` に統一され、relief と maintenance が同じ
+  hash-table delete primitive を使う
+
+現状の `fcache2` にも global expire walk はなく、aging は
+1. dense bucket に対する insert-triggered local relief
+2. idle/background 用の bucket-budget maintenance API
+の 2 系統に限定されている。狙いは pure search を `fcache` と同等に保ち、
+差分を aging policy のみに絞ることである。
+
+現状の bench 検証は `tests/fcache2/fc2_bench` の引数付き mode を前提にし、
+固定の case table ではなく runtime parameter で回す。現在の採用
+fill-control trace profile は次である。
+
+```text
+thresholds: 70 / 73 / 75 / 77
+kicks:      0 / 0 / 1 / 2
+```
+
 IPv6キー（44B）はCL0に4Bのリザーブ付きで収まる。
 IPv4キー（20B）はCL0に28Bのリザーブ付きで収まる — パディングは
 多いがエントリサイズは同じなので、プールメモリは同一。
@@ -1245,11 +1287,11 @@ struct my_node {
     int           data;
 };
 
-/* キー比較: 等しければ非ゼロを返す */
+/* キー比較: 等しければ 0 を返す */
 static int
 my_cmp(const void *a, const void *b)
 {
-    return memcmp(a, b, sizeof(struct my_key)) == 0;
+    return memcmp(a, b, sizeof(struct my_key));
 }
 
 /* ヘッド構造体宣言と全関数生成 */
@@ -1275,6 +1317,29 @@ RIX_HASH_GENERATE(my_ht, my_node, key, cur_hash, my_cmp)
 | `my_ht_scan_bk(ctx, head, bk)` | 1 | SIMDフィンガープリントスキャン |
 | `my_ht_prefetch_node(ctx, base)` | 2 | 候補ノードのプリフェッチ |
 | `my_ht_cmp_key(ctx, base)` | 3 | 完全キー比較 |
+
+`SLOT` variant では、呼び出し側管理の整数 field を 1 つ追加します。
+
+```c
+struct my_node_slot {
+    struct my_key key;
+    uint32_t      cur_hash;   /* current-bucket hash */
+    uint16_t      slot;       /* current bucket 内 slot */
+    int           data;
+};
+
+RIX_HASH_HEAD(my_ht_slot);
+RIX_HASH_GENERATE_SLOT(my_ht_slot, my_node_slot, key, cur_hash, slot, my_cmp)
+```
+
+Contract:
+
+- `node->cur_hash & mask == current_bucket`
+- `0 <= node->slot < RIX_HASH_BUCKET_ENTRY_SZ`
+- `buckets[current_bucket].idx[node->slot] == node_idx`
+
+`SLOT` variant の `remove()` は `cur_hash` と `slot` を直接使います。
+`idx[16]` scan は行いません。
 
 #### A.4.2 基本的な使い方
 

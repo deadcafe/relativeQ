@@ -17,13 +17,16 @@
 
 all:
 	$(MAKE) -C fcache all
+	$(MAKE) -C fcache2 all
 	$(MAKE) -C test   all
 
 static:
 	$(MAKE) -C fcache static
+	$(MAKE) -C fcache2 static
 
 shared:
 	$(MAKE) -C fcache shared
+	$(MAKE) -C fcache2 shared
 
 test: all
 	$(MAKE) -C test test
@@ -33,7 +36,9 @@ bench: all
 
 clean:
 	$(MAKE) -C fcache clean
+	$(MAKE) -C fcache2 clean
 	$(MAKE) -C test   clean
 
 install:
 	$(MAKE) -C fcache install PREFIX=$(PREFIX)
+	$(MAKE) -C fcache2 install PREFIX=$(PREFIX)

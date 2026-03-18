@@ -211,6 +211,51 @@ same entry size, so pool memory is identical.
   access it via `init_cb` (after insert) and `fini_cb` (before eviction),
   or directly after a cache hit.  This keeps CL1 cold on the lookup hot path.
 
+### 4.4 `fcache2` direction
+
+`samples/fcache2/` is a separate flow4-only redesign that keeps the `fcache`
+lookup pipeline and changes only entry layout plus aging policy.
+
+- The current flow4 entry fits in a single 64-byte cache line
+- `lookup_batch()` returns only `entry_idx`
+- `fill_miss_batch()` only installs missed keys and returns the resulting
+  `entry_idx`
+- `fc2_flow4_cache_maintain()` provides a bucket-budgeted reclaim hook for
+  idle/background maintenance without a full-table expire walk
+- insert path uses local pressure relief before normal insert when a
+  candidate bucket is already dense; the density trigger is tightened as
+  global fill rises (`15/16 -> 14/16 -> 13/16`)
+- `fc2_flow4_cache_stats()` exposes lookup/fill plus local-relief and
+  maintenance counters
+- current flow4 implementation reuses the same 4-stage batch lookup shape
+  as `fcache` and binds the staged fingerprint scans directly to AVX2
+  helpers
+- `fill_miss_batch()` also follows the `fcache` prehashed insert-plan
+  structure before applying local pressure relief
+- local pressure relief scans the selected candidate bucket with staged entry
+  prefetch, evaluates the full bucket, and reclaims at most one oldest
+  expired victim
+- idle/background maintenance keeps the same bucket-budgeted API, but the
+  implementation now performs grouped bucket walks with bucket prefetch,
+  staged entry prefetch, and expire-all reclaim per visited bucket
+- bucket removal paths are unified on `remove_at()`, so relief and
+  maintenance share the same hash-table delete primitive
+
+The current `fcache2` policy still has no global expire walk. Aging is
+bounded to two narrow paths instead: insert-triggered local relief on
+dense candidate buckets and explicit bucket-budgeted maintenance for
+idle/background reclaim. The intent is to keep pure search equivalent to
+`fcache` and compare only the aging policy.
+
+Current bench policy validation is driven from `tests/fcache2/fc2_bench`
+parameterized modes instead of hard-coded case tables.  The currently
+accepted fill-control trace profile is:
+
+```text
+thresholds: 70 / 73 / 75 / 77
+kicks:      0 / 0 / 1 / 2
+```
+
 ## 5. Hash Table Configuration
 
 - Hash variant: `rix_hash.h` fingerprint (arbitrary key size, cmp_fn)
@@ -1214,11 +1259,11 @@ struct my_node {
     int           data;
 };
 
-/* Key comparison: return non-zero if equal */
+/* Key comparison: return 0 if equal */
 static int
 my_cmp(const void *a, const void *b)
 {
-    return memcmp(a, b, sizeof(struct my_key)) == 0;
+    return memcmp(a, b, sizeof(struct my_key));
 }
 
 /* Declare head struct + generate all functions */
@@ -1244,6 +1289,29 @@ Staged find functions (for N-ahead pipeline):
 | `my_ht_scan_bk(ctx, head, bk)` | 1 | SIMD fingerprint scan |
 | `my_ht_prefetch_node(ctx, base)` | 2 | Prefetch candidate node |
 | `my_ht_cmp_key(ctx, base)` | 3 | Full key comparison |
+
+`SLOT` variants add one caller-owned integer field:
+
+```c
+struct my_node_slot {
+    struct my_key key;
+    uint32_t      cur_hash;   /* current-bucket hash */
+    uint16_t      slot;       /* slot in current bucket */
+    int           data;
+};
+
+RIX_HASH_HEAD(my_ht_slot);
+RIX_HASH_GENERATE_SLOT(my_ht_slot, my_node_slot, key, cur_hash, slot, my_cmp)
+```
+
+Contract:
+
+- `node->cur_hash & mask == current_bucket`
+- `0 <= node->slot < RIX_HASH_BUCKET_ENTRY_SZ`
+- `buckets[current_bucket].idx[node->slot] == node_idx`
+
+In SLOT variants, `remove()` uses `cur_hash` and `slot` directly. No
+`idx[16]` scan is performed.
 
 #### A.4.2 Basic usage
 
