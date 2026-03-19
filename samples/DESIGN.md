@@ -211,58 +211,133 @@ same entry size, so pool memory is identical.
   access it via `init_cb` (after insert) and `fini_cb` (before eviction),
   or directly after a cache hit.  This keeps CL1 cold on the lookup hot path.
 
-### 4.4 `fcache2` direction
+### 4.4 `fcache` — single-cache-line redesign
 
-`samples/fcache2/` is a separate flow4-only redesign that keeps the `fcache`
-lookup pipeline and changes only entry layout plus aging policy.
+`samples/fcache/` is a redesign that fits each entry in a single 64-byte
+cache line (half the 128B of `fcache`).  No user payload is stored in the
+entry — the caller uses the returned `entry_idx` to reference its own data
+externally.  Three variants are provided: flow4 (IPv4), flow6 (IPv6),
+and flowu (unified IPv4/IPv6).
 
-- The current flow4 entry fits in a single 64-byte cache line
-- `lookup_batch()` returns only `entry_idx`
-- `fill_miss_batch()` only installs missed keys and returns the resulting
-  `entry_idx`
-- `fc2_flow4_cache_maintain()` provides a bucket-budgeted reclaim hook for
-  idle/background maintenance without a full-table expire walk
-- insert path uses local pressure relief before normal insert when a
-  candidate bucket is already dense; the density trigger is tightened as
-  global fill rises (`15/16 -> 14/16 -> 13/16`)
-- `fc2_flow4_cache_stats()` exposes lookup/fill plus local-relief and
-  maintenance counters
-- current flow4 implementation reuses the same 4-stage batch lookup shape
-  as `fcache` and binds the staged fingerprint scans directly to AVX2
-  helpers
-- `fill_miss_batch()` also follows the `fcache` prehashed insert-plan
-  structure before applying local pressure relief
-- local pressure relief scans the selected candidate bucket with staged entry
-  prefetch, evaluates the full bucket, and reclaims at most one oldest
-  expired victim
-- idle/background maintenance keeps the same bucket-budgeted API, but the
-  implementation now performs grouped bucket walks with bucket prefetch,
-  staged entry prefetch, and expire-all reclaim per visited bucket
-- bucket removal paths are unified on `remove_at()`, so relief and
-  maintenance share the same hash-table delete primitive
+#### 4.4.1 Entry design (all 64B / 1 CL)
 
-The current `fcache2` policy still has no global expire walk. Aging is
-bounded to two narrow paths instead: insert-triggered local relief on
-dense candidate buckets and explicit bucket-budgeted maintenance for
-idle/background reclaim. The intent is to keep pure search equivalent to
-`fcache` and compare only the aging policy.
+```
+flow4 entry (64B):
+  fc_flow4_key    20B   src_ip/dst_ip/src_port/dst_port/proto/vrfid
+  cur_hash          4B   hash_field for O(1) remove
+  last_ts           8B   last access TSC (0 = free)
+  free_link         4B   SLIST entry (free list index)
+  slot              2B   slot in current bucket
+  reserved1         2B
+  reserved0        24B   pad to 64B
 
-Current bench policy validation is driven from `tests/fcache2/fc2_bench`
-parameterized modes instead of hard-coded case tables.  The currently
-accepted fill-control trace profile is:
+flow6 entry (64B):
+  fc_flow6_key    44B   src_ip[16]/dst_ip[16]/src_port/dst_port/proto/vrfid
+  cur_hash          4B
+  last_ts           8B
+  free_link         4B
+  slot              2B
+  reserved1         2B
+  (zero reserved bytes — key fills the space)
+
+flowu entry (64B):
+  fc_flowu_key    44B   family/proto/ports/vrfid/addr union
+  cur_hash          4B
+  last_ts           8B
+  free_link         4B
+  slot              2B
+  reserved1         2B
+  (zero reserved bytes — same layout as flow6)
+```
+
+All entry structs carry `__attribute__((packed))` on the key and
+`__attribute__((aligned(64)))` on the entry, with a static assertion
+checking `sizeof == 64`.
+
+#### 4.4.2 flowu unified key
+
+The unified key uses a `family` field at byte 0 and a union for addresses:
+
+```c
+struct fc_flowu_key {
+    uint8_t  family;        /* FC_FLOW_FAMILY_IPV4=4 / IPV6=6 */
+    uint8_t  proto;
+    uint16_t src_port, dst_port;
+    uint16_t pad;
+    uint32_t vrfid;
+    union {
+        struct { uint32_t src; uint32_t dst; uint8_t _pad[24]; } v4;
+        struct { uint8_t  src[16]; uint8_t  dst[16]; }          v6;
+    } addr;
+};  /* 44B total */
+```
+
+IPv4 entries zero-pad the unused 24 bytes of the union so `memcmp`
+produces correct equality semantics.  Key construction helpers
+`fc_flowu_key_v4()` / `fc_flowu_key_v6()` `memset` the struct to
+zero before filling fields.
+
+#### 4.4.3 API pattern (uniform across variants)
+
+Each variant exposes the same function set (substitute `flow4` / `flow6` /
+`flowu` for `PREFIX`):
+
+| Function | Purpose |
+|---|---|
+| `fc_PREFIX_cache_init()` | Initialize cache with buckets, pool, config |
+| `fc_PREFIX_cache_flush()` | Return all entries to free list |
+| `fc_PREFIX_cache_lookup_batch()` | Pipelined batch lookup, returns miss count |
+| `fc_PREFIX_cache_fill_miss_batch()` | Insert missed keys with pressure relief |
+| `fc_PREFIX_cache_maintain()` | Bucket-budgeted idle/background reclaim |
+| `fc_PREFIX_cache_remove_idx()` | Remove a single entry by index |
+| `fc_PREFIX_cache_nb_entries()` | Current entry count |
+| `fc_PREFIX_cache_stats()` | Snapshot counters |
+
+#### 4.4.4 Implementation details
+
+- Same 4-stage batch lookup pipeline as `fcache`
+  (hash_key → scan_bk → prefetch_node → cmp_key)
+- Staged fingerprint scans bind directly to AVX2 helpers
+- `fill_miss_batch()` uses prehash + bucket prefetch insert plan,
+  then local pressure relief when the candidate bucket is dense
+- Relief density trigger tightens as global fill rises
+  (`15/16 → 14/16 → 13/16`)
+- Maintenance performs grouped bucket walks with staged entry prefetch
+  and expire-all reclaim per visited bucket
+- Bucket removal unified on `remove_at()` across relief and maintenance
+- No global expire walk — aging bounded to insert-triggered relief and
+  explicit bucket-budgeted maintenance
+
+#### 4.4.5 Variant benchmark comparison (32K entries, batch=256, AVX2)
+
+```
+                        flow4     flow6     flowu    6/4     u/4
+  hit_lookup (cy/key)    91        107       109    +17%    +20%
+  miss_fill  (cy/key)   240        271       255    +13%     +7%
+  mixed_90_10 (cy/key)  111        120       123     +8%    +11%
+```
+
+The 44B key variants (flow6/flowu) show 8-20% overhead over 20B flow4,
+primarily from larger `memcmp` in the comparison function.  The flowu
+family field adds no measurable overhead beyond flow6.
+
+#### 4.4.6 Bench validation
+
+Current bench policy validation is driven from `tests/fcache/fc_bench`
+parameterized modes.  The currently accepted fill-control trace profile is:
 
 ```text
 thresholds: 70 / 73 / 75 / 77
 kicks:      0 / 0 / 1 / 2
 ```
 
-The replay script for the currently validated matrix lives under:
+Replay scripts:
 
 ```sh
-./samples/test/run_fc2_bench_matrix.sh flow4
-make -C samples/test matrix VARIANT=flow4
-make -C samples/fcache2 matrix
-make -C tests/fcache2 matrix
+./samples/test/run_fc_bench_matrix.sh flow4
+make -C samples/fcache matrix
+make -C tests/fcache matrix
+make -C tests/fcache vbench    # variant comparison
 ```
 
 ## 5. Hash Table Configuration
@@ -851,9 +926,10 @@ For a new variant, the preferred pattern is:
 ```
 samples/
   DESIGN.md                this document
+  DESIGN_JP.md             Japanese version
   Makefile                 top-level: delegates to fcache/ and test/
 
-  fcache/                  library
+  fcache/                  v1 library (128B 2-CL entries, user payload)
     Makefile
     include/
       flow_cache.h             umbrella: includes all three variant headers
@@ -873,13 +949,32 @@ samples/
       flowu_backend.c         Unified: backend template, compiled as gen/sse/avx2/avx512
     lib/                      build output (libfcache.a / libfcache.so)
 
-  test/                    test and benchmark binary
+  fcache/                 v2 library (64B 1-CL entries, no user payload)
+    Makefile
+    include/
+      flow_cache2.h            umbrella: includes all three variant headers
+      flow4_cache2.h           IPv4: 20B key, 64B entry, public API
+      flow6_cache2.h           IPv6: 44B key, 64B entry, public API
+      flowu_cache2.h           Unified: 44B key (family+union), 64B entry, public API
+    src/
+      flow4.c                 IPv4: AVX2-bound cuckoo hash + batch pipeline
+      flow6.c                 IPv6: AVX2-bound cuckoo hash + batch pipeline
+      flowu.c                 Unified: AVX2-bound cuckoo hash + batch pipeline
+    lib/                      build output (libfcache.a / libfcache.so)
+
+  test/                    v1 test and benchmark binary
     Makefile
     fcache_test.c            correctness tests + benchmarks (all 3 variants)
     fcache_test_body.h       template: test + benchmark functions
     ht4_backend.c            flow4 raw-hash template, compiled as gen/sse/avx2/avx512
     ht4.h                    declarations for raw flow4 hash test helpers
     perf.sh                  perf stat wrapper for single benchmark cases
+
+tests/fcache/             v2 test and benchmark binaries
+  Makefile
+  test_flow_cache2.c         correctness tests (all 3 variants, macro-template)
+  bench_flow_cache2.c        v1-vs-v2 comparison bench (flow4)
+  bench_fc_variants.c       v2 variant comparison bench (flow4 vs flow6 vs flowu)
 ```
 
 ## 13. Build Dependencies

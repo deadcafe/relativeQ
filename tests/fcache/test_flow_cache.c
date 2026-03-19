@@ -10,9 +10,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../../samples/fcache2/include/flow4_cache.h"
-#include "../../samples/fcache2/include/flow6_cache.h"
-#include "../../samples/fcache2/include/flowu_cache.h"
+#include "../../samples/fcache/include/flow4_cache.h"
+#include "../../samples/fcache/include/flow6_cache.h"
+#include "../../samples/fcache/include/flowu_cache.h"
 
 #define FAIL(msg) do { \
     fprintf(stderr, "FAIL %s:%d:%s: %s\n", __FILE__, __LINE__, __func__, (msg)); \

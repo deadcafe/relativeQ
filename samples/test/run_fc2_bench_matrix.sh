@@ -2,12 +2,12 @@
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-BENCH="$SCRIPT_DIR/../../tests/fcache2/fc2_bench"
-BENCH_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../../tests/fcache2" && pwd)
+BENCH="$SCRIPT_DIR/../../tests/fcache/fc_bench"
+BENCH_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../../tests/fcache" && pwd)
 VARIANT="${1:-flow4}"
 
 if [ ! -x "$BENCH" ]; then
-    make -C "$BENCH_DIR" fc2_bench
+    make -C "$BENCH_DIR" fc_bench
 fi
 
 usage() {
@@ -15,15 +15,17 @@ usage() {
 usage: $0 [variant]
 
 variants:
-  flow4   current fc2 flow4 matrix
-  flow6   reserved for future fc2 flow6 matrix
+  flow4   fc flow4 matrix
+  flow6   fc flow6 matrix
+  flowu   fc flowu matrix
+  all     run all 3 variants
 EOF
 }
 
 run_bench() {
     echo
-    echo ">>> $*"
-    "$BENCH" "$@"
+    echo ">>> $VARIANT $*"
+    "$BENCH" "$VARIANT" "$@"
 }
 
 # Accepted batch-maint policy:
@@ -55,14 +57,15 @@ run_trace_case() {
         "$TRACE_POLICY_SCALE"
 }
 
-run_flow4_matrix() {
-    echo "== Typical Compare =="
-    run_bench rate_compare 1000000 60 100 500000
-    run_bench rate_compare 1000000 75 100 500000
-    run_bench rate_compare 1000000 90 100 500000
-    run_bench rate_fc2_only 1000000 50 100 500000
-    run_bench rate_fc2_only 1000000 60 100 500000
-    run_bench rate_fc2_only 1000000 90 100 500000
+run_variant_matrix() {
+    echo
+    echo "====== $VARIANT matrix ======"
+
+    echo
+    echo "== FC2-only: 1M / 500kpps =="
+    run_bench rate_fc_only 1000000 50 100 500000
+    run_bench rate_fc_only 1000000 60 100 500000
+    run_bench rate_fc_only 1000000 90 100 500000
 
     echo
     echo "== Trace Policy: 1M / 500kpps =="
@@ -92,16 +95,15 @@ if [ "$VARIANT" = "-h" ] || [ "$VARIANT" = "--help" ]; then
     exit 0
 fi
 
-# Accepted batch-maint policy:
-#   thresholds: 70/73/75/77
-#   kicks:      0/0/1/2
 case "$VARIANT" in
-    flow4)
-        run_flow4_matrix
+    flow4|flow6|flowu)
+        run_variant_matrix
         ;;
-    flow6)
-        echo "flow6 matrix is not implemented yet" >&2
-        exit 3
+    all)
+        for v in flow4 flow6 flowu; do
+            VARIANT="$v"
+            run_variant_matrix
+        done
         ;;
     *)
         echo "unknown variant: $VARIANT" >&2

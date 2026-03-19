@@ -206,60 +206,130 @@ CL1 (64 bytes) — ユーザーペイロード:
   `init_cb`（insert後）と `fini_cb`（エビクション前）、またはヒット後に
   直接アクセスする。ルックアップホットパスでCL1をコールドに保てる。
 
-### 4.4 `fcache2` の方向性
+### 4.4 `fcache` — single-cache-line 再設計
 
-`samples/fcache2/` は、`fcache` の lookup pipeline を維持したまま、
-entry layout と aging policy だけを切り替える flow4 専用の別設計です。
+`samples/fcache/` は各エントリを 64B（1キャッシュライン）に収める再設計。
+`fcache` の 128B（2CL）から半減。ユーザペイロードはエントリに含まず、
+呼び出し側が返される `entry_idx` で独自データを参照する。
+flow4（IPv4）、flow6（IPv6）、flowu（統合 IPv4/IPv6）の 3 バリアントを提供。
 
-- 現在の flow4 entry は single-cache-line の 64B に収まる
-- `lookup_batch()` は `entry_idx` だけを返す
-- `fill_miss_batch()` は miss key を登録し、その結果の `entry_idx` を返す
-- `fc2_flow4_cache_maintain()` が full-table expire walk を使わずに、
-  指定した bucket 範囲だけを idle/background reclaim できる
-- insert path では、candidate bucket が高密度のときに、通常 insert の
-  前に local pressure relief を行う。密度閾値は global fill の上昇に
-  合わせて `15/16 -> 14/16 -> 13/16` と前倒しされる
-- `fc2_flow4_cache_stats()` で lookup/fill と local relief / maintenance の
-  counter を出せる
-- 現在の flow4 実装は `fcache` と同じ 4-stage batch lookup を土台にし、
-  staged fingerprint scan を AVX2 helper に直接結び付けている
-- `fill_miss_batch()` も `fcache` と同じ prehash + bucket prefetch 型の
-  insert plan を使い、その上に local pressure relief を載せている
-- local pressure relief は selected candidate bucket を staged entry
-  prefetch で full-bucket 評価し、最古の expired victim を最大 1 件選ぶ
-- idle/background maintenance は同じ bucket-budget API を保つが、実装は
-  grouped bucket walk に変わっており、bucket prefetch と staged entry
-  prefetch の上で visited bucket の expired entry を全件 reclaim する
-- bucket 削除は `remove_at()` に統一され、relief と maintenance が同じ
-  hash-table delete primitive を使う
+#### 4.4.1 エントリ設計（全て 64B / 1 CL）
 
-現状の `fcache2` にも global expire walk はなく、aging は
-1. dense bucket に対する insert-triggered local relief
-2. idle/background 用の bucket-budget maintenance API
-の 2 系統に限定されている。狙いは pure search を `fcache` と同等に保ち、
-差分を aging policy のみに絞ることである。
+```
+flow4 entry (64B):
+  fc_flow4_key    20B   src_ip/dst_ip/src_port/dst_port/proto/vrfid
+  cur_hash          4B   O(1) remove 用 hash_field
+  last_ts           8B   最終アクセス TSC（0 = free）
+  free_link         4B   SLIST entry（フリーリストインデックス）
+  slot              2B   現在のバケット内スロット
+  reserved1         2B
+  reserved0        24B   64B へのパディング
 
-現状の bench 検証は `tests/fcache2/fc2_bench` の引数付き mode を前提にし、
-固定の case table ではなく runtime parameter で回す。現在の採用
-fill-control trace profile は次である。
+flow6 entry (64B):
+  fc_flow6_key    44B   src_ip[16]/dst_ip[16]/src_port/dst_port/proto/vrfid
+  cur_hash          4B
+  last_ts           8B
+  free_link         4B
+  slot              2B
+  reserved1         2B
+  （リザーブなし — キーが空間を埋める）
+
+flowu entry (64B):
+  fc_flowu_key    44B   family/proto/ports/vrfid/addr union
+  cur_hash          4B
+  last_ts           8B
+  free_link         4B
+  slot              2B
+  reserved1         2B
+  （リザーブなし — flow6 と同一レイアウト）
+```
+
+全てのキー構造体に `__attribute__((packed))`、エントリ構造体に
+`__attribute__((aligned(64)))` を付与し、`sizeof == 64` を static assert で検証。
+
+#### 4.4.2 flowu 統合キー
+
+統合キーはバイト 0 に `family` フィールド、アドレスに union を使用：
+
+```c
+struct fc_flowu_key {
+    uint8_t  family;        /* FC_FLOW_FAMILY_IPV4=4 / IPV6=6 */
+    uint8_t  proto;
+    uint16_t src_port, dst_port;
+    uint16_t pad;
+    uint32_t vrfid;
+    union {
+        struct { uint32_t src; uint32_t dst; uint8_t _pad[24]; } v4;
+        struct { uint8_t  src[16]; uint8_t  dst[16]; }          v6;
+    } addr;
+};  /* 44B */
+```
+
+IPv4 エントリは union の未使用 24B をゼロ埋めし、`memcmp` による正しい
+等値比較を保証。キー構築ヘルパー `fc_flowu_key_v4()` / `fc_flowu_key_v6()`
+は構造体を `memset` でゼロ初期化してからフィールドを設定する。
+
+#### 4.4.3 API パターン（全バリアント共通）
+
+各バリアントは同じ関数セットを公開（`PREFIX` = `flow4` / `flow6` / `flowu`）：
+
+| 関数 | 目的 |
+|---|---|
+| `fc_PREFIX_cache_init()` | バケット、プール、設定でキャッシュを初期化 |
+| `fc_PREFIX_cache_flush()` | 全エントリをフリーリストに返却 |
+| `fc_PREFIX_cache_lookup_batch()` | パイプラインバッチ検索、ミス数を返す |
+| `fc_PREFIX_cache_fill_miss_batch()` | ミスキーを pressure relief 付きで挿入 |
+| `fc_PREFIX_cache_maintain()` | バケット予算制の idle/background 回収 |
+| `fc_PREFIX_cache_remove_idx()` | インデックス指定で 1 エントリを削除 |
+| `fc_PREFIX_cache_nb_entries()` | 現在のエントリ数 |
+| `fc_PREFIX_cache_stats()` | カウンタのスナップショット |
+
+#### 4.4.4 実装の詳細
+
+- `fcache` と同じ 4-stage batch lookup pipeline
+  （hash_key → scan_bk → prefetch_node → cmp_key）
+- staged fingerprint scan を AVX2 helper に直接バインド
+- `fill_miss_batch()` は prehash + bucket prefetch の insert plan を使い、
+  candidate bucket が高密度のときに local pressure relief を適用
+- relief 密度閾値は global fill の上昇で前倒し
+  （`15/16 → 14/16 → 13/16`）
+- maintenance は grouped bucket walk + staged entry prefetch で
+  visited bucket の expired entry を全件 reclaim
+- bucket 削除は `remove_at()` に統一（relief と maintenance で共有）
+- global expire walk なし — aging は insert-triggered relief と
+  explicit bucket-budgeted maintenance の 2 系統に限定
+
+#### 4.4.5 バリアント性能比較（32K entries, batch=256, AVX2）
+
+```
+                        flow4     flow6     flowu    6/4     u/4
+  hit_lookup (cy/key)    91        107       109    +17%    +20%
+  miss_fill  (cy/key)   240        271       255    +13%     +7%
+  mixed_90_10 (cy/key)  111        120       123     +8%    +11%
+```
+
+44B キーバリアント（flow6/flowu）は 20B の flow4 に対し 8-20% のオーバーヘッド。
+主因は比較関数の `memcmp` サイズ増加。flowu の family フィールドは
+flow6 対比で測定可能なオーバーヘッドを追加しない。
+
+#### 4.4.6 ベンチ検証
+
+現状の bench 検証は `tests/fcache/fc_bench` の引数付き mode で実行。
+現在の採用 fill-control trace profile：
 
 ```text
 thresholds: 70 / 73 / 75 / 77
 kicks:      0 / 0 / 1 / 2
 ```
 
-現時点で確認済みの matrix をまとめて再実行する script は次に置く。
+実行スクリプト：
 
 ```sh
-./samples/test/run_fc2_bench_matrix.sh flow4
-make -C samples/test matrix VARIANT=flow4
-make -C samples/fcache2 matrix
-make -C tests/fcache2 matrix
+./samples/test/run_fc_bench_matrix.sh flow4
+make -C samples/fcache matrix
+make -C tests/fcache matrix
+make -C tests/fcache vbench    # バリアント比較
 ```
-
-IPv6キー（44B）はCL0に4Bのリザーブ付きで収まる。
-IPv4キー（20B）はCL0に28Bのリザーブ付きで収まる — パディングは
-多いがエントリサイズは同じなので、プールメモリは同一。
 
 ## 5. ハッシュテーブル設定
 
@@ -882,8 +952,9 @@ wrapper を追加で持つ。
 samples/
   DESIGN.md                本文書（英語版）
   DESIGN_JP.md             本文書（日本語版）
+  Makefile                 トップレベル: fcache/ と test/ に委譲
 
-  fcache/                  ライブラリ
+  fcache/                  v1 ライブラリ（128B 2CL エントリ、ユーザペイロード付き）
     Makefile
     include/
       flow_cache.h             umbrella: 全 variant header を include
@@ -903,13 +974,32 @@ samples/
       flowu_backend.c         統合: backend テンプレート、gen/sse/avx2/avx512 として多重コンパイル
     lib/                      生成物（libfcache.a / libfcache.so）
 
-  test/                    テストバイナリ
+  fcache/                 v2 ライブラリ（64B 1CL エントリ、ペイロードなし）
+    Makefile
+    include/
+      flow_cache2.h            umbrella: 全 variant header を include
+      flow4_cache2.h           IPv4: 20B キー、64B エントリ、公開 API
+      flow6_cache2.h           IPv6: 44B キー、64B エントリ、公開 API
+      flowu_cache2.h           統合: 44B キー（family+union）、64B エントリ、公開 API
+    src/
+      flow4.c                 IPv4: AVX2 直接バインド cuckoo hash + batch pipeline
+      flow6.c                 IPv6: AVX2 直接バインド cuckoo hash + batch pipeline
+      flowu.c                 統合: AVX2 直接バインド cuckoo hash + batch pipeline
+    lib/                      生成物（libfcache.a / libfcache.so）
+
+  test/                    v1 テストバイナリ
     Makefile
     fcache_test.c            正当性テスト + ベンチマーク（全3バリアント）
     fcache_test_body.h       テンプレート: テスト + ベンチマーク関数
     ht4_backend.c            flow4 raw-hash テンプレート、gen/sse/avx2/avx512 として多重コンパイル
     ht4.h                    raw flow4 hash test helper の宣言
     perf.sh                  単一ベンチケース向け perf stat wrapper
+
+tests/fcache/             v2 テスト・ベンチマークバイナリ
+  Makefile
+  test_flow_cache2.c         正当性テスト（全3バリアント、マクロテンプレート）
+  bench_flow_cache2.c        v1-vs-v2 比較ベンチ（flow4）
+  bench_fc_variants.c       v2 バリアント比較ベンチ（flow4 vs flow6 vs flowu）
 ```
 
 ## 13. ビルド依存関係

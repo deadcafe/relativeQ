@@ -1,6 +1,6 @@
 TESTDIRS := tests/slist tests/list tests/stailq tests/tailq tests/circleq \
             tests/rbtree tests/hashtbl tests/hashtbl32 tests/hashtbl64 \
-            tests/fcache2
+            tests/fcache
 SUBDIRS  := $(TESTDIRS) samples
 
 HTAGS_PORT   ?= 8000

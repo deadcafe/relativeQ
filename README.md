@@ -100,13 +100,13 @@ samples/
       body.h                  implementation template (internal)
       hash_direct.h           direct-find hash generate helper (internal)
     lib/                      build output (libfcache.a / libfcache.so)
-  fcache2/          experimental action-cache redesign (flow4-only)
+  fcache/          experimental action-cache redesign (flow4-only)
     include/
-      flow_cache2.h          umbrella for fcache2 public headers
+      flow_cache2.h          umbrella for fcache public headers
       flow4_cache2.h         flow4 action-cache API
     src/
       flow4.c                flow4-only implementation
-    lib/                     build output (libfcache2.a / libfcache2.so)
+    lib/                     build output (libfcache.a / libfcache.so)
   test/
     fcache_test.c           correctness tests + benchmarks (all 3 variants)
     fcache_test_body.h      template: test + benchmark functions (internal)
@@ -744,9 +744,9 @@ post-lookup update, and the benchmark backs off `cache_expire()` by
 miss-rate tier: 1 / 2 / 4 / 8 batches. This avoids snapping straight back
 to every-batch expire on a small miss count.
 
-### `fcache2` (experimental redesign)
+### `fcache` (experimental redesign)
 
-`samples/fcache2/` is a separate flow4-only prototype that keeps the `fcache`
+`samples/fcache/` is a separate flow4-only prototype that keeps the `fcache`
 lookup pipeline, but changes only the entry layout and aging policy.
 
 - single-cache-line flow4 entry (64B, CL0-only)
@@ -755,7 +755,7 @@ lookup pipeline, but changes only the entry layout and aging policy.
   a direct entry pointer or AP payload
 - `fill_miss_batch()` only installs missed keys and returns the resulting
   `entry_idx`
-- `fc2_flow4_cache_maintain()` scans a caller-selected bucket window for
+- `fc_flow4_cache_maintain()` scans a caller-selected bucket window for
   idle/background reclaim without forcing a global walk
 - current flow4 implementation follows the same 4-stage batch lookup
   pipeline as `fcache` (`hash_key -> scan_bk -> prefetch_node -> cmp_key`)
@@ -769,12 +769,12 @@ lookup pipeline, but changes only the entry layout and aging policy.
 - idle/background maintenance uses grouped bucket walks with bucket prefetch
   and staged entry prefetch; each visited bucket evaluates all expired
   entries and removes them via `remove_at()`
-- `fc2_flow4_cache_stats()` exposes lookup/fill counts plus local-relief and
+- `fc_flow4_cache_stats()` exposes lookup/fill counts plus local-relief and
   maintenance call/check/eviction counters for verification
 - bucket and entry prefetch are routed through shared `rix_hash` helpers,
   so lookup/insert/maintenance paths use the same prefetch vocabulary
 
-`fcache2` intentionally has no built-in hit-path governor and no global expire
+`fcache` intentionally has no built-in hit-path governor and no global expire
 walk.  The design goal is to keep pure search equivalent to `fcache`, then
 compare only the aging policy:
 
@@ -785,14 +785,14 @@ compare only the aging policy:
 Current scope is intentionally narrow: flow4 only, idx-oriented results, and
 side-by-side comparison with `fcache`.
 
-For the current `fc2` bench, the preferred entry points are the parameterized
-bench modes in `tests/fcache2/fc2_bench`:
+For the current `fc` bench, the preferred entry points are the parameterized
+bench modes in `tests/fcache/fc_bench`:
 
 ```sh
-./tests/fcache2/fc2_bench rate_compare <desired_entries> <start_fill_pct> <hit_pct> <pps>
-./tests/fcache2/fc2_bench rate_compare_timeout <desired_entries> <start_fill_pct> <hit_pct> <pps> <timeout_ms>
-./tests/fcache2/fc2_bench rate_fc2_only <desired_entries> <start_fill_pct> <hit_pct> <pps>
-./tests/fcache2/fc2_bench rate_trace_custom <desired_entries> <start_fill_pct> <hit_pct> <pps> <timeout_ms> <soak_mul> <report_ms> <fill0> <fill1> <fill2> <fill3> <k0> <k1> <k2> <k3> [kick_scale]
+./tests/fcache/fc_bench rate_compare <desired_entries> <start_fill_pct> <hit_pct> <pps>
+./tests/fcache/fc_bench rate_compare_timeout <desired_entries> <start_fill_pct> <hit_pct> <pps> <timeout_ms>
+./tests/fcache/fc_bench rate_fc_only <desired_entries> <start_fill_pct> <hit_pct> <pps>
+./tests/fcache/fc_bench rate_trace_custom <desired_entries> <start_fill_pct> <hit_pct> <pps> <timeout_ms> <soak_mul> <report_ms> <fill0> <fill1> <fill2> <fill3> <k0> <k1> <k2> <k3> [kick_scale]
 ```
 
 The current accepted fill-control trace profile is:
@@ -805,10 +805,10 @@ kicks:      0 / 0 / 1 / 2
 Previously validated combinations can be replayed with:
 
 ```sh
-./samples/test/run_fc2_bench_matrix.sh flow4
+./samples/test/run_fc_bench_matrix.sh flow4
 make -C samples/test matrix VARIANT=flow4
-make -C samples/fcache2 matrix
-make -C tests/fcache2 matrix
+make -C samples/fcache matrix
+make -C tests/fcache matrix
 ```
 
 ### Packet processing loop

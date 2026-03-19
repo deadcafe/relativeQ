@@ -1,5 +1,5 @@
 TOPDIR   := $(shell cd ../.. && pwd)
-FCDIR   := $(shell cd ../../samples/fcache2 && pwd)
+FCDIR   := $(shell cd ../../samples/fcache && pwd)
 
 CC_IS_CLANG := $(shell $(CC) --version 2>&1 | grep -c "clang")
 

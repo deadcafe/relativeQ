@@ -102,7 +102,7 @@ perf: $(TEST_TARGET) $(PERF_SCRIPT)
 	./$(PERF_SCRIPT)
 
 matrix:
-	./run_fc2_bench_matrix.sh $(VARIANT)
+	./run_fc_bench_matrix.sh $(VARIANT)
 
 clean:
 	rm -f $(TEST_TARGET) $(TEST_OBJS) *~ core core.*
