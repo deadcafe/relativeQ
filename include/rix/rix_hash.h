@@ -33,8 +33,8 @@
  * rix_hash.h - index-based cuckoo hash table, single header, C11
  *
  * Key: arbitrary-size struct member; sizeof inferred at compile time.
- * Key comparison: user-supplied cmp_fn(const void *, const void *) passed to
- *   RIX_HASH_GENERATE; return 0 if equal.  A SIMD implementation gives
+ * Key comparison: user-supplied cmp_fn(const KEY_TYPE *, const KEY_TYPE *)
+ *   passed to RIX_HASH_GENERATE; return 0 if equal.  A SIMD implementation gives
  *   best throughput; a thin memcmp wrapper works for correctness.
  * Runtime SIMD dispatch: Generic / AVX2 / AVX-512 (fingerprint search only).
  * Macro-based type-safe API via RIX_HASH_GENERATE (same style as rix_tree.h).
@@ -221,13 +221,14 @@ _rix_hash_buckets(const union rix_hash_hash_u h, unsigned mask,
  *                bk1 = (fp ^ cur_hash) & mask without re-hashing, and during
  *                remove to locate bk0 = cur_hash & mask without any hash call.
  *   cmp_fn     - key comparison function:
- *                  int cmp_fn(const void *a, const void *b);
+ *                  int cmp_fn(const KEY_TYPE *a, const KEY_TYPE *b);
+ *                where KEY_TYPE is typeof(((struct type *)0)->key_field).
  *                Returns 0 if the two keys are equal, non-zero otherwise.
- *                Both a and b point to key_field inside the respective node.
  *                A SIMD-optimized implementation (SSE4.1 / AVX2 / AVX-512)
  *                is recommended for hot paths.  A memcmp wrapper also works:
- *                  static int my_cmp(const void *a, const void *b) {
- *                      return memcmp(a, b, sizeof(struct my_key));
+ *                  static int my_cmp(const struct my_key *a,
+ *                                    const struct my_key *b) {
+ *                      return memcmp(a, b, sizeof(*a));
  *                  }
  *
  * Default hashing is provided internally via rix_hash_hash_bytes_fast()
@@ -478,7 +479,8 @@ name##_cmp_key(struct rix_hash_find_ctx_s *ctx,                               \
         if (_nidx == (unsigned)RIX_NIL) continue; /* removed slot */         \
         struct type  *_node = name##_hptr(base, _nidx);                       \
         if (!_node) __builtin_unreachable();                                  \
-        if (cmp_fn(ctx->key, (const void *)&_node->key_field) == 0)           \
+        if (cmp_fn((const _RIX_HASH_KEY_TYPE(type, key_field) *)ctx->key,    \
+                   &_node->key_field) == 0)                                   \
             return _node;                                                     \
     }                                                                         \
     /* Slow path: bk_0 miss -> lazily fetch and scan bk_1 (secondary) */       \
@@ -491,7 +493,8 @@ name##_cmp_key(struct rix_hash_find_ctx_s *ctx,                               \
             if (_nidx == (unsigned)RIX_NIL) continue; /* removed slot */     \
             struct type  *_node = name##_hptr(base, _nidx);                   \
             if (!_node) __builtin_unreachable();                              \
-            if (cmp_fn(ctx->key, (const void *)&_node->key_field) == 0)       \
+            if (cmp_fn((const _RIX_HASH_KEY_TYPE(type, key_field) *)ctx->key, \
+                       &_node->key_field) == 0)                               \
                 return _node;                                                 \
         }                                                                     \
     }                                                                         \
@@ -599,8 +602,7 @@ name##_insert_hashed(struct name *head,                                       \
             _hits &= _hits - 1u;                                              \
             struct type  *_node = name##_hptr(base, _bk->idx[_bit]);          \
             if (!_node) __builtin_unreachable();                              \
-            if (cmp_fn((const void *)&elm->key_field,                         \
-                       (const void *)&_node->key_field) == 0)                 \
+            if (cmp_fn(&elm->key_field, &_node->key_field) == 0)              \
                 return _node; /* duplicate */                                 \
         }                                                                     \
     }                                                                         \
@@ -878,7 +880,8 @@ name##_cmp_key(struct rix_hash_find_ctx_s *ctx,                               \
         if (_nidx == (unsigned)RIX_NIL) continue;                             \
         struct type *_node = name##_hptr(base, _nidx);                        \
         if (!_node) __builtin_unreachable();                                  \
-        if (cmp_fn((const void *)&_node->key_field, ctx->key) == 0)           \
+        if (cmp_fn(&_node->key_field,                                        \
+                   (const _RIX_HASH_KEY_TYPE(type, key_field) *)ctx->key) == 0) \
             return _node;                                                     \
     }                                                                         \
     _hits = _RIX_HASH_FIND_U32X16(ctx->bk[1]->hash, ctx->fp);                 \
@@ -889,7 +892,8 @@ name##_cmp_key(struct rix_hash_find_ctx_s *ctx,                               \
         if (_nidx == (unsigned)RIX_NIL) continue;                             \
         struct type *_node = name##_hptr(base, _nidx);                        \
         if (!_node) __builtin_unreachable();                                  \
-        if (cmp_fn((const void *)&_node->key_field, ctx->key) == 0)           \
+        if (cmp_fn(&_node->key_field,                                        \
+                   (const _RIX_HASH_KEY_TYPE(type, key_field) *)ctx->key) == 0) \
             return _node;                                                     \
     }                                                                         \
     return NULL;                                                              \
@@ -981,8 +985,7 @@ name##_insert_hashed(struct name *head,                                       \
             _hits &= _hits - 1u;                                              \
             struct type *_node = name##_hptr(base, _bk->idx[_bit]);           \
             if (!_node) __builtin_unreachable();                              \
-            if (cmp_fn((const void *)&elm->key_field,                         \
-                       (const void *)&_node->key_field) == 0)                 \
+            if (cmp_fn(&elm->key_field, &_node->key_field) == 0)              \
                 return _node;                                                 \
         }                                                                     \
     }                                                                         \
@@ -1282,7 +1285,8 @@ name##_cmp_key(struct rix_hash_find_ctx_s *ctx,                               \
         _hits &= _hits - 1u;                                                  \
         unsigned      _nidx = ctx->bk[0]->idx[_bit];                          \
         struct type  *_node = name##_hptr(base, _nidx);                       \
-        if (cmp_fn(ctx->key, (const void *)&_node->key_field) == 0)           \
+        if (cmp_fn((const _RIX_HASH_KEY_TYPE(type, key_field) *)ctx->key,    \
+                   &_node->key_field) == 0)                                   \
             return _node;                                                     \
     }                                                                         \
     {                                                                         \
@@ -1292,7 +1296,8 @@ name##_cmp_key(struct rix_hash_find_ctx_s *ctx,                               \
             _hits &= _hits - 1u;                                              \
             unsigned      _nidx = ctx->bk[1]->idx[_bit];                      \
             struct type  *_node = name##_hptr(base, _nidx);                   \
-            if (cmp_fn(ctx->key, (const void *)&_node->key_field) == 0)       \
+            if (cmp_fn((const _RIX_HASH_KEY_TYPE(type, key_field) *)ctx->key, \
+                       &_node->key_field) == 0)                               \
                 return _node;                                                 \
         }                                                                     \
     }                                                                         \
@@ -1391,8 +1396,7 @@ name##_insert(struct name *head,                                              \
             unsigned      _bit  = (unsigned)__builtin_ctz(_hits);             \
             _hits &= _hits - 1u;                                              \
             struct type  *_node = name##_hptr(base, _bk->idx[_bit]);          \
-            if (cmp_fn((const void *)&elm->key_field,                         \
-                       (const void *)&_node->key_field) == 0)                 \
+            if (cmp_fn(&elm->key_field, &_node->key_field) == 0)              \
                 return _node;                                                 \
         }                                                                     \
     }                                                                         \

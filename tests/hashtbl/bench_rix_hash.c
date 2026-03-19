@@ -40,9 +40,9 @@ struct mynode {
 
 /* 8-byte key comparison */
 static RIX_FORCE_INLINE int
-mykey_cmp(const void *a, const void *b)
+mykey_cmp(const struct mykey *a, const struct mykey *b)
 {
-    return (*(const uint64_t *)a != *(const uint64_t *)b) ? 1 : 0;
+    return (a->hi != b->hi) ? 1 : 0;
 }
 
 RIX_HASH_HEAD(myht);

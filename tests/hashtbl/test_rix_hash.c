@@ -35,7 +35,7 @@ struct mynode {
 
 /* 16-byte key comparison using SSE2 (struct mykey = two uint64_t) */
 static RIX_FORCE_INLINE int
-mykey_cmp(const void *a, const void *b)
+mykey_cmp(const struct mykey *a, const struct mykey *b)
 {
     __m128i va = _mm_loadu_si128((const __m128i *)a);
     __m128i vb = _mm_loadu_si128((const __m128i *)b);
