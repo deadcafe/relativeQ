@@ -361,7 +361,6 @@ _FCG_INT(p, maintain_step_grouped)(_FCG_CACHE_T(p) *fc,                   \
     unsigned bucket_count;                                                 \
     unsigned skip_threshold;                                               \
     unsigned mask;                                                         \
-    unsigned pf_bk;                                                        \
     uint64_t expire_before;                                                \
     RIX_ASSERT(fc->nb_bk != 0u);                                           \
     mask = fc->ht_head.rhh_mask;                                           \
@@ -369,36 +368,37 @@ _FCG_INT(p, maintain_step_grouped)(_FCG_CACHE_T(p) *fc,                   \
     skip_threshold = fc->pressure_empty_slots;                             \
     expire_before = (now_tsc > fc->eff_timeout_tsc) ?                      \
         (now_tsc - fc->eff_timeout_tsc) : 0u;                             \
-    pf_bk = fc->maint_cursor & mask;                                       \
-    /* Prefetch PF_AHEAD buckets (idx[] cache line only). */               \
-    for (unsigned j = 0; j < PF_AHEAD && j < bucket_count; j++) {          \
-        _rix_hash_prefetch_bucket_idx(&fc->buckets[pf_bk]);               \
-        pf_bk = (pf_bk + 1u) & mask;                                      \
-    }                                                                      \
-    unsigned cur_bk = fc->maint_cursor & mask;                             \
+    /* Pass 1 — filter: SIMD-scan idx[] to collect non-sparse buckets. */ \
+    /* Touches only the idx[] cache line per bucket (sequential). */       \
+    unsigned work[bucket_count];                                           \
+    unsigned work_count = 0u;                                              \
+    unsigned scan_bk = fc->maint_cursor & mask;                            \
     for (unsigned i = 0; i < bucket_count; i++) {                          \
         unsigned used_slots;                                               \
-        unsigned reclaimed;                                                \
-        /* Prefetch PF_AHEAD buckets ahead of current. */                  \
-        if (RIX_LIKELY(i + PF_AHEAD < bucket_count)) {                    \
-            _rix_hash_prefetch_bucket_idx(&fc->buckets[pf_bk]);           \
-            pf_bk = (pf_bk + 1u) & mask;                                  \
-        }                                                                  \
         fc->stats.maint_bucket_checks++;                                   \
         used_slots = _FCG_INT(p, bucket_used_slots)(                       \
-            &fc->buckets[cur_bk]);                                         \
+            &fc->buckets[scan_bk]);                                        \
         if (used_slots <= skip_threshold) {                                \
             fc->stats.maint_step_skipped_bks++;                            \
-            cur_bk = (cur_bk + 1u) & mask;                                \
-            continue;                                                      \
+        } else {                                                           \
+            work[work_count++] = scan_bk;                                  \
         }                                                                  \
-        reclaimed = _FCG_INT(p, reclaim_bucket_all)(fc, cur_bk,            \
+        scan_bk = (scan_bk + 1u) & mask;                                   \
+    }                                                                      \
+    fc->maint_cursor = scan_bk;                                            \
+    /* Pass 2 — reclaim: process only candidate buckets with N-ahead */   \
+    /* prefetch.  Prefetch distance is stable (no skip branches). */       \
+    for (unsigned j = 0; j < PF_AHEAD && j < work_count; j++)              \
+        _rix_hash_prefetch_bucket(&fc->buckets[work[j]]);                  \
+    for (unsigned i = 0; i < work_count; i++) {                            \
+        unsigned reclaimed;                                                \
+        if (i + PF_AHEAD < work_count)                                     \
+            _rix_hash_prefetch_bucket(&fc->buckets[work[i + PF_AHEAD]]);   \
+        reclaimed = _FCG_INT(p, reclaim_bucket_all)(fc, work[i],           \
                                                      expire_before);       \
         fc->stats.maint_evictions += reclaimed;                            \
         evicted += reclaimed;                                              \
-        cur_bk = (cur_bk + 1u) & mask;                                    \
     }                                                                      \
-    fc->maint_cursor = cur_bk;                                             \
     return evicted;                                                        \
 }                                                                          \
                                                                            \
