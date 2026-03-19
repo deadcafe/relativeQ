@@ -5,11 +5,11 @@
  * All rights reserved.
  */
 
-#ifndef _FLOW_CACHE2_H_
-#define _FLOW_CACHE2_H_
+#ifndef _FLOW_CACHE_H_
+#define _FLOW_CACHE_H_
 
 /*
- * fcache2 currently reuses the same flow4 batch lookup pipeline geometry as
+ * fcache currently reuses the same flow4 batch lookup pipeline geometry as
  * fcache so the two implementations remain directly comparable.
  */
 #ifndef FLOW_CACHE_LOOKUP_STEP_KEYS
@@ -23,11 +23,11 @@
     (FLOW_CACHE_LOOKUP_STEP_KEYS * FLOW_CACHE_LOOKUP_AHEAD_STEPS)
 #endif
 
-#include "flow4_cache2.h"
-#include "flow6_cache2.h"
-#include "flowu_cache2.h"
+#include "flow4_cache.h"
+#include "flow6_cache.h"
+#include "flowu_cache.h"
 
-#endif /* _FLOW_CACHE2_H_ */
+#endif /* _FLOW_CACHE_H_ */
 
 /*
  * Local Variables:

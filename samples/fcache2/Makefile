@@ -35,11 +35,11 @@ SRCDIR       = src
 INCDIR       = include
 LIBDIR       = lib
 
-PUB_HDRS     = $(INCDIR)/flow_cache2.h $(INCDIR)/flow4_cache2.h $(INCDIR)/flow6_cache2.h $(INCDIR)/flowu_cache2.h
+PUB_HDRS     = $(INCDIR)/flow_cache.h $(INCDIR)/flow4_cache.h $(INCDIR)/flow6_cache.h $(INCDIR)/flowu_cache.h
 OBJS         = $(LIBDIR)/flow4.o $(LIBDIR)/flow6.o $(LIBDIR)/flowu.o
-LIB_STATIC   = $(LIBDIR)/libfcache2.a
-LIB_SHARED   = $(LIBDIR)/libfcache2.so
-LIB_SONAME   = libfcache2.so.1
+LIB_STATIC   = $(LIBDIR)/libfcache.a
+LIB_SHARED   = $(LIBDIR)/libfcache.so
+LIB_SONAME   = libfcache.so.1
 
 PREFIX       ?= /usr/local
 
@@ -50,7 +50,7 @@ static: $(LIB_STATIC)
 shared: $(LIB_SHARED)
 
 matrix:
-	../test/run_fc2_bench_matrix.sh flow4
+	../test/run_fc_bench_matrix.sh flow4
 
 $(LIBDIR):
 	mkdir -p $@
@@ -74,7 +74,7 @@ clean:
 	rm -f $(OBJS) $(LIB_STATIC) $(LIB_SHARED) *~ core core.*
 
 install: $(LIB_STATIC) $(LIB_SHARED)
-	install -d $(PREFIX)/lib $(PREFIX)/include/fcache2
+	install -d $(PREFIX)/lib $(PREFIX)/include/fcache
 	install -m 644 $(LIB_STATIC) $(PREFIX)/lib/
 	install -m 755 $(LIB_SHARED) $(PREFIX)/lib/
-	install -m 644 $(PUB_HDRS) $(PREFIX)/include/fcache2/
+	install -m 644 $(PUB_HDRS) $(PREFIX)/include/fcache/
