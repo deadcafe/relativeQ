@@ -384,28 +384,22 @@ FC_INT(bucket_used_slots)(const struct rix_hash_bucket_s *bucket)
 }
 
 static unsigned
-FC_INT(maintain_step_grouped)(FC_CACHE_T *fc,
-                               uint64_t now_tsc)
+FC_INT(maintain_step_filter_reclaim)(
+    FC_CACHE_T *fc,
+    unsigned start_bk,
+    unsigned bucket_count,
+    uint64_t expire_before)
 {
     enum { PF_AHEAD = 4u };
     unsigned evicted = 0u;
-    unsigned bucket_count;
-    unsigned skip_threshold;
-    unsigned mask;
-    uint64_t expire_before;
-
-    RIX_ASSERT(fc->nb_bk != 0u);
-    mask = fc->ht_head.rhh_mask;
-    bucket_count = (fc->nb_bk + 7u) >> 3;
-    skip_threshold = fc->pressure_empty_slots;
-    expire_before = (now_tsc > fc->eff_timeout_tsc) ?
-        (now_tsc - fc->eff_timeout_tsc) : 0u;
+    unsigned skip_threshold = fc->pressure_empty_slots;
+    unsigned mask = fc->ht_head.rhh_mask;
 
     /* Pass 1 — filter: SIMD-scan idx[] to collect non-sparse buckets. */
     /* Touches only the idx[] cache line per bucket (sequential). */
     unsigned work[bucket_count];
     unsigned work_count = 0u;
-    unsigned scan_bk = fc->maint_cursor & mask;
+    unsigned scan_bk = start_bk;
 
     for (unsigned i = 0; i < bucket_count; i++) {
         unsigned used_slots;
@@ -419,7 +413,6 @@ FC_INT(maintain_step_grouped)(FC_CACHE_T *fc,
         }
         scan_bk = (scan_bk + 1u) & mask;
     }
-    fc->maint_cursor = scan_bk;
 
     /* Pass 2 — reclaim: process only candidate buckets with N-ahead */
     /* prefetch.  Prefetch distance is stable (no skip branches). */
@@ -435,6 +428,40 @@ FC_INT(maintain_step_grouped)(FC_CACHE_T *fc,
         fc->stats.maint_evictions += reclaimed;
         evicted += reclaimed;
     }
+    return evicted;
+}
+
+/* Maximum buckets per filter_reclaim call to cap VLA stack usage. */
+/* 256 entries * 4B = 1 KB — safe for any stack. */
+#ifndef _FC_MAINT_STEP_MAX_BKS
+#define _FC_MAINT_STEP_MAX_BKS 256u
+#endif
+
+static unsigned
+FC_INT(maintain_step_grouped)(FC_CACHE_T *fc,
+                               uint64_t now_tsc)
+{
+    unsigned evicted = 0u;
+    unsigned bucket_count;
+    unsigned mask;
+    uint64_t expire_before;
+
+    RIX_ASSERT(fc->nb_bk != 0u);
+    mask = fc->ht_head.rhh_mask;
+    bucket_count = (fc->nb_bk + 7u) >> 3;
+    expire_before = (now_tsc > fc->eff_timeout_tsc) ?
+        (now_tsc - fc->eff_timeout_tsc) : 0u;
+
+    unsigned cur_bk = fc->maint_cursor & mask;
+    while (bucket_count > 0u) {
+        unsigned chunk = (bucket_count > _FC_MAINT_STEP_MAX_BKS) ?
+            _FC_MAINT_STEP_MAX_BKS : bucket_count;
+        evicted += FC_INT(maintain_step_filter_reclaim)(
+            fc, cur_bk, chunk, expire_before);
+        cur_bk = (cur_bk + chunk) & mask;
+        bucket_count -= chunk;
+    }
+    fc->maint_cursor = cur_bk;
     return evicted;
 }
 
