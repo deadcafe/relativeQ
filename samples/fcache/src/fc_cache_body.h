@@ -439,16 +439,17 @@ FC_INT(maintain_step_filter_reclaim)(
 
 static unsigned
 FC_INT(maintain_step_grouped)(FC_CACHE_T *fc,
+                               unsigned bucket_count,
                                uint64_t now_tsc)
 {
     unsigned evicted = 0u;
-    unsigned bucket_count;
     unsigned mask;
     uint64_t expire_before;
 
     RIX_ASSERT(fc->nb_bk != 0u);
     mask = fc->ht_head.rhh_mask;
-    bucket_count = (fc->nb_bk + 7u) >> 3;
+    if (bucket_count > fc->nb_bk)
+        bucket_count = fc->nb_bk;
     expire_before = (now_tsc > fc->eff_timeout_tsc) ?
         (now_tsc - fc->eff_timeout_tsc) : 0u;
 
@@ -726,12 +727,13 @@ FC_API(maintain)(FC_CACHE_T *fc,
 
 unsigned
 FC_API(maintain_step)(FC_CACHE_T *fc,
+                       unsigned bucket_count,
                        uint64_t now)
 {
     fc->stats.maint_step_calls++;
     fc->stats.maint_calls++;
     FC_INT(update_eff_timeout)(fc);
-    return FC_INT(maintain_step_grouped)(fc, now);
+    return FC_INT(maintain_step_grouped)(fc, bucket_count, now);
 }
 
 int

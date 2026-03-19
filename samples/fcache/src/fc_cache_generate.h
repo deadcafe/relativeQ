@@ -404,15 +404,16 @@ _FCG_INT(p, maintain_step_filter_reclaim)(                                 \
                                                                            \
 static unsigned                                                            \
 _FCG_INT(p, maintain_step_grouped)(_FCG_CACHE_T(p) *fc,                   \
+                                    unsigned bucket_count,                  \
                                     uint64_t now_tsc)                       \
 {                                                                          \
     unsigned evicted = 0u;                                                 \
-    unsigned bucket_count;                                                 \
     unsigned mask;                                                         \
     uint64_t expire_before;                                                \
     RIX_ASSERT(fc->nb_bk != 0u);                                           \
     mask = fc->ht_head.rhh_mask;                                           \
-    bucket_count = (fc->nb_bk + 7u) >> 3;                                  \
+    if (bucket_count > fc->nb_bk)                                          \
+        bucket_count = fc->nb_bk;                                          \
     expire_before = (now_tsc > fc->eff_timeout_tsc) ?                      \
         (now_tsc - fc->eff_timeout_tsc) : 0u;                             \
     unsigned cur_bk = fc->maint_cursor & mask;                             \
@@ -667,12 +668,13 @@ _FCG_API(p, maintain)(_FCG_CACHE_T(p) *fc,                              \
                                                                            \
 unsigned                                                                   \
 _FCG_API(p, maintain_step)(_FCG_CACHE_T(p) *fc,                          \
+                            unsigned bucket_count,                          \
                             uint64_t now)                                   \
 {                                                                          \
     fc->stats.maint_step_calls++;                                          \
     fc->stats.maint_calls++;                                               \
     _FCG_INT(p, update_eff_timeout)(fc);                                  \
-    return _FCG_INT(p, maintain_step_grouped)(fc, now);                   \
+    return _FCG_INT(p, maintain_step_grouped)(fc, bucket_count, now);     \
 }                                                                          \
                                                                            \
 int                                                                        \

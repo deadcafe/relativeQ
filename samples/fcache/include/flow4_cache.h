@@ -306,16 +306,28 @@ unsigned fc_flow4_cache_maintain(struct fc_flow4_cache *fc,
 /**
  * @brief Cursor-managed periodic maintenance (recommended).
  *
- * Scans 1/8 of the bucket table per call, advancing an internal cursor.
- * A full sweep completes in 8 consecutive calls.  Buckets with few
- * occupied slots are skipped via a SIMD check to avoid DRAM entry
- * accesses.
+ * Scans @p bucket_count buckets starting from an internal cursor,
+ * advancing the cursor after each call.  Buckets with few occupied
+ * slots are skipped via a SIMD check to avoid DRAM entry accesses.
  *
- * @param[in,out] fc   Cache instance.
- * @param[in]     now  Current TSC timestamp.
+ * Typical usage — scan all buckets every N packets:
+ * @code
+ *   fc_flow4_cache_maintain_step(&fc, fc.nb_bk, now_tsc);
+ * @endcode
+ *
+ * Or amortize over multiple calls:
+ * @code
+ *   // 4 calls to cover 256 buckets
+ *   fc_flow4_cache_maintain_step(&fc, 64, now_tsc);
+ * @endcode
+ *
+ * @param[in,out] fc            Cache instance.
+ * @param[in]     bucket_count  Number of buckets to scan (clamped to nb_bk).
+ * @param[in]     now           Current TSC timestamp.
  * @return Number of entries evicted.
  */
 unsigned fc_flow4_cache_maintain_step(struct fc_flow4_cache *fc,
+                                       unsigned bucket_count,
                                        uint64_t now);
 
 /**

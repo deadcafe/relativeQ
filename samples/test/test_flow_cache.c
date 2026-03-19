@@ -435,7 +435,7 @@ test_##PREFIX##_maintain_step(void) \
     uint16_t miss_idx[FILL]; \
     STATS_T stats; \
     unsigned miss_count; \
-    unsigned total_evicted = 0u; \
+    unsigned total_evicted; \
 \
     printf("[T] fc " #PREFIX " maintain_step\n"); \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
@@ -451,45 +451,55 @@ test_##PREFIX##_maintain_step(void) \
                                              100u, results) != FILL) \
         FAIL("maintain_step initial fill failed"); \
 \
-    /* Before timeout: 8 step calls should evict nothing */ \
-    for (unsigned s = 0; s < 8u; s++) { \
-        unsigned ev = fc_##PREFIX##_cache_maintain_step(&fc, 199u); \
-        if (ev != 0u) \
-            FAILF("maintain_step pre-timeout step %u evicted %u", s, ev); \
-    } \
-    if (fc_##PREFIX##_cache_nb_entries(&fc) != FILL) \
+    /* Before timeout: full-table sweep should evict nothing */ \
+    if (fc_##PREFIX##_cache_maintain_step(&fc, NB_BK, 199u) != 0u) \
         FAIL("maintain_step pre-timeout should not evict"); \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != FILL) \
+        FAIL("maintain_step pre-timeout entries changed"); \
 \
-    /* After timeout: one full sweep (8 steps) evicts most entries. */ \
+    /* After timeout: full-table sweep evicts most entries. */ \
     /* Sparse buckets (used_slots <= pressure_empty_slots) are */ \
-    /* intentionally skipped — maintain_step is for busy caches; */ \
-    /* use maintain() for full cleanup. */ \
-    for (unsigned s = 0; s < 8u; s++) \
-        total_evicted += fc_##PREFIX##_cache_maintain_step(&fc, 1000u); \
+    /* intentionally skipped. */ \
+    total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, NB_BK, 1000u); \
     if (total_evicted == 0u) \
         FAIL("maintain_step should evict expired entries"); \
     unsigned remaining = fc_##PREFIX##_cache_nb_entries(&fc); \
     if (total_evicted + remaining != FILL) \
         FAILF("maintain_step: evicted=%u + remaining=%u != %u", \
               total_evicted, remaining, (unsigned)FILL); \
-    /* Should evict the majority */ \
     if (total_evicted < FILL / 2u) \
         FAILF("maintain_step: evicted=%u too few (fill=%u)", \
               total_evicted, (unsigned)FILL); \
 \
-    /* Stats: 8 pre-timeout + 8 post-timeout = 16 step calls */ \
     fc_##PREFIX##_cache_stats(&fc, &stats); \
-    if (stats.maint_step_calls != 16u) \
-        FAILF("maint_step_calls=%" PRIu64 " expected 16", \
+    if (stats.maint_step_calls != 2u) \
+        FAILF("maint_step_calls=%" PRIu64 " expected 2", \
               stats.maint_step_calls); \
-    /* SIMD skip should have kicked in for sparse buckets */ \
     if (remaining > 0u && stats.maint_step_skipped_bks == 0u) \
         FAIL("maintain_step should skip sparse buckets"); \
 \
-    /* Full cleanup via maintain() for remaining entries */ \
+    /* Full cleanup via maintain() for remaining sparse entries */ \
     fc_##PREFIX##_cache_maintain(&fc, 0u, NB_BK, 1000u); \
     if (fc_##PREFIX##_cache_nb_entries(&fc) != 0u) \
         FAIL("maintain() should clean up remaining entries"); \
+\
+    /* Split-call test: refill, then sweep in 4 x 4 bk chunks */ \
+    for (unsigned i = 0; i < FILL; i++) \
+        keys[i] = MAKE_KEY(9000u + i); \
+    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 2000u, \
+                                                   results, miss_idx); \
+    (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
+                                               miss_count, 2000u, results); \
+    total_evicted = 0u; \
+    for (unsigned s = 0; s < 4u; s++) \
+        total_evicted += fc_##PREFIX##_cache_maintain_step(&fc, \
+                             NB_BK / 4u, 3000u); \
+    remaining = fc_##PREFIX##_cache_nb_entries(&fc); \
+    if (total_evicted + remaining != FILL) \
+        FAILF("maintain_step split: evicted=%u + remaining=%u != %u", \
+              total_evicted, remaining, (unsigned)FILL); \
+    if (total_evicted < FILL / 2u) \
+        FAILF("maintain_step split: evicted=%u too few", total_evicted); \
 }
 
 /*===========================================================================

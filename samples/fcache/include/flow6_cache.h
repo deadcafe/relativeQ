@@ -118,6 +118,7 @@ unsigned fc_flow6_cache_maintain(struct fc_flow6_cache *fc,
                                   unsigned bucket_count,
                                   uint64_t now);
 unsigned fc_flow6_cache_maintain_step(struct fc_flow6_cache *fc,
+                                       unsigned bucket_count,
                                        uint64_t now);
 int fc_flow6_cache_remove_idx(struct fc_flow6_cache *fc, uint32_t entry_idx);
 void fc_flow6_cache_stats(const struct fc_flow6_cache *fc,
