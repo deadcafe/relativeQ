@@ -8,7 +8,19 @@
 #include <assert.h>
 #include <string.h>
 
-#include "flow4_cache2.h"
+#include "flow6_cache2.h"
+
+/* Pipeline geometry — shared with flow4 */
+#ifndef FLOW_CACHE_LOOKUP_STEP_KEYS
+#define FLOW_CACHE_LOOKUP_STEP_KEYS   16u
+#endif
+#ifndef FLOW_CACHE_LOOKUP_AHEAD_STEPS
+#define FLOW_CACHE_LOOKUP_AHEAD_STEPS 8u
+#endif
+#ifndef FLOW_CACHE_LOOKUP_AHEAD_KEYS
+#define FLOW_CACHE_LOOKUP_AHEAD_KEYS \
+    (FLOW_CACHE_LOOKUP_STEP_KEYS * FLOW_CACHE_LOOKUP_AHEAD_STEPS)
+#endif
 
 enum {
     FC2_RELIEF_STAGE_SLOTS = 4u
@@ -23,20 +35,20 @@ enum {
 #endif
 
 static inline union rix_hash_hash_u
-fc2_flow4_hash_fn(const struct fc2_flow4_key *key, uint32_t mask)
+fc2_flow6_hash_fn(const struct fc2_flow6_key *key, uint32_t mask)
 {
     return rix_hash_hash_bytes_fast(key, sizeof(*key), mask);
 }
 
 int
-fc2_flow4_cmp(const void *a, const void *b)
+fc2_flow6_cmp(const void *a, const void *b)
 {
-    return memcmp(a, b, sizeof(struct fc2_flow4_key));
+    return memcmp(a, b, sizeof(struct fc2_flow6_key));
 }
 
 #if defined(__AVX2__)
 /*
- * fc2 currently targets an AVX2-focused flow4 datapath.  Bind the staged
+ * fc2 currently targets an AVX2-focused flow6 datapath.  Bind the staged
  * fingerprint scans directly to the AVX2 helpers so lookup does not go
  * through runtime function-pointer dispatch.
  */
@@ -48,19 +60,19 @@ fc2_flow4_cmp(const void *a, const void *b)
     _rix_hash_find_u32x16_2_AVX2((arr), (val0), (val1), (mask0), (mask1))
 #endif
 /*
- * Generate static cuckoo-hash helpers for flow4, including:
- *   fc2_flow4_ht_find / insert_hashed / remove / hptr
+ * Generate static cuckoo-hash helpers for flow6, including:
+ *   fc2_flow6_ht_find / insert_hashed / remove / hptr
  */
-RIX_HASH_GENERATE_STATIC_SLOT_EX(fc2_flow4_ht, fc2_flow4_entry,
+RIX_HASH_GENERATE_STATIC_SLOT_EX(fc2_flow6_ht, fc2_flow6_entry,
                                  key, cur_hash, slot,
-                                 fc2_flow4_cmp, fc2_flow4_hash_fn)
+                                 fc2_flow6_cmp, fc2_flow6_hash_fn)
 #if defined(__AVX2__)
 #undef _RIX_HASH_FIND_U32X16_2
 #undef _RIX_HASH_FIND_U32X16
 #endif
 
 static inline void
-fc2_flow4_prefetch_insert_hash(const struct fc2_flow4_cache *fc,
+fc2_flow6_prefetch_insert_hash(const struct fc2_flow6_cache *fc,
                                union rix_hash_hash_u h)
 {
     unsigned bk0, bk1;
@@ -75,27 +87,27 @@ fc2_flow4_prefetch_insert_hash(const struct fc2_flow4_cache *fc,
 }
 
 static inline void
-fc2_flow4_result_set_hit(struct fc2_flow4_result *result,
+fc2_flow6_result_set_hit(struct fc2_flow6_result *result,
                          uint32_t entry_idx)
 {
     result->entry_idx = entry_idx;
 }
 
 static inline void
-fc2_flow4_result_set_miss(struct fc2_flow4_result *result)
+fc2_flow6_result_set_miss(struct fc2_flow6_result *result)
 {
     result->entry_idx = 0u;
 }
 
 static inline void
-fc2_flow4_result_set_filled(struct fc2_flow4_result *result,
+fc2_flow6_result_set_filled(struct fc2_flow6_result *result,
                             uint32_t entry_idx)
 {
     result->entry_idx = entry_idx;
 }
 
 static inline void
-fc2_flow4_update_eff_timeout(struct fc2_flow4_cache *fc)
+fc2_flow6_update_eff_timeout(struct fc2_flow6_cache *fc)
 {
     unsigned live = fc->ht_head.rhh_nb;
     uint64_t max_tsc = fc->timeout_tsc;
@@ -123,25 +135,25 @@ fc2_flow4_update_eff_timeout(struct fc2_flow4_cache *fc)
 }
 
 static inline unsigned
-fc2_flow4_threshold64(unsigned total_slots, unsigned parts64)
+fc2_flow6_threshold64(unsigned total_slots, unsigned parts64)
 {
     return (unsigned)(((uint64_t)total_slots * parts64) >> 6);
 }
 
 static void
-fc2_flow4_init_thresholds(struct fc2_flow4_cache *fc)
+fc2_flow6_init_thresholds(struct fc2_flow6_cache *fc)
 {
-    fc->timeout_lo_entries = fc2_flow4_threshold64(fc->total_slots, 38u);
-    fc->timeout_hi_entries = fc2_flow4_threshold64(fc->total_slots, 48u);
+    fc->timeout_lo_entries = fc2_flow6_threshold64(fc->total_slots, 38u);
+    fc->timeout_hi_entries = fc2_flow6_threshold64(fc->total_slots, 48u);
     fc->timeout_min_tsc = fc->timeout_tsc >> 3;
     if (fc->timeout_min_tsc == 0u)
         fc->timeout_min_tsc = 1u;
-    fc->relief_mid_entries = fc2_flow4_threshold64(fc->total_slots, 45u);
-    fc->relief_hi_entries = fc2_flow4_threshold64(fc->total_slots, 48u);
+    fc->relief_mid_entries = fc2_flow6_threshold64(fc->total_slots, 45u);
+    fc->relief_hi_entries = fc2_flow6_threshold64(fc->total_slots, 48u);
 }
 
 static inline unsigned
-fc2_flow4_relief_empty_slots(const struct fc2_flow4_cache *fc)
+fc2_flow6_relief_empty_slots(const struct fc2_flow6_cache *fc)
 {
     unsigned live = fc->ht_head.rhh_nb;
     unsigned empty_slots = fc->pressure_empty_slots;
@@ -162,10 +174,10 @@ fc2_flow4_relief_empty_slots(const struct fc2_flow4_cache *fc)
     return empty_slots;
 }
 
-static inline struct fc2_flow4_entry *
-fc2_flow4_alloc_entry(struct fc2_flow4_cache *fc)
+static inline struct fc2_flow6_entry *
+fc2_flow6_alloc_entry(struct fc2_flow6_cache *fc)
 {
-    struct fc2_flow4_entry *entry = RIX_SLIST_FIRST(&fc->free_head, fc->pool);
+    struct fc2_flow6_entry *entry = RIX_SLIST_FIRST(&fc->free_head, fc->pool);
 
     if (entry != NULL)
         RIX_SLIST_REMOVE_HEAD(&fc->free_head, fc->pool, free_link);
@@ -173,15 +185,15 @@ fc2_flow4_alloc_entry(struct fc2_flow4_cache *fc)
 }
 
 static inline void
-fc2_flow4_free_entry(struct fc2_flow4_cache *fc,
-                     struct fc2_flow4_entry *entry)
+fc2_flow6_free_entry(struct fc2_flow6_cache *fc,
+                     struct fc2_flow6_entry *entry)
 {
     entry->last_ts = 0u;
     RIX_SLIST_INSERT_HEAD(&fc->free_head, fc->pool, entry, free_link);
 }
 
 static unsigned
-fc2_flow4_scan_bucket_slots(struct fc2_flow4_cache *fc,
+fc2_flow6_scan_bucket_slots(struct fc2_flow6_cache *fc,
                             unsigned bk_idx,
                             uint64_t expire_before,
                             unsigned *expired_slots,
@@ -189,7 +201,7 @@ fc2_flow4_scan_bucket_slots(struct fc2_flow4_cache *fc,
 {
     struct rix_hash_bucket_s *bucket = fc->buckets + bk_idx;
     uint64_t oldest_ts = UINT64_MAX;
-    struct fc2_flow4_entry *entries[RIX_HASH_BUCKET_ENTRY_SZ];
+    struct fc2_flow6_entry *entries[RIX_HASH_BUCKET_ENTRY_SZ];
     unsigned slots[RIX_HASH_BUCKET_ENTRY_SZ];
     unsigned cur_base = 0u;
     unsigned cur_count;
@@ -207,11 +219,11 @@ fc2_flow4_scan_bucket_slots(struct fc2_flow4_cache *fc,
      */
     for (unsigned slot = 0; slot < RIX_HASH_BUCKET_ENTRY_SZ; slot++) {
         unsigned idx = bucket->idx[slot];
-        struct fc2_flow4_entry *entry;
+        struct fc2_flow6_entry *entry;
 
         if (idx == (unsigned)RIX_NIL)
             continue;
-        entry = RIX_HASH_FUNC(fc2_flow4_ht, hptr)(fc->pool, idx);
+        entry = RIX_HASH_FUNC(fc2_flow6_ht, hptr)(fc->pool, idx);
         slots[used] = slot;
         entries[used] = entry;
         used++;
@@ -237,7 +249,7 @@ fc2_flow4_scan_bucket_slots(struct fc2_flow4_cache *fc,
         for (unsigned s = 0; s < cur_count; s++) {
             unsigned idx = cur_base + s;
             unsigned slot = slots[idx];
-            struct fc2_flow4_entry *entry = entries[idx];
+            struct fc2_flow6_entry *entry = entries[idx];
 
             if (entry->last_ts >= expire_before)
                 continue;
@@ -256,59 +268,59 @@ fc2_flow4_scan_bucket_slots(struct fc2_flow4_cache *fc,
 }
 
 static int
-fc2_flow4_reclaim_bucket(struct fc2_flow4_cache *fc,
+fc2_flow6_reclaim_bucket(struct fc2_flow6_cache *fc,
                          unsigned bk_idx,
                          uint64_t expire_before)
 {
-    struct fc2_flow4_entry *victim;
+    struct fc2_flow6_entry *victim;
     unsigned removed_idx;
     unsigned expired_slots[RIX_HASH_BUCKET_ENTRY_SZ];
     unsigned expired_count;
     int victim_slot;
 
-    expired_count = fc2_flow4_scan_bucket_slots(fc, bk_idx, expire_before,
+    expired_count = fc2_flow6_scan_bucket_slots(fc, bk_idx, expire_before,
                                                 expired_slots, &victim_slot);
     if (expired_count == 0u)
         return 0;
-    removed_idx = RIX_HASH_FUNC(fc2_flow4_ht, remove_at)(&fc->ht_head,
+    removed_idx = RIX_HASH_FUNC(fc2_flow6_ht, remove_at)(&fc->ht_head,
                                                          fc->buckets,
                                                          bk_idx,
                                                          (unsigned)victim_slot);
     RIX_ASSERT(removed_idx != (unsigned)RIX_NIL);
-    victim = RIX_HASH_FUNC(fc2_flow4_ht, hptr)(fc->pool, removed_idx);
+    victim = RIX_HASH_FUNC(fc2_flow6_ht, hptr)(fc->pool, removed_idx);
     RIX_ASSERT(victim != NULL);
-    fc2_flow4_free_entry(fc, victim);
+    fc2_flow6_free_entry(fc, victim);
     return 1;
 }
 
 static unsigned
-fc2_flow4_reclaim_bucket_all(struct fc2_flow4_cache *fc,
+fc2_flow6_reclaim_bucket_all(struct fc2_flow6_cache *fc,
                              unsigned bk_idx,
                              uint64_t expire_before)
 {
     unsigned expired_slots[RIX_HASH_BUCKET_ENTRY_SZ];
     unsigned evicted;
 
-    evicted = fc2_flow4_scan_bucket_slots(fc, bk_idx, expire_before,
+    evicted = fc2_flow6_scan_bucket_slots(fc, bk_idx, expire_before,
                                           expired_slots, NULL);
     for (unsigned i = 0; i < evicted; i++) {
-        struct fc2_flow4_entry *victim;
+        struct fc2_flow6_entry *victim;
         unsigned removed_idx;
 
-        removed_idx = RIX_HASH_FUNC(fc2_flow4_ht, remove_at)(&fc->ht_head,
+        removed_idx = RIX_HASH_FUNC(fc2_flow6_ht, remove_at)(&fc->ht_head,
                                                              fc->buckets,
                                                              bk_idx,
                                                              expired_slots[i]);
         RIX_ASSERT(removed_idx != (unsigned)RIX_NIL);
-        victim = RIX_HASH_FUNC(fc2_flow4_ht, hptr)(fc->pool, removed_idx);
+        victim = RIX_HASH_FUNC(fc2_flow6_ht, hptr)(fc->pool, removed_idx);
         RIX_ASSERT(victim != NULL);
-        fc2_flow4_free_entry(fc, victim);
+        fc2_flow6_free_entry(fc, victim);
     }
     return evicted;
 }
 
 static unsigned
-fc2_flow4_maintain_grouped_v2(struct fc2_flow4_cache *fc,
+fc2_flow6_maintain_grouped_v2(struct fc2_flow6_cache *fc,
                               unsigned start_bk,
                               unsigned bucket_count,
                               uint64_t now_tsc)
@@ -332,7 +344,7 @@ fc2_flow4_maintain_grouped_v2(struct fc2_flow4_cache *fc,
         next_bk = (next_bk + 1u) & mask;
         _rix_hash_prefetch_bucket_idx(&fc->buckets[next_bk]);
         fc->stats.maint_bucket_checks++;
-        reclaimed = fc2_flow4_reclaim_bucket_all(fc, cur_bk, expire_before);
+        reclaimed = fc2_flow6_reclaim_bucket_all(fc, cur_bk, expire_before);
         fc->stats.maint_evictions += reclaimed;
         evicted += reclaimed;
     }
@@ -340,7 +352,7 @@ fc2_flow4_maintain_grouped_v2(struct fc2_flow4_cache *fc,
 }
 
 static void
-fc2_flow4_insert_relief_hashed(struct fc2_flow4_cache *fc,
+fc2_flow6_insert_relief_hashed(struct fc2_flow6_cache *fc,
                                union rix_hash_hash_u h,
                                uint64_t now_tsc)
 {
@@ -355,17 +367,17 @@ fc2_flow4_insert_relief_hashed(struct fc2_flow4_cache *fc,
         return;
 
     fc->stats.relief_calls++;
-    fc2_flow4_update_eff_timeout(fc);
+    fc2_flow6_update_eff_timeout(fc);
     expire_before = (now_tsc > fc->eff_timeout_tsc) ?
         (now_tsc - fc->eff_timeout_tsc) : 0u;
     _rix_hash_buckets(h, fc->ht_head.rhh_mask, &bk0, &bk1, &fp);
-    pressure_empty_slots = fc2_flow4_relief_empty_slots(fc);
+    pressure_empty_slots = fc2_flow6_relief_empty_slots(fc);
     fc->stats.relief_bucket_checks++;
     rix_hash_arch->find_u32x16_2(fc->buckets[bk0].hash, fp, 0u,
                                  &hits_fp, &hits_zero);
     (void)hits_fp;
     if ((unsigned)__builtin_popcount(hits_zero) <= pressure_empty_slots &&
-        fc2_flow4_reclaim_bucket(fc, bk0, expire_before)) {
+        fc2_flow6_reclaim_bucket(fc, bk0, expire_before)) {
         fc->stats.relief_evictions++;
         fc->stats.relief_bk0_evictions++;
         return;
@@ -375,7 +387,7 @@ fc2_flow4_insert_relief_hashed(struct fc2_flow4_cache *fc,
         rix_hash_arch->find_u32x16_2(fc->buckets[bk1].hash, fp, 0u,
                                      &hits_fp, &hits_zero);
         if ((unsigned)__builtin_popcount(hits_zero) <= pressure_empty_slots &&
-            fc2_flow4_reclaim_bucket(fc, bk1, expire_before)) {
+            fc2_flow6_reclaim_bucket(fc, bk1, expire_before)) {
             fc->stats.relief_evictions++;
             fc->stats.relief_bk1_evictions++;
         }
@@ -383,16 +395,16 @@ fc2_flow4_insert_relief_hashed(struct fc2_flow4_cache *fc,
 }
 
 void
-fc2_flow4_cache_init(struct fc2_flow4_cache *fc,
+fc2_flow6_cache_init(struct fc2_flow6_cache *fc,
                      struct rix_hash_bucket_s *buckets,
                      unsigned nb_bk,
-                     struct fc2_flow4_entry *pool,
+                     struct fc2_flow6_entry *pool,
                      unsigned max_entries,
-                     const struct fc2_flow4_config *cfg)
+                     const struct fc2_flow6_config *cfg)
 {
-    struct fc2_flow4_config defcfg = {
+    struct fc2_flow6_config defcfg = {
         .timeout_tsc = UINT64_C(1000000),
-        .pressure_empty_slots = FC2_FLOW4_DEFAULT_PRESSURE_EMPTY_SLOTS
+        .pressure_empty_slots = FC2_FLOW6_DEFAULT_PRESSURE_EMPTY_SLOTS
     };
 
     if (cfg == NULL)
@@ -409,21 +421,21 @@ fc2_flow4_cache_init(struct fc2_flow4_cache *fc,
     fc->timeout_tsc = cfg->timeout_tsc;
     fc->eff_timeout_tsc = cfg->timeout_tsc ? cfg->timeout_tsc : 1u;
     fc->pressure_empty_slots = cfg->pressure_empty_slots ?
-        cfg->pressure_empty_slots : FC2_FLOW4_DEFAULT_PRESSURE_EMPTY_SLOTS;
-    fc2_flow4_init_thresholds(fc);
+        cfg->pressure_empty_slots : FC2_FLOW6_DEFAULT_PRESSURE_EMPTY_SLOTS;
+    fc2_flow6_init_thresholds(fc);
 
     RIX_SLIST_INIT(&fc->free_head);
-    fc2_flow4_ht_init(&fc->ht_head, nb_bk);
+    fc2_flow6_ht_init(&fc->ht_head, nb_bk);
     for (unsigned i = 0; i < max_entries; i++)
         RIX_SLIST_INSERT_HEAD(&fc->free_head, fc->pool, &fc->pool[i], free_link);
 }
 
 void
-fc2_flow4_cache_flush(struct fc2_flow4_cache *fc)
+fc2_flow6_cache_flush(struct fc2_flow6_cache *fc)
 {
     memset(fc->buckets, 0, (size_t)fc->nb_bk * sizeof(*fc->buckets));
     RIX_SLIST_INIT(&fc->free_head);
-    fc2_flow4_ht_init(&fc->ht_head, fc->nb_bk);
+    fc2_flow6_ht_init(&fc->ht_head, fc->nb_bk);
     for (unsigned i = 0; i < fc->max_entries; i++) {
         fc->pool[i].last_ts = 0u;
         RIX_SLIST_INSERT_HEAD(&fc->free_head, fc->pool, &fc->pool[i], free_link);
@@ -431,17 +443,17 @@ fc2_flow4_cache_flush(struct fc2_flow4_cache *fc)
 }
 
 unsigned
-fc2_flow4_cache_nb_entries(const struct fc2_flow4_cache *fc)
+fc2_flow6_cache_nb_entries(const struct fc2_flow6_cache *fc)
 {
     return fc->ht_head.rhh_nb;
 }
 
 unsigned
-fc2_flow4_cache_lookup_batch(struct fc2_flow4_cache *fc,
-                             const struct fc2_flow4_key *keys,
+fc2_flow6_cache_lookup_batch(struct fc2_flow6_cache *fc,
+                             const struct fc2_flow6_key *keys,
                              unsigned nb_keys,
                              uint64_t now,
-                             struct fc2_flow4_result *results,
+                             struct fc2_flow6_result *results,
                              uint16_t *miss_idx)
 {
 #if FC2_LOOKUP_CTX_PIPELINES > 0u
@@ -461,33 +473,33 @@ fc2_flow4_cache_lookup_batch(struct fc2_flow4_cache *fc,
                 if (next_key >= nb_keys)
                     break;
                 key_idx[lane] = next_key++;
-                RIX_HASH_FUNC(fc2_flow4_ht, hash_key)(&ctx[lane], &fc->ht_head,
+                RIX_HASH_FUNC(fc2_flow6_ht, hash_key)(&ctx[lane], &fc->ht_head,
                                                       fc->buckets,
                                                       &keys[key_idx[lane]]);
                 stage[lane] = 1u;
                 break;
             case 1:
-                RIX_HASH_FUNC(fc2_flow4_ht, scan_bk)(&ctx[lane], &fc->ht_head,
+                RIX_HASH_FUNC(fc2_flow6_ht, scan_bk)(&ctx[lane], &fc->ht_head,
                                                      fc->buckets);
                 stage[lane] = 2u;
                 break;
             case 2:
-                RIX_HASH_FUNC(fc2_flow4_ht, prefetch_node)(&ctx[lane], fc->pool);
+                RIX_HASH_FUNC(fc2_flow6_ht, prefetch_node)(&ctx[lane], fc->pool);
                 stage[lane] = 3u;
                 break;
             default: {
                 unsigned idx = key_idx[lane];
-                struct fc2_flow4_entry *entry =
-                    RIX_HASH_FUNC(fc2_flow4_ht, cmp_key)(&ctx[lane], fc->pool);
+                struct fc2_flow6_entry *entry =
+                    RIX_HASH_FUNC(fc2_flow6_ht, cmp_key)(&ctx[lane], fc->pool);
 
                 if (entry == NULL) {
-                    fc2_flow4_result_set_miss(&results[idx]);
+                    fc2_flow6_result_set_miss(&results[idx]);
                     if (miss_idx != NULL)
                         miss_idx[miss_count] = (uint16_t)idx;
                     miss_count++;
                 } else {
                     entry->last_ts = now;
-                    fc2_flow4_result_set_hit(&results[idx],
+                    fc2_flow6_result_set_hit(&results[idx],
                                              RIX_IDX_FROM_PTR(fc->pool, entry));
                     hit_count++;
                 }
@@ -521,7 +533,7 @@ fc2_flow4_cache_lookup_batch(struct fc2_flow4_cache *fc,
             unsigned n = (i + step_keys <= nb_keys) ? step_keys : (nb_keys - i);
 
             for (unsigned j = 0; j < n; j++) {
-                RIX_HASH_FUNC(fc2_flow4_ht, hash_key)(&ctx[i + j], &fc->ht_head,
+                RIX_HASH_FUNC(fc2_flow6_ht, hash_key)(&ctx[i + j], &fc->ht_head,
                                                       fc->buckets, &keys[i + j]);
             }
         }
@@ -531,7 +543,7 @@ fc2_flow4_cache_lookup_batch(struct fc2_flow4_cache *fc,
             unsigned n = (base + step_keys <= nb_keys) ? step_keys : (nb_keys - base);
 
             for (unsigned j = 0; j < n; j++)
-                RIX_HASH_FUNC(fc2_flow4_ht, scan_bk)(&ctx[base + j],
+                RIX_HASH_FUNC(fc2_flow6_ht, scan_bk)(&ctx[base + j],
                                                      &fc->ht_head,
                                                      fc->buckets);
         }
@@ -541,7 +553,7 @@ fc2_flow4_cache_lookup_batch(struct fc2_flow4_cache *fc,
             unsigned n = (base + step_keys <= nb_keys) ? step_keys : (nb_keys - base);
 
             for (unsigned j = 0; j < n; j++)
-                RIX_HASH_FUNC(fc2_flow4_ht, prefetch_node)(&ctx[base + j],
+                RIX_HASH_FUNC(fc2_flow6_ht, prefetch_node)(&ctx[base + j],
                                                            fc->pool);
         }
 
@@ -551,7 +563,7 @@ fc2_flow4_cache_lookup_batch(struct fc2_flow4_cache *fc,
 
             for (unsigned j = 0; j < n; j++) {
                 unsigned idx = base + j;
-                struct fc2_flow4_entry *entry = NULL;
+                struct fc2_flow6_entry *entry = NULL;
 #if FC2_LOOKUP_SPLIT_BK1
                 uint32_t hits0 = ctx[idx].fp_hits[0];
 
@@ -565,9 +577,9 @@ fc2_flow4_cache_lookup_batch(struct fc2_flow4_cache *fc,
                         continue;
                     entry = RIX_PTR_FROM_IDX(fc->pool, nidx);
                     if (entry != NULL &&
-                        fc2_flow4_cmp((const void *)&entry->key, ctx[idx].key) == 0) {
+                        fc2_flow6_cmp((const void *)&entry->key, ctx[idx].key) == 0) {
                         entry->last_ts = now;
-                        fc2_flow4_result_set_hit(&results[idx],
+                        fc2_flow6_result_set_hit(&results[idx],
                                                  RIX_IDX_FROM_PTR(fc->pool, entry));
                         hit_count++;
                         break;
@@ -580,17 +592,17 @@ fc2_flow4_cache_lookup_batch(struct fc2_flow4_cache *fc,
                     continue;
                 }
 #else
-                entry = RIX_HASH_FUNC(fc2_flow4_ht, cmp_key)(&ctx[idx], fc->pool);
+                entry = RIX_HASH_FUNC(fc2_flow6_ht, cmp_key)(&ctx[idx], fc->pool);
 
                 if (entry == NULL) {
-                    fc2_flow4_result_set_miss(&results[idx]);
+                    fc2_flow6_result_set_miss(&results[idx]);
                     if (miss_idx != NULL)
                         miss_idx[miss_count] = (uint16_t)idx;
                     miss_count++;
                     continue;
                 }
                 entry->last_ts = now;
-                fc2_flow4_result_set_hit(&results[idx],
+                fc2_flow6_result_set_hit(&results[idx],
                                          RIX_IDX_FROM_PTR(fc->pool, entry));
                 hit_count++;
 #endif
@@ -626,7 +638,7 @@ fc2_flow4_cache_lookup_batch(struct fc2_flow4_cache *fc,
             for (unsigned j = 0; j < n; j++) {
                 unsigned idx = base + j;
                 uint32_t hits1;
-                struct fc2_flow4_entry *entry = NULL;
+                struct fc2_flow6_entry *entry = NULL;
 
                 if (!need_bk1[idx])
                     continue;
@@ -641,16 +653,16 @@ fc2_flow4_cache_lookup_batch(struct fc2_flow4_cache *fc,
                         continue;
                     entry = RIX_PTR_FROM_IDX(fc->pool, nidx);
                     if (entry != NULL &&
-                        fc2_flow4_cmp((const void *)&entry->key, ctx[idx].key) == 0) {
+                        fc2_flow6_cmp((const void *)&entry->key, ctx[idx].key) == 0) {
                         entry->last_ts = now;
-                        fc2_flow4_result_set_hit(&results[idx],
+                        fc2_flow6_result_set_hit(&results[idx],
                                                  RIX_IDX_FROM_PTR(fc->pool, entry));
                         hit_count++;
                         break;
                     }
                 }
                 if (entry == NULL) {
-                    fc2_flow4_result_set_miss(&results[idx]);
+                    fc2_flow6_result_set_miss(&results[idx]);
                     if (miss_idx != NULL)
                         miss_idx[miss_count] = (uint16_t)idx;
                     miss_count++;
@@ -668,12 +680,12 @@ fc2_flow4_cache_lookup_batch(struct fc2_flow4_cache *fc,
 }
 
 unsigned
-fc2_flow4_cache_fill_miss_batch(struct fc2_flow4_cache *fc,
-                                const struct fc2_flow4_key *keys,
+fc2_flow6_cache_fill_miss_batch(struct fc2_flow6_cache *fc,
+                                const struct fc2_flow6_key *keys,
                                 const uint16_t *miss_idx,
                                 unsigned miss_count,
                                 uint64_t now,
-                                struct fc2_flow4_result *results)
+                                struct fc2_flow6_result *results)
 {
     enum { FC2_FILL_PLAN_KEYS = 64 };
     unsigned inserted = 0u;
@@ -688,46 +700,46 @@ fc2_flow4_cache_fill_miss_batch(struct fc2_flow4_cache *fc,
         for (unsigned i = 0; i < n; i++) {
             unsigned key_idx = miss_idx[base + i];
 
-            hashes[i] = fc2_flow4_hash_fn(&keys[key_idx], fc->ht_head.rhh_mask);
-            fc2_flow4_prefetch_insert_hash(fc, hashes[i]);
+            hashes[i] = fc2_flow6_hash_fn(&keys[key_idx], fc->ht_head.rhh_mask);
+            fc2_flow6_prefetch_insert_hash(fc, hashes[i]);
         }
 
         for (unsigned i = 0; i < n; i++) {
             unsigned key_idx = miss_idx[base + i];
-            struct fc2_flow4_entry *entry;
-            struct fc2_flow4_entry *ret;
+            struct fc2_flow6_entry *entry;
+            struct fc2_flow6_entry *ret;
 
-            fc2_flow4_insert_relief_hashed(fc, hashes[i], now);
-            entry = fc2_flow4_alloc_entry(fc);
+            fc2_flow6_insert_relief_hashed(fc, hashes[i], now);
+            entry = fc2_flow6_alloc_entry(fc);
             if (entry == NULL) {
                 fc->stats.fill_full++;
-                fc2_flow4_result_set_miss(&results[key_idx]);
+                fc2_flow6_result_set_miss(&results[key_idx]);
                 continue;
             }
 
             entry->key = keys[key_idx];
             entry->last_ts = now;
-            ret = RIX_HASH_FUNC(fc2_flow4_ht, insert_hashed)(&fc->ht_head,
+            ret = RIX_HASH_FUNC(fc2_flow6_ht, insert_hashed)(&fc->ht_head,
                                                               fc->buckets,
                                                               fc->pool,
                                                               entry,
                                                               hashes[i]);
             if (ret == NULL) {
                 fc->stats.fills++;
-                fc2_flow4_result_set_filled(&results[key_idx],
+                fc2_flow6_result_set_filled(&results[key_idx],
                                             RIX_IDX_FROM_PTR(fc->pool, entry));
                 inserted++;
                 continue;
             }
-            fc2_flow4_free_entry(fc, entry);
+            fc2_flow6_free_entry(fc, entry);
             if (ret != entry) {
                 ret->last_ts = now;
-                fc2_flow4_result_set_filled(&results[key_idx],
+                fc2_flow6_result_set_filled(&results[key_idx],
                                             RIX_IDX_FROM_PTR(fc->pool, ret));
                 continue;
             }
             fc->stats.fill_full++;
-            fc2_flow4_result_set_miss(&results[key_idx]);
+            fc2_flow6_result_set_miss(&results[key_idx]);
             continue;
         }
     }
@@ -735,36 +747,36 @@ fc2_flow4_cache_fill_miss_batch(struct fc2_flow4_cache *fc,
 }
 
 unsigned
-fc2_flow4_cache_maintain(struct fc2_flow4_cache *fc,
+fc2_flow6_cache_maintain(struct fc2_flow6_cache *fc,
                          unsigned start_bk,
                          unsigned bucket_count,
                          uint64_t now)
 {
     fc->stats.maint_calls++;
-    fc2_flow4_update_eff_timeout(fc);
-    return fc2_flow4_maintain_grouped_v2(fc, start_bk, bucket_count, now);
+    fc2_flow6_update_eff_timeout(fc);
+    return fc2_flow6_maintain_grouped_v2(fc, start_bk, bucket_count, now);
 }
 
 int
-fc2_flow4_cache_remove_idx(struct fc2_flow4_cache *fc, uint32_t entry_idx)
+fc2_flow6_cache_remove_idx(struct fc2_flow6_cache *fc, uint32_t entry_idx)
 {
-    struct fc2_flow4_entry *entry;
+    struct fc2_flow6_entry *entry;
 
     if (entry_idx == 0u || entry_idx > fc->max_entries)
         return 0;
     entry = RIX_PTR_FROM_IDX(fc->pool, entry_idx);
     if (entry == NULL)
         return 0;
-    if (RIX_HASH_FUNC(fc2_flow4_ht, remove)(&fc->ht_head, fc->buckets,
+    if (RIX_HASH_FUNC(fc2_flow6_ht, remove)(&fc->ht_head, fc->buckets,
                                             fc->pool, entry) == NULL)
         return 0;
-    fc2_flow4_free_entry(fc, entry);
+    fc2_flow6_free_entry(fc, entry);
     return 1;
 }
 
 void
-fc2_flow4_cache_stats(const struct fc2_flow4_cache *fc,
-                      struct fc2_flow4_stats *out)
+fc2_flow6_cache_stats(const struct fc2_flow6_cache *fc,
+                      struct fc2_flow6_stats *out)
 {
     *out = fc->stats;
 }

@@ -24,5 +24,15 @@
 #endif
 
 #include "flow4_cache2.h"
+#include "flow6_cache2.h"
 
 #endif /* _FLOW_CACHE2_H_ */
+
+/*
+ * Local Variables:
+ * c-file-style: "bsd"
+ * c-basic-offset: 4
+ * indent-tabs-mode: nil
+ * tab-width: 4
+ * End:
+ */

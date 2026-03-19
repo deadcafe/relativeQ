@@ -5,32 +5,23 @@
  * All rights reserved.
  */
 
-#ifndef _FLOW4_CACHE2_H_
-#define _FLOW4_CACHE2_H_
+#ifndef _FLOW6_CACHE2_H_
+#define _FLOW6_CACHE2_H_
 
 #include <stdint.h>
 #include <rix/rix_hash.h>
 #include <rix/rix_queue.h>
 
+#ifndef FC2_CACHE_LINE_SIZE
 #define FC2_CACHE_LINE_SIZE 64u
-#ifndef FC2_FLOW4_DEFAULT_PRESSURE_EMPTY_SLOTS
-#define FC2_FLOW4_DEFAULT_PRESSURE_EMPTY_SLOTS 1u
+#endif
+#ifndef FC2_FLOW6_DEFAULT_PRESSURE_EMPTY_SLOTS
+#define FC2_FLOW6_DEFAULT_PRESSURE_EMPTY_SLOTS 1u
 #endif
 
-#ifndef FLOW_CACHE_LOOKUP_STEP_KEYS
-#define FLOW_CACHE_LOOKUP_STEP_KEYS   16u
-#endif
-#ifndef FLOW_CACHE_LOOKUP_AHEAD_STEPS
-#define FLOW_CACHE_LOOKUP_AHEAD_STEPS 8u
-#endif
-#ifndef FLOW_CACHE_LOOKUP_AHEAD_KEYS
-#define FLOW_CACHE_LOOKUP_AHEAD_KEYS \
-    (FLOW_CACHE_LOOKUP_STEP_KEYS * FLOW_CACHE_LOOKUP_AHEAD_STEPS)
-#endif
-
-struct fc2_flow4_key {
-    uint32_t src_ip;
-    uint32_t dst_ip;
+struct fc2_flow6_key {
+    uint8_t  src_ip[16];
+    uint8_t  dst_ip[16];
     uint16_t src_port;
     uint16_t dst_port;
     uint8_t  proto;
@@ -38,33 +29,31 @@ struct fc2_flow4_key {
     uint32_t vrfid;
 } __attribute__((packed));
 
-struct fc2_flow4_result {
+struct fc2_flow6_result {
     uint32_t entry_idx; /* 1-origin; 0 = miss / full */
 };
 
-struct fc2_flow4_entry {
-    /* Single-cache-line flow4 entry used by the current fc2 prototype. */
-    struct fc2_flow4_key   key;          /* 20B */
+struct fc2_flow6_entry {
+    struct fc2_flow6_key   key;          /* 44B */
     uint32_t               cur_hash;     /* current-bucket hash */
     uint64_t               last_ts;      /* 0 = free / invalid */
-    RIX_SLIST_ENTRY(struct fc2_flow4_entry) free_link;
+    RIX_SLIST_ENTRY(struct fc2_flow6_entry) free_link;
     uint16_t               slot;         /* slot in current bucket */
     uint16_t               reserved1;
-    uint8_t                reserved0[24];
 } __attribute__((aligned(FC2_CACHE_LINE_SIZE)));
 
-RIX_STATIC_ASSERT(sizeof(struct fc2_flow4_entry) == FC2_CACHE_LINE_SIZE,
-                  "fc2_flow4_entry must be 64 bytes");
+RIX_STATIC_ASSERT(sizeof(struct fc2_flow6_entry) == FC2_CACHE_LINE_SIZE,
+                  "fc2_flow6_entry must be 64 bytes");
 
-RIX_HASH_HEAD(fc2_flow4_ht);
-RIX_SLIST_HEAD(fc2_flow4_free_head, fc2_flow4_entry);
+RIX_HASH_HEAD(fc2_flow6_ht);
+RIX_SLIST_HEAD(fc2_flow6_free_head, fc2_flow6_entry);
 
-struct fc2_flow4_config {
+struct fc2_flow6_config {
     uint64_t timeout_tsc;
     unsigned pressure_empty_slots;
 };
 
-struct fc2_flow4_stats {
+struct fc2_flow6_stats {
     uint64_t lookups;
     uint64_t hits;
     uint64_t misses;
@@ -80,10 +69,10 @@ struct fc2_flow4_stats {
     uint64_t maint_evictions;
 };
 
-struct fc2_flow4_cache {
-    struct fc2_flow4_ht        ht_head;
+struct fc2_flow6_cache {
+    struct fc2_flow6_ht        ht_head;
     struct rix_hash_bucket_s  *buckets;
-    struct fc2_flow4_entry    *pool;
+    struct fc2_flow6_entry    *pool;
     unsigned                   nb_bk;
     unsigned                   max_entries;
     unsigned                   total_slots;
@@ -95,40 +84,40 @@ struct fc2_flow4_cache {
     uint64_t                   timeout_min_tsc;
     unsigned                   relief_mid_entries;
     unsigned                   relief_hi_entries;
-    struct fc2_flow4_stats     stats;
-    struct fc2_flow4_free_head free_head;
+    struct fc2_flow6_stats     stats;
+    struct fc2_flow6_free_head free_head;
 };
 
-int fc2_flow4_cmp(const void *a, const void *b);
-void fc2_flow4_cache_init(struct fc2_flow4_cache *fc,
+int fc2_flow6_cmp(const void *a, const void *b);
+void fc2_flow6_cache_init(struct fc2_flow6_cache *fc,
                           struct rix_hash_bucket_s *buckets,
                           unsigned nb_bk,
-                          struct fc2_flow4_entry *pool,
+                          struct fc2_flow6_entry *pool,
                           unsigned max_entries,
-                          const struct fc2_flow4_config *cfg);
-void fc2_flow4_cache_flush(struct fc2_flow4_cache *fc);
-unsigned fc2_flow4_cache_nb_entries(const struct fc2_flow4_cache *fc);
-unsigned fc2_flow4_cache_lookup_batch(struct fc2_flow4_cache *fc,
-                                      const struct fc2_flow4_key *keys,
+                          const struct fc2_flow6_config *cfg);
+void fc2_flow6_cache_flush(struct fc2_flow6_cache *fc);
+unsigned fc2_flow6_cache_nb_entries(const struct fc2_flow6_cache *fc);
+unsigned fc2_flow6_cache_lookup_batch(struct fc2_flow6_cache *fc,
+                                      const struct fc2_flow6_key *keys,
                                       unsigned nb_keys,
                                       uint64_t now,
-                                      struct fc2_flow4_result *results,
+                                      struct fc2_flow6_result *results,
                                       uint16_t *miss_idx);
-unsigned fc2_flow4_cache_fill_miss_batch(struct fc2_flow4_cache *fc,
-                                         const struct fc2_flow4_key *keys,
+unsigned fc2_flow6_cache_fill_miss_batch(struct fc2_flow6_cache *fc,
+                                         const struct fc2_flow6_key *keys,
                                          const uint16_t *miss_idx,
                                          unsigned miss_count,
                                          uint64_t now,
-                                         struct fc2_flow4_result *results);
-unsigned fc2_flow4_cache_maintain(struct fc2_flow4_cache *fc,
+                                         struct fc2_flow6_result *results);
+unsigned fc2_flow6_cache_maintain(struct fc2_flow6_cache *fc,
                                   unsigned start_bk,
                                   unsigned bucket_count,
                                   uint64_t now);
-int fc2_flow4_cache_remove_idx(struct fc2_flow4_cache *fc, uint32_t entry_idx);
-void fc2_flow4_cache_stats(const struct fc2_flow4_cache *fc,
-                           struct fc2_flow4_stats *out);
+int fc2_flow6_cache_remove_idx(struct fc2_flow6_cache *fc, uint32_t entry_idx);
+void fc2_flow6_cache_stats(const struct fc2_flow6_cache *fc,
+                           struct fc2_flow6_stats *out);
 
-#endif /* _FLOW4_CACHE2_H_ */
+#endif /* _FLOW6_CACHE2_H_ */
 
 /*
  * Local Variables:
