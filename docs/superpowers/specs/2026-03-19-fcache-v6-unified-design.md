@@ -1,19 +1,19 @@
-# fcache2 IPv6 / Unified Extension Design
+# fcache IPv6 / Unified Extension Design
 
 **Date:** 2026-03-19
 **Status:** Approved
-**Scope:** samples/fcache2 — add flow6 (IPv6) and flowu (Unified IPv4/IPv6) variants
+**Scope:** samples/fcache — add flow6 (IPv6) and flowu (Unified IPv4/IPv6) variants
 
 ## Context
 
-fcache2 (v2) currently supports only IPv4 (flow4). v1 (fcache) has all three
+fcache (v2) currently supports only IPv4 (flow4). v1 (fcache) has all three
 variants (flow4/flow6/flowu) but v2 is the active line of development and will
 eventually replace v1. librix itself is still evolving; samples drive its
 completion and must be production-quality.
 
 ## Goals
 
-1. Add flow6 and flowu to fcache2 with the same API pattern as flow4.
+1. Add flow6 and flowu to fcache with the same API pattern as flow4.
 2. All entries remain 64 bytes (single cache line) — no user payload; AP uses
    the entry index to reference its own data structures.
 3. Tests and benchmarks for all three variants.
@@ -22,7 +22,7 @@ completion and must be production-quality.
 
 ## Entry Structures (all 64B = 1CL)
 
-### fc2_flow4_entry (existing)
+### fc_flow4_entry (existing)
 
 | Offset | Size | Field       |
 |--------|------|-------------|
@@ -34,7 +34,7 @@ completion and must be production-quality.
 | 38-39  |  2B  | reserved1   |
 | 40-63  | 24B  | reserved0   |
 
-### fc2_flow6_entry (new)
+### fc_flow6_entry (new)
 
 | Offset | Size | Field       |
 |--------|------|-------------|
@@ -45,12 +45,12 @@ completion and must be production-quality.
 | 60-61  |  2B  | slot        |
 | 62-63  |  2B  | reserved1   |
 
-fc2_flow6_key: src_ip[16] + dst_ip[16] + src_port(2) + dst_port(2) +
+fc_flow6_key: src_ip[16] + dst_ip[16] + src_port(2) + dst_port(2) +
 proto(1) + pad[3] + vrfid(4) = 44 bytes.
 
-### fc2_flowu_entry (new)
+### fc_flowu_entry (new)
 
-Same layout as flow6. fc2_flowu_key: family(1) + proto(1) + src_port(2) +
+Same layout as flow6. fc_flowu_key: family(1) + proto(1) + src_port(2) +
 dst_port(2) + pad(2) + vrfid(4) + addr union(32) = 44 bytes. IPv4 entries
 zero-pad the unused 24 bytes in addr.v4._pad. Family field prevents v4/v6
 collisions.
@@ -72,21 +72,21 @@ addrs first, then ports/proto/vrfid.
 - **Pipeline geometry:** Initial implementation uses the same
   FLOW_CACHE_LOOKUP_STEP_KEYS / AHEAD_STEPS for all variants. Tuning for
   44B keys deferred.
-- **cmp function:** Each variant defines its own `fc2_{flow6,flowu}_cmp()`
+- **cmp function:** Each variant defines its own `fc_{flow6,flowu}_cmp()`
   non-static function, passed to `RIX_HASH_GENERATE_STATIC_SLOT_EX`.
 
 ## File Structure
 
-### Headers (samples/fcache2/include/)
+### Headers (samples/fcache/include/)
 
 | File              | Description                                   |
 |-------------------|-----------------------------------------------|
-| flow_cache2.h     | Umbrella — includes all three variant headers |
-| flow4_cache2.h    | Existing — unchanged                          |
-| flow6_cache2.h    | New — flow6 key/entry/cache/API declarations  |
-| flowu_cache2.h    | New — flowu key/entry/cache/API + key helpers |
+| flow_cache.h     | Umbrella — includes all three variant headers |
+| flow4_cache.h    | Existing — unchanged                          |
+| flow6_cache.h    | New — flow6 key/entry/cache/API declarations  |
+| flowu_cache.h    | New — flowu key/entry/cache/API + key helpers |
 
-### Implementation (samples/fcache2/src/)
+### Implementation (samples/fcache/src/)
 
 | File     | Description                                          |
 |----------|------------------------------------------------------|
@@ -96,11 +96,11 @@ addrs first, then ports/proto/vrfid.
 
 ### Build
 
-Add flow6.o and flowu.o to fcache2/Makefile. Both compiled with -mavx2.
+Add flow6.o and flowu.o to fcache/Makefile. Both compiled with -mavx2.
 
 ## API (uniform across all variants)
 
-Each variant uses prefix `fc2_{flow4,flow6,flowu}_`:
+Each variant uses prefix `fc_{flow4,flow6,flowu}_`:
 
 ```
 cache_init(cache, buckets, nb_bk, pool, max_entries, config)
@@ -139,8 +139,8 @@ free_link, slot) have the same semantics across all variants.
 ### flowu key helpers
 
 ```c
-static inline struct fc2_flowu_key fc2_flowu_key_v4(src_ip, dst_ip, ...);
-static inline struct fc2_flowu_key fc2_flowu_key_v6(src_ip, dst_ip, ...);
+static inline struct fc_flowu_key fc_flowu_key_v4(src_ip, dst_ip, ...);
+static inline struct fc_flowu_key fc_flowu_key_v6(src_ip, dst_ip, ...);
 ```
 
 ## Test Plan
@@ -173,14 +173,14 @@ Cross-variant comparison: flow4 vs flow6 to quantify 44B key cost.
 
 ### Phase 1: flow6
 
-1. flow6_cache2.h
+1. flow6_cache.h
 2. flow6.c (copy from flow4.c, swap key/entry/hash/cmp)
 3. Makefile update
 4. Tests + benchmarks
 
 ### Phase 2: flowu
 
-1. flowu_cache2.h (+ key helpers)
+1. flowu_cache.h (+ key helpers)
 2. flowu.c (based on flow6.c + family)
 3. Makefile update
 4. Tests + benchmarks (including v4/v6 coexistence)
@@ -193,7 +193,7 @@ Cross-variant comparison: flow4 vs flow6 to quantify 44B key cost.
 
 ### Phase 4: Refactoring (future, out of scope)
 
-Extract common logic to fc2_body.h template header once all three variants
+Extract common logic to fc_body.h template header once all three variants
 are stable.
 
 ## Decisions

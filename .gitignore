@@ -62,3 +62,19 @@ GPATH
 GRTAGS
 GTAGS
 HTML
+
+# Test / benchmark binaries (no extension)
+tests/slist/slist_test
+tests/list/list_test
+tests/stailq/stailq_test
+tests/tailq/tailq_test
+tests/circleq/circleq_test
+tests/rbtree/rbtree_test
+tests/hashtbl/hash_test
+tests/hashtbl/hash_bench
+tests/hashtbl32/hash32_test
+tests/hashtbl32/hash32_bench
+tests/hashtbl64/hash64_test
+tests/hashtbl64/hash64_bench
+tests/fcache/fc_test
+tests/fcache/fc_bench
