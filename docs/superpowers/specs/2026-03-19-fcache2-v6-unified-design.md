@@ -55,6 +55,26 @@ dst_port(2) + pad(2) + vrfid(4) + addr union(32) = 44 bytes. IPv4 entries
 zero-pad the unused 24 bytes in addr.v4._pad. Family field prevents v4/v6
 collisions.
 
+**Note:** flowu reorders fields vs flow6 so that family+proto are at offset 0
+(matches v1 flowu_key ordering). flow6_key follows the flow4 ordering:
+addrs first, then ports/proto/vrfid.
+
+### Design notes
+
+- **Maximum density:** flow6/flowu entries have zero reserved bytes beyond
+  reserved1(2B). No room for future per-entry metadata. If the key needs to
+  grow, a 2CL entry or different key encoding would be required. This is a
+  conscious tradeoff for cache density.
+- **`__attribute__((packed))`:** All key structs use packed (same as v1) to
+  ensure no compiler-inserted padding changes memcmp semantics.
+- **Thread safety:** Each cache instance is single-threaded; caller is
+  responsible for partitioning across threads.
+- **Pipeline geometry:** Initial implementation uses the same
+  FLOW_CACHE_LOOKUP_STEP_KEYS / AHEAD_STEPS for all variants. Tuning for
+  44B keys deferred.
+- **cmp function:** Each variant defines its own `fc2_{flow6,flowu}_cmp()`
+  non-static function, passed to `RIX_HASH_GENERATE_STATIC_SLOT_EX`.
+
 ## File Structure
 
 ### Headers (samples/fcache2/include/)
