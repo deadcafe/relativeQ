@@ -35,8 +35,8 @@ SRCDIR       = src
 INCDIR       = include
 LIBDIR       = lib
 
-PUB_HDRS     = $(INCDIR)/flow_cache2.h $(INCDIR)/flow4_cache2.h $(INCDIR)/flow6_cache2.h
-OBJS         = $(LIBDIR)/flow4.o $(LIBDIR)/flow6.o
+PUB_HDRS     = $(INCDIR)/flow_cache2.h $(INCDIR)/flow4_cache2.h $(INCDIR)/flow6_cache2.h $(INCDIR)/flowu_cache2.h
+OBJS         = $(LIBDIR)/flow4.o $(LIBDIR)/flow6.o $(LIBDIR)/flowu.o
 LIB_STATIC   = $(LIBDIR)/libfcache2.a
 LIB_SHARED   = $(LIBDIR)/libfcache2.so
 LIB_SONAME   = libfcache2.so.1
@@ -59,6 +59,9 @@ $(LIBDIR)/flow4.o: $(SRCDIR)/flow4.c | $(LIBDIR)
 	$(CC) $(CFLAGS_BASE) -mavx2 -msse4.2 -c -o $@ $<
 
 $(LIBDIR)/flow6.o: $(SRCDIR)/flow6.c | $(LIBDIR)
+	$(CC) $(CFLAGS_BASE) -mavx2 -msse4.2 -c -o $@ $<
+
+$(LIBDIR)/flowu.o: $(SRCDIR)/flowu.c | $(LIBDIR)
 	$(CC) $(CFLAGS_BASE) -mavx2 -msse4.2 -c -o $@ $<
 
 $(LIB_STATIC): $(OBJS)

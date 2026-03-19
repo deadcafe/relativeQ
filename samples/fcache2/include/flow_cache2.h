@@ -25,6 +25,7 @@
 
 #include "flow4_cache2.h"
 #include "flow6_cache2.h"
+#include "flowu_cache2.h"
 
 #endif /* _FLOW_CACHE2_H_ */
 
