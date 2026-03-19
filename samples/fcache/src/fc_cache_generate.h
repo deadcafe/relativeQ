@@ -97,8 +97,7 @@ _FCG_INT(p, prefetch_insert_hash)(const _FCG_CACHE_T(p) *fc,            \
     _rix_hash_buckets(h, mask, &bk0, &bk1, &fp);                          \
     (void)fp;                                                              \
     _rix_hash_prefetch_bucket(fc->buckets + bk0);                          \
-    if (bk1 != bk0)                                                        \
-        _rix_hash_prefetch_bucket(fc->buckets + bk1);                      \
+    _rix_hash_prefetch_bucket(fc->buckets + bk1);                          \
 }                                                                          \
                                                                            \
 static inline void                                                         \
