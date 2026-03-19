@@ -346,7 +346,7 @@ FC_INT(reclaim_bucket_all)(FC_CACHE_T *fc,
  * Maintenance
  *===========================================================================*/
 static unsigned
-FC_INT(maintain_grouped_v2)(FC_CACHE_T *fc,
+FC_INT(maintain_grouped)(FC_CACHE_T *fc,
                              unsigned start_bk,
                              unsigned bucket_count,
                              uint64_t now_tsc)
@@ -633,7 +633,7 @@ FC_API(maintain)(FC_CACHE_T *fc,
 {
     fc->stats.maint_calls++;
     FC_INT(update_eff_timeout)(fc);
-    return FC_INT(maintain_grouped_v2)(fc, start_bk, bucket_count, now);
+    return FC_INT(maintain_grouped)(fc, start_bk, bucket_count, now);
 }
 
 int

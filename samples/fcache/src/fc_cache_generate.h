@@ -316,7 +316,7 @@ _FCG_INT(p, reclaim_bucket_all)(_FCG_CACHE_T(p) *fc,                    \
 }                                                                          \
                                                                            \
 static unsigned                                                            \
-_FCG_INT(p, maintain_grouped_v2)(_FCG_CACHE_T(p) *fc,                   \
+_FCG_INT(p, maintain_grouped)(_FCG_CACHE_T(p) *fc,                   \
                                   unsigned start_bk,                       \
                                   unsigned bucket_count,                   \
                                   uint64_t now_tsc)                        \
@@ -579,7 +579,7 @@ _FCG_API(p, maintain)(_FCG_CACHE_T(p) *fc,                              \
 {                                                                          \
     fc->stats.maint_calls++;                                               \
     _FCG_INT(p, update_eff_timeout)(fc);                                  \
-    return _FCG_INT(p, maintain_grouped_v2)(fc, start_bk,                 \
+    return _FCG_INT(p, maintain_grouped)(fc, start_bk,                 \
                                             bucket_count, now);            \
 }                                                                          \
                                                                            \
