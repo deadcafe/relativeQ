@@ -356,11 +356,12 @@ static unsigned                                                            \
 _FCG_INT(p, maintain_step_grouped)(_FCG_CACHE_T(p) *fc,                   \
                                     uint64_t now_tsc)                       \
 {                                                                          \
+    enum { PF_AHEAD = 4u };                                                \
     unsigned evicted = 0u;                                                 \
     unsigned bucket_count;                                                 \
     unsigned skip_threshold;                                               \
     unsigned mask;                                                         \
-    unsigned cur_bk, next_bk;                                              \
+    unsigned pf_bk;                                                        \
     uint64_t expire_before;                                                \
     RIX_ASSERT(fc->nb_bk != 0u);                                           \
     mask = fc->ht_head.rhh_mask;                                           \
@@ -368,27 +369,36 @@ _FCG_INT(p, maintain_step_grouped)(_FCG_CACHE_T(p) *fc,                   \
     skip_threshold = fc->pressure_empty_slots;                             \
     expire_before = (now_tsc > fc->eff_timeout_tsc) ?                      \
         (now_tsc - fc->eff_timeout_tsc) : 0u;                             \
-    next_bk = fc->maint_cursor & mask;                                     \
-    _rix_hash_prefetch_bucket_idx(&fc->buckets[next_bk]);                  \
+    pf_bk = fc->maint_cursor & mask;                                       \
+    /* Prefetch PF_AHEAD buckets (idx[] cache line only). */               \
+    for (unsigned j = 0; j < PF_AHEAD && j < bucket_count; j++) {          \
+        _rix_hash_prefetch_bucket_idx(&fc->buckets[pf_bk]);               \
+        pf_bk = (pf_bk + 1u) & mask;                                      \
+    }                                                                      \
+    unsigned cur_bk = fc->maint_cursor & mask;                             \
     for (unsigned i = 0; i < bucket_count; i++) {                          \
         unsigned used_slots;                                               \
         unsigned reclaimed;                                                \
-        cur_bk = next_bk;                                                  \
-        next_bk = (next_bk + 1u) & mask;                                  \
-        _rix_hash_prefetch_bucket_idx(&fc->buckets[next_bk]);              \
+        /* Prefetch PF_AHEAD buckets ahead of current. */                  \
+        if (RIX_LIKELY(i + PF_AHEAD < bucket_count)) {                    \
+            _rix_hash_prefetch_bucket_idx(&fc->buckets[pf_bk]);           \
+            pf_bk = (pf_bk + 1u) & mask;                                  \
+        }                                                                  \
         fc->stats.maint_bucket_checks++;                                   \
         used_slots = _FCG_INT(p, bucket_used_slots)(                       \
             &fc->buckets[cur_bk]);                                         \
         if (used_slots <= skip_threshold) {                                \
             fc->stats.maint_step_skipped_bks++;                            \
+            cur_bk = (cur_bk + 1u) & mask;                                \
             continue;                                                      \
         }                                                                  \
         reclaimed = _FCG_INT(p, reclaim_bucket_all)(fc, cur_bk,            \
                                                      expire_before);       \
         fc->stats.maint_evictions += reclaimed;                            \
         evicted += reclaimed;                                              \
+        cur_bk = (cur_bk + 1u) & mask;                                    \
     }                                                                      \
-    fc->maint_cursor = next_bk;                                            \
+    fc->maint_cursor = cur_bk;                                             \
     return evicted;                                                        \
 }                                                                          \
                                                                            \
