@@ -19,8 +19,8 @@
  *   fc_flow4_cache_fill_miss_batch(
  *       &fc, keys, miss_idx, misses, now_tsc, results);
  *
- *   // 4. Periodic maintenance  (expire stale entries)
- *   fc_flow4_cache_maintain(&fc, cursor, 64, now_tsc);
+ *   // 4. Periodic maintenance  (expire stale entries, cursor-managed)
+ *   fc_flow4_cache_maintain_step(&fc, now_tsc);
  * @endcode
  *
  * Entries are 64-byte cache-line aligned.  The cache uses TSC-based
@@ -158,6 +158,8 @@ struct fc_flow4_stats {
     uint64_t maint_calls;           /**< Times maintain was called. */
     uint64_t maint_bucket_checks;   /**< Buckets scanned by maintain. */
     uint64_t maint_evictions;       /**< Entries evicted by maintain. */
+    uint64_t maint_step_calls;      /**< Times maintain_step was called. */
+    uint64_t maint_step_skipped_bks;/**< Buckets skipped by SIMD empty check. */
 };
 
 /**
@@ -184,6 +186,7 @@ struct fc_flow4_cache {
     unsigned                   timeout_hi_entries;
     unsigned                   relief_mid_entries;
     unsigned                   relief_hi_entries;
+    unsigned                   maint_cursor;
     struct fc_flow4_free_head free_head;
     struct fc_flow4_stats     stats;
 };
@@ -299,6 +302,21 @@ unsigned fc_flow4_cache_maintain(struct fc_flow4_cache *fc,
                                   unsigned start_bk,
                                   unsigned bucket_count,
                                   uint64_t now);
+
+/**
+ * @brief Cursor-managed periodic maintenance (recommended).
+ *
+ * Scans 1/8 of the bucket table per call, advancing an internal cursor.
+ * A full sweep completes in 8 consecutive calls.  Buckets with few
+ * occupied slots are skipped via a SIMD check to avoid DRAM entry
+ * accesses.
+ *
+ * @param[in,out] fc   Cache instance.
+ * @param[in]     now  Current TSC timestamp.
+ * @return Number of entries evicted.
+ */
+unsigned fc_flow4_cache_maintain_step(struct fc_flow4_cache *fc,
+                                       uint64_t now);
 
 /**
  * @brief Remove a single entry by pool index.

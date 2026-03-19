@@ -203,7 +203,7 @@ FC_INT(alloc_entry)(FC_CACHE_T *fc)
 {
     FC_ENTRY_T *entry = RIX_SLIST_FIRST(&fc->free_head, fc->pool);
 
-    if (entry != NULL)
+    if (RIX_LIKELY(entry != NULL))
         RIX_SLIST_REMOVE_HEAD(&fc->free_head, fc->pool, free_link);
     return entry;
 }
@@ -255,7 +255,7 @@ FC_INT(scan_bucket_slots)(FC_CACHE_T *fc,
         used++;
     }
     *oldest_slotp = -1;
-    if (used == 0u)
+    if (RIX_UNLIKELY(used == 0u))
         return 0u;
 
     cur_count = (used < FC_RELIEF_STAGE_SLOTS) ? used : FC_RELIEF_STAGE_SLOTS;
@@ -306,7 +306,7 @@ FC_INT(reclaim_bucket)(FC_CACHE_T *fc,
 
     expired_count = FC_INT(scan_bucket_slots)(fc, bk_idx, expire_before,
                                                expired_slots, &victim_slot);
-    if (expired_count == 0u)
+    if (RIX_UNLIKELY(expired_count == 0u))
         return 0;
     removed_idx = FC_HT(remove_at)(&fc->ht_head, fc->buckets,
                                     bk_idx, (unsigned)victim_slot);
@@ -373,6 +373,53 @@ FC_INT(maintain_grouped)(FC_CACHE_T *fc,
         fc->stats.maint_evictions += reclaimed;
         evicted += reclaimed;
     }
+    return evicted;
+}
+
+static inline unsigned
+FC_INT(bucket_used_slots)(const struct rix_hash_bucket_s *bucket)
+{
+    uint32_t zero_mask = rix_hash_arch->find_u32x16(bucket->idx, 0u);
+    return 16u - (unsigned)__builtin_popcount(zero_mask);
+}
+
+static unsigned
+FC_INT(maintain_step_grouped)(FC_CACHE_T *fc,
+                               uint64_t now_tsc)
+{
+    unsigned evicted = 0u;
+    unsigned bucket_count;
+    unsigned skip_threshold;
+    unsigned mask;
+    unsigned cur_bk, next_bk;
+    uint64_t expire_before;
+
+    RIX_ASSERT(fc->nb_bk != 0u);
+    mask = fc->ht_head.rhh_mask;
+    bucket_count = (fc->nb_bk + 7u) >> 3;
+    skip_threshold = fc->pressure_empty_slots;
+    expire_before = (now_tsc > fc->eff_timeout_tsc) ?
+        (now_tsc - fc->eff_timeout_tsc) : 0u;
+    next_bk = fc->maint_cursor & mask;
+    _rix_hash_prefetch_bucket_idx(&fc->buckets[next_bk]);
+    for (unsigned i = 0; i < bucket_count; i++) {
+        unsigned used_slots;
+        unsigned reclaimed;
+
+        cur_bk = next_bk;
+        next_bk = (next_bk + 1u) & mask;
+        _rix_hash_prefetch_bucket_idx(&fc->buckets[next_bk]);
+        fc->stats.maint_bucket_checks++;
+        used_slots = FC_INT(bucket_used_slots)(&fc->buckets[cur_bk]);
+        if (used_slots <= skip_threshold) {
+            fc->stats.maint_step_skipped_bks++;
+            continue;
+        }
+        reclaimed = FC_INT(reclaim_bucket_all)(fc, cur_bk, expire_before);
+        fc->stats.maint_evictions += reclaimed;
+        evicted += reclaimed;
+    }
+    fc->maint_cursor = next_bk;
     return evicted;
 }
 
@@ -533,7 +580,7 @@ FC_API(lookup_batch)(FC_CACHE_T *fc,
 
                 entry = FC_HT(cmp_key)(&ctx[idx], fc->pool);
 
-                if (entry == NULL) {
+                if (RIX_UNLIKELY(entry == NULL)) {
                     FC_INT(result_set_miss)(&results[idx]);
                     if (miss_idx != NULL)
                         miss_idx[miss_count] = (uint16_t)idx;
@@ -589,7 +636,7 @@ FC_API(fill_miss_batch)(FC_CACHE_T *fc,
 
             FC_INT(insert_relief_hashed)(fc, hashes[i], now);
             entry = FC_INT(alloc_entry)(fc);
-            if (entry == NULL) {
+            if (RIX_UNLIKELY(entry == NULL)) {
                 fc->stats.fill_full++;
                 FC_INT(result_set_miss)(&results[key_idx]);
                 continue;
@@ -599,7 +646,7 @@ FC_API(fill_miss_batch)(FC_CACHE_T *fc,
             entry->last_ts = now;
             ret = FC_HT(insert_hashed)(&fc->ht_head, fc->buckets,
                                         fc->pool, entry, hashes[i]);
-            if (ret == NULL) {
+            if (RIX_LIKELY(ret == NULL)) {
                 fc->stats.fills++;
                 FC_INT(result_set_filled)(&results[key_idx],
                                            RIX_IDX_FROM_PTR(fc->pool, entry));
@@ -607,7 +654,7 @@ FC_API(fill_miss_batch)(FC_CACHE_T *fc,
                 continue;
             }
             FC_INT(free_entry)(fc, entry);
-            if (ret != entry) {
+            if (RIX_UNLIKELY(ret != entry)) {
                 ret->last_ts = now;
                 FC_INT(result_set_filled)(&results[key_idx],
                                            RIX_IDX_FROM_PTR(fc->pool, ret));
@@ -635,12 +682,22 @@ FC_API(maintain)(FC_CACHE_T *fc,
     return FC_INT(maintain_grouped)(fc, start_bk, bucket_count, now);
 }
 
+unsigned
+FC_API(maintain_step)(FC_CACHE_T *fc,
+                       uint64_t now)
+{
+    fc->stats.maint_step_calls++;
+    fc->stats.maint_calls++;
+    FC_INT(update_eff_timeout)(fc);
+    return FC_INT(maintain_step_grouped)(fc, now);
+}
+
 int
 FC_API(remove_idx)(FC_CACHE_T *fc, uint32_t entry_idx)
 {
     FC_ENTRY_T *entry;
 
-    if (entry_idx == 0u || entry_idx > fc->max_entries)
+    if (RIX_UNLIKELY(entry_idx == 0u || entry_idx > fc->max_entries))
         return 0;
     entry = RIX_PTR_FROM_IDX(fc->pool, entry_idx);
     if (entry == NULL)

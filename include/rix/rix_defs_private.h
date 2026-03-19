@@ -35,6 +35,16 @@ extern "C" {
 #    define RIX_FORCE_INLINE inline
 #  endif
 
+#  ifndef RIX_LIKELY
+#    if defined(__GNUC__) || defined(__clang__)
+#      define RIX_LIKELY(x)   __builtin_expect(!!(x), 1)
+#      define RIX_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#    else
+#      define RIX_LIKELY(x)   (x)
+#      define RIX_UNLIKELY(x) (x)
+#    endif
+#  endif
+
 #  ifndef RIX_UNUSED
 #    if defined(__GNUC__) || defined(__clang__)
 #      define RIX_UNUSED __attribute__((unused))

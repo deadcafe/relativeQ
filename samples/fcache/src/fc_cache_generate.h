@@ -188,7 +188,7 @@ _FCG_INT(p, alloc_entry)(_FCG_CACHE_T(p) *fc)                           \
 {                                                                          \
     _FCG_ENTRY_T(p) *entry =                                             \
         RIX_SLIST_FIRST(&fc->free_head, fc->pool);                        \
-    if (entry != NULL)                                                     \
+    if (RIX_LIKELY(entry != NULL))                                         \
         RIX_SLIST_REMOVE_HEAD(&fc->free_head, fc->pool, free_link);       \
     return entry;                                                          \
 }                                                                          \
@@ -232,7 +232,7 @@ _FCG_INT(p, scan_bucket_slots)(_FCG_CACHE_T(p) *fc,                     \
         used++;                                                            \
     }                                                                      \
     *oldest_slotp = -1;                                                    \
-    if (used == 0u)                                                        \
+    if (RIX_UNLIKELY(used == 0u))                                          \
         return 0u;                                                         \
     cur_count = (used < _FC_RELIEF_STAGE_SLOTS) ?                         \
         used : _FC_RELIEF_STAGE_SLOTS;                                    \
@@ -280,7 +280,7 @@ _FCG_INT(p, reclaim_bucket)(_FCG_CACHE_T(p) *fc,                        \
     int victim_slot;                                                       \
     expired_count = _FCG_INT(p, scan_bucket_slots)(fc, bk_idx,            \
         expire_before, expired_slots, &victim_slot);                       \
-    if (expired_count == 0u)                                               \
+    if (RIX_UNLIKELY(expired_count == 0u))                                 \
         return 0;                                                          \
     removed_idx = _FCG_HT(p, remove_at)(&fc->ht_head, fc->buckets,       \
                                          bk_idx, (unsigned)victim_slot);   \
@@ -342,6 +342,53 @@ _FCG_INT(p, maintain_grouped)(_FCG_CACHE_T(p) *fc,                   \
         fc->stats.maint_evictions += reclaimed;                            \
         evicted += reclaimed;                                              \
     }                                                                      \
+    return evicted;                                                        \
+}                                                                          \
+                                                                           \
+static inline unsigned                                                     \
+_FCG_INT(p, bucket_used_slots)(const struct rix_hash_bucket_s *bucket)     \
+{                                                                          \
+    uint32_t zero_mask = rix_hash_arch->find_u32x16(bucket->idx, 0u);      \
+    return 16u - (unsigned)__builtin_popcount(zero_mask);                   \
+}                                                                          \
+                                                                           \
+static unsigned                                                            \
+_FCG_INT(p, maintain_step_grouped)(_FCG_CACHE_T(p) *fc,                   \
+                                    uint64_t now_tsc)                       \
+{                                                                          \
+    unsigned evicted = 0u;                                                 \
+    unsigned bucket_count;                                                 \
+    unsigned skip_threshold;                                               \
+    unsigned mask;                                                         \
+    unsigned cur_bk, next_bk;                                              \
+    uint64_t expire_before;                                                \
+    RIX_ASSERT(fc->nb_bk != 0u);                                           \
+    mask = fc->ht_head.rhh_mask;                                           \
+    bucket_count = (fc->nb_bk + 7u) >> 3;                                  \
+    skip_threshold = fc->pressure_empty_slots;                             \
+    expire_before = (now_tsc > fc->eff_timeout_tsc) ?                      \
+        (now_tsc - fc->eff_timeout_tsc) : 0u;                             \
+    next_bk = fc->maint_cursor & mask;                                     \
+    _rix_hash_prefetch_bucket_idx(&fc->buckets[next_bk]);                  \
+    for (unsigned i = 0; i < bucket_count; i++) {                          \
+        unsigned used_slots;                                               \
+        unsigned reclaimed;                                                \
+        cur_bk = next_bk;                                                  \
+        next_bk = (next_bk + 1u) & mask;                                  \
+        _rix_hash_prefetch_bucket_idx(&fc->buckets[next_bk]);              \
+        fc->stats.maint_bucket_checks++;                                   \
+        used_slots = _FCG_INT(p, bucket_used_slots)(                       \
+            &fc->buckets[cur_bk]);                                         \
+        if (used_slots <= skip_threshold) {                                \
+            fc->stats.maint_step_skipped_bks++;                            \
+            continue;                                                      \
+        }                                                                  \
+        reclaimed = _FCG_INT(p, reclaim_bucket_all)(fc, cur_bk,            \
+                                                     expire_before);       \
+        fc->stats.maint_evictions += reclaimed;                            \
+        evicted += reclaimed;                                              \
+    }                                                                      \
+    fc->maint_cursor = next_bk;                                            \
     return evicted;                                                        \
 }                                                                          \
                                                                            \
@@ -493,7 +540,7 @@ _FCG_API(p, lookup_batch)(_FCG_CACHE_T(p) *fc,                          \
                 unsigned idx = base + j;                                   \
                 _FCG_ENTRY_T(p) *entry;                                   \
                 entry = _FCG_HT(p, cmp_key)(&ctx[idx], fc->pool);        \
-                if (entry == NULL) {                                        \
+                if (RIX_UNLIKELY(entry == NULL)) {                         \
                     _FCG_INT(p, result_set_miss)(&results[idx]);          \
                     if (miss_idx != NULL)                                   \
                         miss_idx[miss_count] = (uint16_t)idx;              \
@@ -539,7 +586,7 @@ _FCG_API(p, fill_miss_batch)(_FCG_CACHE_T(p) *fc,                       \
             _FCG_ENTRY_T(p) *ret;                                         \
             _FCG_INT(p, insert_relief_hashed)(fc, hashes[i], now);        \
             entry = _FCG_INT(p, alloc_entry)(fc);                         \
-            if (entry == NULL) {                                            \
+            if (RIX_UNLIKELY(entry == NULL)) {                             \
                 fc->stats.fill_full++;                                     \
                 _FCG_INT(p, result_set_miss)(&results[key_idx]);          \
                 continue;                                                  \
@@ -548,7 +595,7 @@ _FCG_API(p, fill_miss_batch)(_FCG_CACHE_T(p) *fc,                       \
             entry->last_ts = now;                                          \
             ret = _FCG_HT(p, insert_hashed)(&fc->ht_head,                \
                 fc->buckets, fc->pool, entry, hashes[i]);                  \
-            if (ret == NULL) {                                              \
+            if (RIX_LIKELY(ret == NULL)) {                                  \
                 fc->stats.fills++;                                         \
                 _FCG_INT(p, result_set_filled)(&results[key_idx],         \
                     RIX_IDX_FROM_PTR(fc->pool, entry));                    \
@@ -556,7 +603,7 @@ _FCG_API(p, fill_miss_batch)(_FCG_CACHE_T(p) *fc,                       \
                 continue;                                                  \
             }                                                              \
             _FCG_INT(p, free_entry)(fc, entry);                           \
-            if (ret != entry) {                                             \
+            if (RIX_UNLIKELY(ret != entry)) {                               \
                 ret->last_ts = now;                                        \
                 _FCG_INT(p, result_set_filled)(&results[key_idx],         \
                     RIX_IDX_FROM_PTR(fc->pool, ret));                      \
@@ -582,11 +629,21 @@ _FCG_API(p, maintain)(_FCG_CACHE_T(p) *fc,                              \
                                             bucket_count, now);            \
 }                                                                          \
                                                                            \
+unsigned                                                                   \
+_FCG_API(p, maintain_step)(_FCG_CACHE_T(p) *fc,                          \
+                            uint64_t now)                                   \
+{                                                                          \
+    fc->stats.maint_step_calls++;                                          \
+    fc->stats.maint_calls++;                                               \
+    _FCG_INT(p, update_eff_timeout)(fc);                                  \
+    return _FCG_INT(p, maintain_step_grouped)(fc, now);                   \
+}                                                                          \
+                                                                           \
 int                                                                        \
 _FCG_API(p, remove_idx)(_FCG_CACHE_T(p) *fc, uint32_t entry_idx)        \
 {                                                                          \
     _FCG_ENTRY_T(p) *entry;                                               \
-    if (entry_idx == 0u || entry_idx > fc->max_entries)                    \
+    if (RIX_UNLIKELY(entry_idx == 0u || entry_idx > fc->max_entries))      \
         return 0;                                                          \
     entry = RIX_PTR_FROM_IDX(fc->pool, entry_idx);                         \
     if (entry == NULL)                                                     \

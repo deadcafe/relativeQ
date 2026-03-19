@@ -420,6 +420,76 @@ test_##PREFIX##_timeout_boundary(void) \
 \
     if (fc_##PREFIX##_cache_maintain(&fc, 0u, NB_BK, 1101u) == 0u) \
         FAIL("should evict after timeout boundary"); \
+} \
+\
+static void \
+test_##PREFIX##_maintain_step(void) \
+{ \
+    enum { NB_BK = 16u, MAX_ENTRIES = 64u, FILL = 48u }; \
+    struct rix_hash_bucket_s buckets[NB_BK]; \
+    ENTRY_T pool[MAX_ENTRIES]; \
+    CACHE_T fc; \
+    CONFIG_T cfg = { .timeout_tsc = 100u, .pressure_empty_slots = 1u }; \
+    KEY_T keys[FILL]; \
+    RESULT_T results[FILL]; \
+    uint16_t miss_idx[FILL]; \
+    STATS_T stats; \
+    unsigned miss_count; \
+    unsigned total_evicted = 0u; \
+\
+    printf("[T] fc " #PREFIX " maintain_step\n"); \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
+    for (unsigned i = 0; i < FILL; i++) \
+        keys[i] = MAKE_KEY(8000u + i); \
+\
+    /* Fill entries at ts=100 */ \
+    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
+                                                   results, miss_idx); \
+    if (miss_count != FILL) \
+        FAIL("maintain_step initial miss count mismatch"); \
+    if (fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, miss_count, \
+                                             100u, results) != FILL) \
+        FAIL("maintain_step initial fill failed"); \
+\
+    /* Before timeout: 8 step calls should evict nothing */ \
+    for (unsigned s = 0; s < 8u; s++) { \
+        unsigned ev = fc_##PREFIX##_cache_maintain_step(&fc, 199u); \
+        if (ev != 0u) \
+            FAILF("maintain_step pre-timeout step %u evicted %u", s, ev); \
+    } \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != FILL) \
+        FAIL("maintain_step pre-timeout should not evict"); \
+\
+    /* After timeout: one full sweep (8 steps) evicts most entries. */ \
+    /* Sparse buckets (used_slots <= pressure_empty_slots) are */ \
+    /* intentionally skipped — maintain_step is for busy caches; */ \
+    /* use maintain() for full cleanup. */ \
+    for (unsigned s = 0; s < 8u; s++) \
+        total_evicted += fc_##PREFIX##_cache_maintain_step(&fc, 1000u); \
+    if (total_evicted == 0u) \
+        FAIL("maintain_step should evict expired entries"); \
+    unsigned remaining = fc_##PREFIX##_cache_nb_entries(&fc); \
+    if (total_evicted + remaining != FILL) \
+        FAILF("maintain_step: evicted=%u + remaining=%u != %u", \
+              total_evicted, remaining, (unsigned)FILL); \
+    /* Should evict the majority */ \
+    if (total_evicted < FILL / 2u) \
+        FAILF("maintain_step: evicted=%u too few (fill=%u)", \
+              total_evicted, (unsigned)FILL); \
+\
+    /* Stats: 8 pre-timeout + 8 post-timeout = 16 step calls */ \
+    fc_##PREFIX##_cache_stats(&fc, &stats); \
+    if (stats.maint_step_calls != 16u) \
+        FAILF("maint_step_calls=%" PRIu64 " expected 16", \
+              stats.maint_step_calls); \
+    /* SIMD skip should have kicked in for sparse buckets */ \
+    if (remaining > 0u && stats.maint_step_skipped_bks == 0u) \
+        FAIL("maintain_step should skip sparse buckets"); \
+\
+    /* Full cleanup via maintain() for remaining entries */ \
+    fc_##PREFIX##_cache_maintain(&fc, 0u, NB_BK, 1000u); \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != 0u) \
+        FAIL("maintain() should clean up remaining entries"); \
 }
 
 /*===========================================================================
@@ -511,7 +581,8 @@ test_flowu_v4_v6_coexist(void)
     test_##PREFIX##_duplicate_miss_batch(); \
     test_##PREFIX##_flush_and_invalid_remove(); \
     test_##PREFIX##_maintenance(); \
-    test_##PREFIX##_timeout_boundary()
+    test_##PREFIX##_timeout_boundary(); \
+    test_##PREFIX##_maintain_step()
 
 int
 main(void)

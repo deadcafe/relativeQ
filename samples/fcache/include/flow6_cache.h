@@ -67,6 +67,8 @@ struct fc_flow6_stats {
     uint64_t maint_calls;
     uint64_t maint_bucket_checks;
     uint64_t maint_evictions;
+    uint64_t maint_step_calls;
+    uint64_t maint_step_skipped_bks;
 };
 
 struct fc_flow6_cache {
@@ -86,6 +88,7 @@ struct fc_flow6_cache {
     unsigned                   timeout_hi_entries;
     unsigned                   relief_mid_entries;
     unsigned                   relief_hi_entries;
+    unsigned                   maint_cursor;
     struct fc_flow6_free_head free_head;
     struct fc_flow6_stats     stats;
 };
@@ -114,6 +117,8 @@ unsigned fc_flow6_cache_maintain(struct fc_flow6_cache *fc,
                                   unsigned start_bk,
                                   unsigned bucket_count,
                                   uint64_t now);
+unsigned fc_flow6_cache_maintain_step(struct fc_flow6_cache *fc,
+                                       uint64_t now);
 int fc_flow6_cache_remove_idx(struct fc_flow6_cache *fc, uint32_t entry_idx);
 void fc_flow6_cache_stats(const struct fc_flow6_cache *fc,
                            struct fc_flow6_stats *out);

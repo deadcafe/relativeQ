@@ -123,6 +123,8 @@ struct fc_flowu_stats {
     uint64_t maint_calls;
     uint64_t maint_bucket_checks;
     uint64_t maint_evictions;
+    uint64_t maint_step_calls;
+    uint64_t maint_step_skipped_bks;
 };
 
 struct fc_flowu_cache {
@@ -142,6 +144,7 @@ struct fc_flowu_cache {
     unsigned                   timeout_hi_entries;
     unsigned                   relief_mid_entries;
     unsigned                   relief_hi_entries;
+    unsigned                   maint_cursor;
     struct fc_flowu_free_head free_head;
     struct fc_flowu_stats     stats;
 };
@@ -170,6 +173,8 @@ unsigned fc_flowu_cache_maintain(struct fc_flowu_cache *fc,
                                   unsigned start_bk,
                                   unsigned bucket_count,
                                   uint64_t now);
+unsigned fc_flowu_cache_maintain_step(struct fc_flowu_cache *fc,
+                                       uint64_t now);
 int fc_flowu_cache_remove_idx(struct fc_flowu_cache *fc, uint32_t entry_idx);
 void fc_flowu_cache_stats(const struct fc_flowu_cache *fc,
                            struct fc_flowu_stats *out);
