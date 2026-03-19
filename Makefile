@@ -1,6 +1,8 @@
+include mk/cc.mk
+export CC
+
 TESTDIRS := tests/slist tests/list tests/stailq tests/tailq tests/circleq \
-            tests/rbtree tests/hashtbl tests/hashtbl32 tests/hashtbl64 \
-            tests/fcache
+            tests/rbtree tests/hashtbl tests/hashtbl32 tests/hashtbl64
 SUBDIRS  := $(TESTDIRS) samples
 
 HTAGS_PORT   ?= 8000
