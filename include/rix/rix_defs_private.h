@@ -19,6 +19,12 @@
 #  include <assert.h>
 #  include <limits.h>
 #  include <stddef.h>
+#  include <stdint.h>
+
+typedef uint8_t  u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
 
 #  ifdef __cplusplus
 extern "C" {
@@ -107,6 +113,16 @@ extern "C" {
         RIX_ASSERT((__rix_ptr_tmp == NULL) == RIX_IDX_IS_NIL(__rix_idx_tmp)); \
         RIX_ASSERT(RIX_PTR_FROM_IDX((base), __rix_idx_tmp) == (ptr));         \
         RIX_ASSERT(RIX_IDX_FROM_PTR((base), (ptr)) == __rix_idx_tmp);         \
+    } while (0)
+
+/* Optimizer hint: promise that ptr is non-NULL.
+ * Use where a bitmap guarantees the slot is occupied but GCC cannot
+ * prove it after deep inlining (e.g. insert duplicate-scan loop).
+ * -O2: compiles to nothing.  -O0: dead branch (never taken). */
+#  define RIX_ASSUME_NONNULL(ptr)                                              \
+    do {                                                                      \
+        if (__builtin_expect((ptr) == NULL, 0))                               \
+            __builtin_unreachable();                                          \
     } while (0)
 
 /* --------------------------------------------------------------------------
