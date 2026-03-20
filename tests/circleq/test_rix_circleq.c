@@ -345,6 +345,6 @@ int main(int argc, char **argv){
     test_fuzz(seed, N, ops);
 
     free(g_nodes);
-    printf("ALL RIX_CIRCLEQ TESTS PASSED ✅\n");
+    printf("ALL RIX_CIRCLEQ TESTS PASSED \n");
     return 0;
 }

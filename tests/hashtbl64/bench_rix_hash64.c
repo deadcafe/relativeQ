@@ -4,14 +4,14 @@
  *
  *  Usage: ./hash64_bench [table_n [nb_bk [repeat]]]
  *    table_n : number of table entries  (default: 10,000,000)
- *    nb_bk   : number of buckets       (default: auto – ~80% fill of table_n)
+ *    nb_bk   : number of buckets       (default: auto - ~80% fill of table_n)
  *    repeat  : number of iterations    (default: 2000)
  *
  *  Fill rate notes:
  *    rix_hash64 has the same 16 slots/bucket as rix_hash32.
  *    Maximum fill rate is equivalent to rix_hash32 (~95%).
  *    However, bucket size is 192 B (3CL) vs rix_hash32's 128 B (2CL),
- *    so bk_mem for the same entry count requires 1.5×.
+ *    so bk_mem for the same entry count requires 1.5x.
  *    bench_fill_rate() measures the actual values.
  *
  *    Empirical estimates (FOLLOW_DEPTH=8):
@@ -79,11 +79,11 @@ now_sec(void)
 
 /*
  * Key prefetch distance (in batches):
- * ~64 cy per hash_key batch (CRC32C×8 + prefetch×8×3)
- * DRAM latency ~300 cy → 300/64 ≈ 5 batches needed → use 8/11 with margin
+ * ~64 cy per hash_key batch (CRC32Cx8 + prefetchx8x3)
+ * DRAM latency ~300 cy -> 300/64 ~ 5 batches needed -> use 8/11 with margin
  */
-#define KPD8  8   /* x8 Nahead: 8 batches × 8 keys = 64 keys ahead */
-#define KPD6 11   /* x6 Nahead: 11 batches × 6 keys = 66 keys ahead */
+#define KPD8  8   /* x8 pipeline: 8 batches x 8 keys = 64 keys ahead */
+#define KPD6 11   /* x6 pipeline: 11 batches x 6 keys = 66 keys ahead */
 
 static struct rix_hash64_find_ctx_s g_ctx[BENCH_N];
 static mynode_t                    *g_res[BENCH_N];
@@ -111,7 +111,7 @@ xorshift64(void)
  * where kickout failures begin. Also shows comparison values with
  * rix_hash32 (16 slots, 2CL).
  *
- * fill rate = number of successful inserts / (nb_bk × RIX_HASH64_BUCKET_ENTRY_SZ)
+ * fill rate = number of successful inserts / (nb_bk x RIX_HASH64_BUCKET_ENTRY_SZ)
  * ================================================================== */
 static void
 bench_fill_rate(void)
@@ -345,7 +345,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
             RIX_HASH64_PREFETCH_NODE_N(myht64, &g_ctx[b*8], 8, nodes);
         for (int b = 0; b < BENCH_N8 / 8; b++)
             RIX_HASH64_CMP_KEY_N(myht64, &g_ctx[b*8], 8, nodes, &g_res[b*8]);
-        /* x8 Nahead warmup */
+        /* x8 pipeline warmup */
         for (int b = 0; b < KPD8 && b < BENCH_N8/8; b++)
             RIX_HASH64_HASH_KEY_N(myht64, &g_ctx[b*8], 8, &head, bk, ik + b*8);
         for (int b = 0; b < BENCH_N8/8; b++) {
@@ -358,7 +358,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
             RIX_HASH64_PREFETCH_NODE_N(myht64, &g_ctx[b*8], 8, nodes);
         for (int b = 0; b < BENCH_N8/8; b++)
             RIX_HASH64_CMP_KEY_N(myht64, &g_ctx[b*8], 8, nodes, &g_res[b*8]);
-        /* x6 Nahead warmup */
+        /* x6 pipeline warmup */
         for (int b = 0; b < KPD6 && b < BENCH_N6/6; b++)
             RIX_HASH64_HASH_KEY_N(myht64, &g_ctx[b*6], 6, &head, bk, ik + b*6);
         for (int b = 0; b < BENCH_N6/6; b++) {
@@ -381,7 +381,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         uint64_t min_cy;
         uint64_t sum_cy;
         int      ops;
-    } result[10] = {
+    } result[12] = {
         { "find (single)      ", UINT64_MAX, 0, BENCH_N  },
         { "x1 (bk only)       ", UINT64_MAX, 0, BENCH_N  },
         { "x1 (bk+node)       ", UINT64_MAX, 0, BENCH_N  },
@@ -390,8 +390,10 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         { "x4 (bk+node)       ", UINT64_MAX, 0, BENCH_N  },
         { "x6 (bk+node)       ", UINT64_MAX, 0, BENCH_N6 },
         { "x8 (bk+node)       ", UINT64_MAX, 0, BENCH_N8 },
-        { "x6 (bk) Nahead     ", UINT64_MAX, 0, BENCH_N6 },
-        { "x8 (bk) Nahead     ", UINT64_MAX, 0, BENCH_N8 },
+        { "x6 (bk) pipeline     ", UINT64_MAX, 0, BENCH_N6 },
+        { "x8 (bk) pipeline     ", UINT64_MAX, 0, BENCH_N8 },
+        { "remove             ", UINT64_MAX, 0, BENCH_N  },
+        { "insert             ", UINT64_MAX, 0, BENCH_N  },
     };
 
     /* [0] single find */
@@ -405,7 +407,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         result[0].sum_cy += cy;
     }
 
-    /* [1] x1: hash_key → scan_bk → cmp_key (no prefetch) */
+    /* [1] x1: hash_key -> scan_bk -> cmp_key (no prefetch) */
     for (unsigned r = 0; r < repeat; r++) {
         uint64_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
@@ -420,7 +422,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         result[1].sum_cy += cy;
     }
 
-    /* [2] x1: hash_key → scan_bk → prefetch_node → cmp_key */
+    /* [2] x1: hash_key -> scan_bk -> prefetch_node -> cmp_key */
     for (unsigned r = 0; r < repeat; r++) {
         uint64_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
@@ -520,7 +522,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         result[7].sum_cy += cy;
     }
 
-    /* [8] x6 Nahead: hash_key KPD6 batches ahead → scan_bk → prefetch_node → cmp_key */
+    /* [8] x6 pipeline: hash_key KPD6 batches ahead -> scan_bk -> prefetch_node -> cmp_key */
     for (unsigned r = 0; r < repeat; r++) {
         uint64_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
@@ -541,7 +543,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         result[8].sum_cy += cy;
     }
 
-    /* [9] x8 Nahead: hash_key KPD8 batches ahead → scan_bk → prefetch_node → cmp_key */
+    /* [9] x8 pipeline: hash_key KPD8 batches ahead -> scan_bk -> prefetch_node -> cmp_key */
     for (unsigned r = 0; r < repeat; r++) {
         uint64_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
@@ -562,16 +564,54 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         result[9].sum_cy += cy;
     }
 
+    /* ---- [10] remove: remove BENCH_N entries, re-insert to restore --- */
+    /*
+     * nodes[0..BENCH_N-1] are already inserted.
+     * Each repeat: remove BENCH_N (measured) -> re-insert BENCH_N (restore).
+     */
+    for (unsigned r = 0; r < repeat; r++) {
+        uint64_t t0 = tsc_start();
+        for (int i = 0; i < BENCH_N; i++)
+            RIX_HASH64_REMOVE(myht64, &head, bk, nodes, &nodes[i]);
+        uint64_t cy = tsc_end() - t0;
+        if (cy < result[10].min_cy) result[10].min_cy = cy;
+        result[10].sum_cy += cy;
+        for (int i = 0; i < BENCH_N; i++)
+            RIX_HASH64_INSERT(myht64, &head, bk, nodes, &nodes[i]);
+    }
+
+    /* ---- [11] insert: pre-remove BENCH_N, then measure insert ------- */
+    /*
+     * Remove BENCH_N entries to ensure free slots before measuring.
+     * Each repeat: insert BENCH_N (measured) -> remove BENCH_N (reset).
+     */
+    for (int i = 0; i < BENCH_N; i++)
+        RIX_HASH64_REMOVE(myht64, &head, bk, nodes, &nodes[i]);
+
+    for (unsigned r = 0; r < repeat; r++) {
+        uint64_t t0 = tsc_start();
+        for (int i = 0; i < BENCH_N; i++)
+            RIX_HASH64_INSERT(myht64, &head, bk, nodes, &nodes[i]);
+        uint64_t cy = tsc_end() - t0;
+        if (cy < result[11].min_cy) result[11].min_cy = cy;
+        result[11].sum_cy += cy;
+        for (int i = 0; i < BENCH_N; i++)
+            RIX_HASH64_REMOVE(myht64, &head, bk, nodes, &nodes[i]);
+    }
+
     /* ---- Output results ---------------------------------------------- */
     {
-        double mshr_min = 11520.0; /* 256 × 3CL / 20 MSHR × 300cy */
+        double mshr_min = 11520.0; /* 256 x 3CL / 20 MSHR x 300cy */
         printf("\n");
         printf("  %-20s  %10s  %10s  %10s  %10s\n",
                "pattern", "min/256", "avg/256", "min/op", "avg/op");
         printf("  %-20s  %10s  %10s  %10s  %10s\n",
                "--------------------", "----------", "----------",
                "----------", "----------");
-        for (int p = 0; p < 10; p++) {
+        for (int p = 0; p < 12; p++) {
+            if (p == 10)
+                printf("  %-20s  %10s  %10s  %10s  %10s\n",
+                       "-- insert/remove --", "", "", "", "");
             uint64_t avg = result[p].sum_cy / (uint64_t)repeat;
             int ops = result[p].ops;
             printf("  %-20s  %10llu  %10llu  %10.2f  %10.2f\n",
@@ -586,7 +626,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         printf("    %.0f cycles/256 = %.1f cycles/op\n",
                mshr_min, mshr_min / BENCH_N);
         printf("  note: avg=cache-cold (DRAM bound), min=best-case.\n");
-        printf("        bk_mem=%.1f MB vs typical L3 cache → avg is cold.\n\n",
+        printf("        bk_mem=%.1f MB vs typical L3 cache -> avg is cold.\n\n",
                bk_mem / 1e6);
     }
 

@@ -1,5 +1,5 @@
 /* test_rix_tailq.c
- *  RIX_ TAILQ test（1-origin, NIL=0, array[index-1]）
+ *  RIX_ TAILQ test(1-origin, NIL=0, array[index-1])
  *
  *  - INIT/INITIALIZER/RESET
  *  - EMPTY/FIRST/LAST/NEXT/PREV
@@ -423,6 +423,6 @@ int main(int argc, char **argv){
   test_fuzz(seed, N, ops);
 
   free(g_nodes);
-  printf("ALL TESTS PASSED ✅\n");
+  printf("ALL TESTS PASSED \n");
   return 0;
 }

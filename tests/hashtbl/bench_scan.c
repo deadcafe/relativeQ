@@ -31,7 +31,7 @@ static inline uint64_t tsc_end(void)
 /* ------------------------------------------------------------------ */
 /* Bench parameters                                                     */
 /* ------------------------------------------------------------------ */
-#define NB_BK   128          /* number of buckets; fits in L2 (128×64B=8KB)  */
+#define NB_BK   128          /* number of buckets; fits in L2 (128x64B=8KB)  */
 #define REPEAT  2000000u     /* iterations                                   */
 
 int main(void)

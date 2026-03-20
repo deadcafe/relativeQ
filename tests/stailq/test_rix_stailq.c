@@ -401,6 +401,6 @@ int main(int argc, char **argv){
     test_fuzz(seed, N, ops);
 
     free(g_nodes);
-    printf("ALL STAILQ TESTS PASSED ✅\n");
+    printf("ALL STAILQ TESTS PASSED \n");
     return 0;
 }

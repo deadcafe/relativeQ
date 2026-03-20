@@ -200,12 +200,12 @@ static void test_basic_insert_find_minmax_nextprev(void){
     struct node *mx = RIX_RB_MAX(tree, &h, g_nodes);
     if (!mn || mn->key!=1) FAIL("min mismatch");
     if (!mx || mx->key!=20) FAIL("max mismatch");
-    /* 1→…→20 */
+    /* 1->...->20 */
     int cur = 1;
     for (struct node *it = mn; it; it = RIX_RB_NEXT(tree, g_nodes, it), cur++){
         if (it->key != cur) FAIL("next chain mismatch");
     }
-    /* 20→…→1 */
+    /* 20->...->1 */
     cur = 20;
     for (struct node *it = mx; it; it = RIX_RB_PREV(tree, g_nodes, it), cur--){
         if (it->key != cur) FAIL("prev chain mismatch");
@@ -323,6 +323,6 @@ int main(int argc, char **argv){
     test_fuzz(seed, N, ops);
 
     free(g_nodes);
-    printf("ALL RIX_RB TESTS PASSED ✅\n");
+    printf("ALL RIX_RB TESTS PASSED \n");
     return 0;
 }

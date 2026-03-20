@@ -1,2 +1,2 @@
-/* shim: delegate to the canonical header (hash64 is now part of rix_hash_key.h) */
-#include "../../include/rix/rix_hash_key.h"
+/* shim: delegate to the canonical header */
+#include "../../include/rix/rix_hash64.h"

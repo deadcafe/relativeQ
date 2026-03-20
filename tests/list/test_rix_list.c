@@ -353,7 +353,7 @@ int main(int argc, char **argv){
     if (argc>=4) ops  = (unsigned)strtoul(argv[3],NULL,10);
 
     g_cap = N;
-    g_nodes = (struct node*)calloc((size_t)N, sizeof(struct node)); /* 0..N-1 ← idx=1..N */
+    g_nodes = (struct node*)calloc((size_t)N, sizeof(struct node)); /* 0..N-1 <- idx=1..N */
     if (!g_nodes){ perror("calloc g_nodes"); return 1; }
     for (unsigned i=0;i<N;i++){
         g_nodes[i].val = (int)(i+1);
@@ -368,6 +368,6 @@ int main(int argc, char **argv){
     test_fuzz(seed, N, ops);
 
     free(g_nodes);
-    printf("ALL RIX_LIST TESTS PASSED ✅\n");
+    printf("ALL RIX_LIST TESTS PASSED \n");
     return 0;
 }

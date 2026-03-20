@@ -1,5 +1,5 @@
 /* test_rix_hash.c
- *  RIX_HASH (cuckoo hash table) – unit & fuzz tests
+ *  RIX_HASH (cuckoo hash table) - unit & fuzz tests
  */
 
 #include <stdio.h>
@@ -56,28 +56,28 @@ RIX_HASH_HEAD(myht_slot);
 RIX_HASH_GENERATE_SLOT(myht_slot, mynode_slot, key, cur_hash, slot, mykey_cmp)
 
 /* ================================================================== */
-/* nohf variant: no hash_field (8-byte node)                           */
+/* keyonly variant: no hash_field (8-byte node)                           */
 /* ================================================================== */
-struct mynode_nohf {
+struct mynode_keyonly {
     struct mykey key;
 };
 
-RIX_HASH_HEAD(myht_nohf);
-RIX_HASH_GENERATE_NOHF(myht_nohf, mynode_nohf, key, mykey_cmp)
+RIX_HASH_HEAD(myht_keyonly);
+RIX_HASH_GENERATE_KEYONLY(myht_keyonly, mynode_keyonly, key, mykey_cmp)
 
 /* ================================================================== */
 /* Globals for basic tests                                             */
 /* ================================================================== */
 #define NB_BASIC     20u
-#define NB_BK_BASIC   4u  /* 4 × 16 = 64 slots for 20 nodes  */
+#define NB_BK_BASIC   4u  /* 4 x 16 = 64 slots for 20 nodes  */
 
 static struct mynode          g_basic[NB_BASIC];
 static struct rix_hash_bucket_s g_bk[NB_BK_BASIC] __attribute__((aligned(64)));
 static struct myht            g_head;
 
-static struct mynode_nohf       g_nohf[NB_BASIC];
-static struct rix_hash_bucket_s g_bk_nohf[NB_BK_BASIC] __attribute__((aligned(64)));
-static struct myht_nohf         g_head_nohf;
+static struct mynode_keyonly       g_keyonly[NB_BASIC];
+static struct rix_hash_bucket_s g_bk_keyonly[NB_BK_BASIC] __attribute__((aligned(64)));
+static struct myht_keyonly         g_head_keyonly;
 
 static struct mynode_slot       g_slot[NB_BASIC];
 static struct rix_hash_bucket_s g_bk_slot[NB_BK_BASIC] __attribute__((aligned(64)));
@@ -268,7 +268,7 @@ test_duplicate(void)
     if (r0 != NULL)
         FAIL("first insert must return NULL");
 
-    /* Re-insert the same node – must return the existing node */
+    /* Re-insert the same node - must return the existing node */
     struct mynode *r1 = myht_insert(&g_head, g_bk, g_basic, &g_basic[0]);
     if (r1 != &g_basic[0])
         FAILF("dup insert must return existing node %p, got %p",
@@ -559,7 +559,7 @@ test_fuzz(unsigned seed, unsigned N, unsigned nb_bk, unsigned ops)
                           idx, (void *)elm, (void *)ret);
             } else {
                 if (ret == elm) {
-                    /* Table full – acceptable, just skip */
+                    /* Table full - acceptable, just skip */
                 } else if (ret != NULL) {
                     FAILF("fuzz insert[%u]: unexpected ret %p", idx, (void *)ret);
                 } else {
@@ -669,7 +669,7 @@ test_slot_fuzz(unsigned seed, unsigned N, unsigned nb_bk, unsigned ops)
                           idx, (void *)elm, (void *)ret);
             } else {
                 if (ret == elm) {
-                    /* table full – acceptable */
+                    /* table full - acceptable */
                 } else if (ret != NULL) {
                     FAILF("slot fuzz insert[%u]: unexpected ret %p",
                           idx, (void *)ret);
@@ -730,130 +730,130 @@ test_slot_fuzz(unsigned seed, unsigned N, unsigned nb_bk, unsigned ops)
 }
 
 /* ================================================================== */
-/* nohf helpers                                                        */
+/* keyonly helpers                                                        */
 /* ================================================================== */
 static void
-nohf_init(void)
+keyonly_init(void)
 {
-    memset(g_nohf,    0, sizeof(g_nohf));
-    memset(g_bk_nohf, 0, sizeof(g_bk_nohf));
-    RIX_HASH_INIT(myht_nohf, &g_head_nohf, NB_BK_BASIC);
+    memset(g_keyonly,    0, sizeof(g_keyonly));
+    memset(g_bk_keyonly, 0, sizeof(g_bk_keyonly));
+    RIX_HASH_INIT(myht_keyonly, &g_head_keyonly, NB_BK_BASIC);
     for (unsigned i = 0; i < NB_BASIC; i++) {
-        g_nohf[i].key.hi = (uint64_t)(i + 1);
-        g_nohf[i].key.lo = 0xDEADC0DE00000000ULL;
+        g_keyonly[i].key.hi = (uint64_t)(i + 1);
+        g_keyonly[i].key.lo = 0xDEADC0DE00000000ULL;
     }
 }
 
 static void
-nohf_insert_all(void)
+keyonly_insert_all(void)
 {
     for (unsigned i = 0; i < NB_BASIC; i++) {
-        struct mynode_nohf *ret =
-            myht_nohf_insert(&g_head_nohf, g_bk_nohf, g_nohf, &g_nohf[i]);
+        struct mynode_keyonly *ret =
+            myht_keyonly_insert(&g_head_keyonly, g_bk_keyonly, g_keyonly, &g_keyonly[i]);
         if (ret != NULL)
-            FAILF("nohf insert[%u] failed (ret=%p)", i, (void *)ret);
+            FAILF("keyonly insert[%u] failed (ret=%p)", i, (void *)ret);
     }
-    if (g_head_nohf.rhh_nb != NB_BASIC)
-        FAILF("nohf nb after all inserts: expected %u got %u",
-              NB_BASIC, g_head_nohf.rhh_nb);
+    if (g_head_keyonly.rhh_nb != NB_BASIC)
+        FAILF("keyonly nb after all inserts: expected %u got %u",
+              NB_BASIC, g_head_keyonly.rhh_nb);
 }
 
 /* ================================================================== */
-/* test_nohf_duplicate                                                 */
+/* test_keyonly_duplicate                                                 */
 /* ================================================================== */
 static void
-test_nohf_duplicate(void)
+test_keyonly_duplicate(void)
 {
-    printf("[T] nohf duplicate insert\n");
-    nohf_init();
+    printf("[T] keyonly duplicate insert\n");
+    keyonly_init();
 
     /* Insert node[0] */
-    struct mynode_nohf *r0 =
-        myht_nohf_insert(&g_head_nohf, g_bk_nohf, g_nohf, &g_nohf[0]);
+    struct mynode_keyonly *r0 =
+        myht_keyonly_insert(&g_head_keyonly, g_bk_keyonly, g_keyonly, &g_keyonly[0]);
     if (r0 != NULL)
-        FAIL("nohf first insert must return NULL");
+        FAIL("keyonly first insert must return NULL");
 
-    /* Re-insert same node – must return existing node */
-    struct mynode_nohf *r1 =
-        myht_nohf_insert(&g_head_nohf, g_bk_nohf, g_nohf, &g_nohf[0]);
-    if (r1 != &g_nohf[0])
-        FAILF("nohf dup insert must return existing node %p, got %p",
-              (void *)&g_nohf[0], (void *)r1);
-    if (g_head_nohf.rhh_nb != 1u)
-        FAILF("nohf nb must still be 1 after dup, got %u", g_head_nohf.rhh_nb);
+    /* Re-insert same node - must return existing node */
+    struct mynode_keyonly *r1 =
+        myht_keyonly_insert(&g_head_keyonly, g_bk_keyonly, g_keyonly, &g_keyonly[0]);
+    if (r1 != &g_keyonly[0])
+        FAILF("keyonly dup insert must return existing node %p, got %p",
+              (void *)&g_keyonly[0], (void *)r1);
+    if (g_head_keyonly.rhh_nb != 1u)
+        FAILF("keyonly nb must still be 1 after dup, got %u", g_head_keyonly.rhh_nb);
 
     /* Different node object with same key value */
-    struct mynode_nohf dup;
-    dup.key = g_nohf[0].key;
-    struct mynode_nohf *r2 =
-        myht_nohf_insert(&g_head_nohf, g_bk_nohf, g_nohf, &dup);
-    if (r2 != &g_nohf[0])
-        FAILF("nohf key-dup insert must return existing node %p, got %p",
-              (void *)&g_nohf[0], (void *)r2);
-    if (g_head_nohf.rhh_nb != 1u)
-        FAILF("nohf nb must still be 1 after key-dup, got %u",
-              g_head_nohf.rhh_nb);
+    struct mynode_keyonly dup;
+    dup.key = g_keyonly[0].key;
+    struct mynode_keyonly *r2 =
+        myht_keyonly_insert(&g_head_keyonly, g_bk_keyonly, g_keyonly, &dup);
+    if (r2 != &g_keyonly[0])
+        FAILF("keyonly key-dup insert must return existing node %p, got %p",
+              (void *)&g_keyonly[0], (void *)r2);
+    if (g_head_keyonly.rhh_nb != 1u)
+        FAILF("keyonly nb must still be 1 after key-dup, got %u",
+              g_head_keyonly.rhh_nb);
 }
 
 /* ================================================================== */
-/* test_nohf_insert_find_remove                                        */
+/* test_keyonly_insert_find_remove                                        */
 /* ================================================================== */
 static void
-test_nohf_insert_find_remove(void)
+test_keyonly_insert_find_remove(void)
 {
-    printf("[T] nohf insert/find/remove\n");
-    nohf_init();
-    nohf_insert_all();
+    printf("[T] keyonly insert/find/remove\n");
+    keyonly_init();
+    keyonly_insert_all();
 
     /* Find each inserted node */
     for (unsigned i = 0; i < NB_BASIC; i++) {
-        struct mynode_nohf *f =
-            myht_nohf_find(&g_head_nohf, g_bk_nohf, g_nohf, &g_nohf[i].key);
+        struct mynode_keyonly *f =
+            myht_keyonly_find(&g_head_keyonly, g_bk_keyonly, g_keyonly, &g_keyonly[i].key);
         if (f == NULL)
-            FAILF("nohf find[%u] returned NULL", i);
-        if (f != &g_nohf[i])
-            FAILF("nohf find[%u] returned wrong node %p expected %p",
-                  i, (void *)f, (void *)&g_nohf[i]);
+            FAILF("keyonly find[%u] returned NULL", i);
+        if (f != &g_keyonly[i])
+            FAILF("keyonly find[%u] returned wrong node %p expected %p",
+                  i, (void *)f, (void *)&g_keyonly[i]);
     }
 
     /* Non-existent key */
     struct mykey bad = { 9999ULL, 0xDEADC0DE00000000ULL };
-    if (myht_nohf_find(&g_head_nohf, g_bk_nohf, g_nohf, &bad) != NULL)
-        FAIL("nohf find of non-existent key should return NULL");
+    if (myht_keyonly_find(&g_head_keyonly, g_bk_keyonly, g_keyonly, &bad) != NULL)
+        FAIL("keyonly find of non-existent key should return NULL");
 
     /* Remove even-indexed nodes */
     for (unsigned i = 0; i < NB_BASIC; i += 2) {
-        struct mynode_nohf *rem =
-            myht_nohf_remove(&g_head_nohf, g_bk_nohf, g_nohf, &g_nohf[i]);
-        if (rem != &g_nohf[i])
-            FAILF("nohf remove[%u] returned wrong node", i);
+        struct mynode_keyonly *rem =
+            myht_keyonly_remove(&g_head_keyonly, g_bk_keyonly, g_keyonly, &g_keyonly[i]);
+        if (rem != &g_keyonly[i])
+            FAILF("keyonly remove[%u] returned wrong node", i);
     }
-    if (g_head_nohf.rhh_nb != NB_BASIC / 2)
-        FAILF("nohf nb after removals: expected %u got %u",
-              NB_BASIC / 2, g_head_nohf.rhh_nb);
+    if (g_head_keyonly.rhh_nb != NB_BASIC / 2)
+        FAILF("keyonly nb after removals: expected %u got %u",
+              NB_BASIC / 2, g_head_keyonly.rhh_nb);
 
     /* Removed must not be found; remaining must be found */
     for (unsigned i = 0; i < NB_BASIC; i++) {
-        struct mynode_nohf *f =
-            myht_nohf_find(&g_head_nohf, g_bk_nohf, g_nohf, &g_nohf[i].key);
+        struct mynode_keyonly *f =
+            myht_keyonly_find(&g_head_keyonly, g_bk_keyonly, g_keyonly, &g_keyonly[i].key);
         if (i % 2 == 0) {
             if (f != NULL)
-                FAILF("nohf removed node[%u] still found", i);
+                FAILF("keyonly removed node[%u] still found", i);
         } else {
-            if (f == NULL || f != &g_nohf[i])
-                FAILF("nohf remaining node[%u] not found or wrong", i);
+            if (f == NULL || f != &g_keyonly[i])
+                FAILF("keyonly remaining node[%u] not found or wrong", i);
         }
     }
 
     /* Re-remove already-removed node must return NULL */
-    if (myht_nohf_remove(&g_head_nohf, g_bk_nohf, g_nohf, &g_nohf[0]) != NULL)
-        FAIL("nohf re-remove of already-removed node should return NULL");
+    if (myht_keyonly_remove(&g_head_keyonly, g_bk_keyonly, g_keyonly, &g_keyonly[0]) != NULL)
+        FAIL("keyonly re-remove of already-removed node should return NULL");
 }
 
 /* ================================================================== */
-/* test_nohf_fuzz                                                      */
+/* test_keyonly_fuzz                                                      */
 /* ================================================================== */
-static int walk_nohf_count_cb(struct mynode_nohf *node, void *arg)
+static int walk_keyonly_count_cb(struct mynode_keyonly *node, void *arg)
 {
     (void)node;
     unsigned *cnt = (unsigned *)arg;
@@ -862,15 +862,15 @@ static int walk_nohf_count_cb(struct mynode_nohf *node, void *arg)
 }
 
 static void
-test_nohf_fuzz(unsigned seed, unsigned N, unsigned nb_bk, unsigned ops)
+test_keyonly_fuzz(unsigned seed, unsigned N, unsigned nb_bk, unsigned ops)
 {
-    printf("[T] nohf fuzz seed=%u N=%u nb_bk=%u ops=%u\n",
+    printf("[T] keyonly fuzz seed=%u N=%u nb_bk=%u ops=%u\n",
            seed, N, nb_bk, ops);
     xr_fuzz = seed ? seed : 0xC0FFEE11u;
 
-    struct mynode_nohf *nodes =
-        (struct mynode_nohf *)calloc((size_t)N, sizeof(struct mynode_nohf));
-    if (!nodes) { perror("calloc nohf nodes"); exit(1); }
+    struct mynode_keyonly *nodes =
+        (struct mynode_keyonly *)calloc((size_t)N, sizeof(struct mynode_keyonly));
+    if (!nodes) { perror("calloc keyonly nodes"); exit(1); }
     for (unsigned i = 0; i < N; i++) {
         nodes[i].key.hi = (uint64_t)(i + 1);
         nodes[i].key.lo = 0;
@@ -883,8 +883,8 @@ test_nohf_fuzz(unsigned seed, unsigned N, unsigned nb_bk, unsigned ops)
     }
     memset(bk, 0, bk_sz);
 
-    struct myht_nohf head;
-    RIX_HASH_INIT(myht_nohf, &head, nb_bk);
+    struct myht_keyonly head;
+    RIX_HASH_INIT(myht_keyonly, &head, nb_bk);
 
     unsigned char *present = (unsigned char *)calloc((size_t)N + 1, 1);
     if (!present) { perror("calloc present"); exit(1); }
@@ -895,19 +895,19 @@ test_nohf_fuzz(unsigned seed, unsigned N, unsigned nb_bk, unsigned ops)
 
         if (op < 60) {
             unsigned idx = rnd_in(1, N);
-            struct mynode_nohf *elm = &nodes[idx - 1];
-            struct mynode_nohf *ret =
-                myht_nohf_insert(&head, bk, nodes, elm);
+            struct mynode_keyonly *elm = &nodes[idx - 1];
+            struct mynode_keyonly *ret =
+                myht_keyonly_insert(&head, bk, nodes, elm);
 
             if (present[idx]) {
                 if (ret != elm)
-                    FAILF("nohf fuzz insert dup[%u]: expected %p got %p",
+                    FAILF("keyonly fuzz insert dup[%u]: expected %p got %p",
                           idx, (void *)elm, (void *)ret);
             } else {
                 if (ret == elm) {
-                    /* table full – skip */
+                    /* table full - skip */
                 } else if (ret != NULL) {
-                    FAILF("nohf fuzz insert[%u]: unexpected ret %p",
+                    FAILF("keyonly fuzz insert[%u]: unexpected ret %p",
                           idx, (void *)ret);
                 } else {
                     present[idx] = 1;
@@ -916,54 +916,827 @@ test_nohf_fuzz(unsigned seed, unsigned N, unsigned nb_bk, unsigned ops)
             }
         } else if (op < 80) {
             unsigned idx = rnd_in(1, N);
-            struct mynode_nohf *elm = &nodes[idx - 1];
-            struct mynode_nohf *ret =
-                myht_nohf_remove(&head, bk, nodes, elm);
+            struct mynode_keyonly *elm = &nodes[idx - 1];
+            struct mynode_keyonly *ret =
+                myht_keyonly_remove(&head, bk, nodes, elm);
 
             if (present[idx]) {
                 if (ret != elm)
-                    FAILF("nohf fuzz remove[%u]: expected %p got %p",
+                    FAILF("keyonly fuzz remove[%u]: expected %p got %p",
                           idx, (void *)elm, (void *)ret);
                 present[idx] = 0;
                 in_table--;
             } else {
                 if (ret != NULL)
-                    FAILF("nohf fuzz remove absent[%u]: expected NULL got %p",
+                    FAILF("keyonly fuzz remove absent[%u]: expected NULL got %p",
                           idx, (void *)ret);
             }
         } else {
             unsigned idx = rnd_in(1, N);
-            struct mynode_nohf *elm = &nodes[idx - 1];
-            struct mynode_nohf *ret =
-                myht_nohf_find(&head, bk, nodes, &elm->key);
+            struct mynode_keyonly *elm = &nodes[idx - 1];
+            struct mynode_keyonly *ret =
+                myht_keyonly_find(&head, bk, nodes, &elm->key);
 
             if (present[idx]) {
                 if (ret != elm)
-                    FAILF("nohf fuzz find[%u]: expected %p got %p",
+                    FAILF("keyonly fuzz find[%u]: expected %p got %p",
                           idx, (void *)elm, (void *)ret);
             } else {
                 if (ret != NULL)
-                    FAILF("nohf fuzz find absent[%u]: expected NULL got %p",
+                    FAILF("keyonly fuzz find absent[%u]: expected NULL got %p",
                           idx, (void *)ret);
             }
         }
 
         if ((step & 0x3FFu) == 0u) {
             if (head.rhh_nb != in_table)
-                FAILF("nohf fuzz step %u: rhh_nb=%u model=%u",
+                FAILF("keyonly fuzz step %u: rhh_nb=%u model=%u",
                       step, head.rhh_nb, in_table);
         }
     }
 
     if (head.rhh_nb != in_table)
-        FAILF("nohf fuzz final: rhh_nb=%u model=%u", head.rhh_nb, in_table);
+        FAILF("keyonly fuzz final: rhh_nb=%u model=%u", head.rhh_nb, in_table);
 
     unsigned walk_cnt = 0;
-    myht_nohf_walk(&head, bk, nodes, walk_nohf_count_cb, &walk_cnt);
+    myht_keyonly_walk(&head, bk, nodes, walk_keyonly_count_cb, &walk_cnt);
     if (walk_cnt != in_table)
-        FAILF("nohf fuzz walk: expected %u got %u", in_table, walk_cnt);
+        FAILF("keyonly fuzz walk: expected %u got %u", in_table, walk_cnt);
 
     free(present);
+    free(bk);
+    free(nodes);
+}
+
+/* ================================================================== */
+/* test_high_fill - fill to 90%+, verify all entries findable          */
+/* ================================================================== */
+static void
+test_high_fill(void)
+{
+    printf("[T] high_fill (90%%+)\n");
+
+    /*
+     * 64 buckets x 16 slots = 1024 total slots.
+     * Insert 960 entries (~94% fill) to force long kickout chains.
+     */
+    const unsigned NB_BK = 64u;
+    const unsigned N     = 960u;
+
+    struct mynode *nodes = (struct mynode *)calloc((size_t)N, sizeof(*nodes));
+    if (!nodes) { perror("calloc"); exit(1); }
+    for (unsigned i = 0; i < N; i++) {
+        nodes[i].key.hi = (uint64_t)(i + 1);
+        nodes[i].key.lo = 0xA1A2A3A400000000ULL;
+    }
+
+    struct rix_hash_bucket_s *bk = NULL;
+    size_t bk_sz = (size_t)NB_BK * sizeof(*bk);
+    if (posix_memalign((void **)&bk, 64, bk_sz) != 0) {
+        perror("posix_memalign"); exit(1);
+    }
+    memset(bk, 0, bk_sz);
+
+    struct myht head;
+    RIX_HASH_INIT(myht, &head, NB_BK);
+
+    unsigned inserted = 0;
+    for (unsigned i = 0; i < N; i++) {
+        struct mynode *ret = myht_insert(&head, bk, nodes, &nodes[i]);
+        if (ret == NULL) {
+            inserted++;
+        } else if (ret == &nodes[i]) {
+            /* table full - stop filling */
+            break;
+        } else {
+            FAILF("high_fill insert[%u]: unexpected ret %p", i, (void *)ret);
+        }
+    }
+    printf("  inserted %u / %u (%.1f%%)\n",
+           inserted, NB_BK * RIX_HASH_BUCKET_ENTRY_SZ,
+           100.0 * inserted / (NB_BK * RIX_HASH_BUCKET_ENTRY_SZ));
+
+    if (head.rhh_nb != inserted)
+        FAILF("high_fill rhh_nb=%u expected %u", head.rhh_nb, inserted);
+
+    /* Every inserted entry must be findable (exercises alt-bucket lookup) */
+    for (unsigned i = 0; i < inserted; i++) {
+        struct mynode *f = myht_find(&head, bk, nodes, &nodes[i].key);
+        if (f != &nodes[i])
+            FAILF("high_fill find[%u] failed: got %p expected %p",
+                  i, (void *)f, (void *)&nodes[i]);
+    }
+
+    /* Remove every other entry, verify remaining still findable */
+    unsigned removed = 0;
+    for (unsigned i = 0; i < inserted; i += 2) {
+        struct mynode *r = myht_remove(&head, bk, nodes, &nodes[i]);
+        if (r != &nodes[i])
+            FAILF("high_fill remove[%u] failed", i);
+        removed++;
+    }
+    if (head.rhh_nb != inserted - removed)
+        FAILF("high_fill after remove: rhh_nb=%u expected %u",
+              head.rhh_nb, inserted - removed);
+
+    for (unsigned i = 0; i < inserted; i++) {
+        struct mynode *f = myht_find(&head, bk, nodes, &nodes[i].key);
+        if (i % 2 == 0) {
+            if (f != NULL)
+                FAILF("high_fill removed[%u] still found", i);
+        } else {
+            if (f != &nodes[i])
+                FAILF("high_fill remaining[%u] not found", i);
+        }
+    }
+
+    free(bk);
+    free(nodes);
+}
+
+/* ================================================================== */
+/* test_max_fill - fill greedily, stop at first failure, verify all     */
+/* ================================================================== */
+static void
+test_max_fill(void)
+{
+    printf("[T] max_fill\n");
+
+    /*
+     * Use more buckets so 95% fill stays well below kickout-exhaustion
+     * threshold.  128 bk x 16 slots = 2048 capacity; fill 1945 (~95%).
+     */
+    const unsigned NB_BK = 128u;
+    const unsigned CAPACITY = NB_BK * RIX_HASH_BUCKET_ENTRY_SZ; /* 2048 */
+    const unsigned N = (CAPACITY * 95u) / 100u;                  /* 1945 */
+
+    struct mynode *nodes =
+        (struct mynode *)calloc((size_t)N, sizeof(*nodes));
+    if (!nodes) { perror("calloc"); exit(1); }
+    for (unsigned i = 0; i < N; i++) {
+        nodes[i].key.hi = (uint64_t)(i + 1);
+        nodes[i].key.lo = 0xB1B2B3B400000000ULL;
+    }
+
+    struct rix_hash_bucket_s *bk = NULL;
+    size_t bk_sz = (size_t)NB_BK * sizeof(*bk);
+    if (posix_memalign((void **)&bk, 64, bk_sz) != 0) {
+        perror("posix_memalign"); exit(1);
+    }
+    memset(bk, 0, bk_sz);
+
+    struct myht head;
+    RIX_HASH_INIT(myht, &head, NB_BK);
+
+    unsigned inserted = 0;
+    for (unsigned i = 0; i < N; i++) {
+        struct mynode *ret = myht_insert(&head, bk, nodes, &nodes[i]);
+        if (ret == NULL) {
+            inserted++;
+        } else if (ret == &nodes[i]) {
+            /*
+             * Kickout exhaustion: stop here - a failed insert loses a
+             * displaced victim (known limitation of cuckoo hash).
+             */
+            break;
+        } else {
+            FAILF("max_fill insert[%u]: unexpected ret %p", i, (void *)ret);
+        }
+    }
+    printf("  inserted %u / %u (%.1f%%)\n",
+           inserted, CAPACITY,
+           100.0 * inserted / CAPACITY);
+
+    if (head.rhh_nb != inserted)
+        FAILF("max_fill rhh_nb=%u expected %u", head.rhh_nb, inserted);
+
+    /* Every inserted entry must still be findable */
+    for (unsigned i = 0; i < inserted; i++) {
+        struct mynode *f = myht_find(&head, bk, nodes, &nodes[i].key);
+        if (f != &nodes[i])
+            FAILF("max_fill find[%u] failed", i);
+    }
+
+    /* Walk count must match */
+    unsigned walk_cnt = 0;
+    myht_walk(&head, bk, nodes, walk_count_cb, &walk_cnt);
+    if (walk_cnt != inserted)
+        FAILF("max_fill walk: expected %u got %u", inserted, walk_cnt);
+
+    free(bk);
+    free(nodes);
+}
+
+/* ================================================================== */
+/* test_kickout_corruption - verify failed insert loses a victim       */
+/*                                                                     */
+/* Known limitation: when cuckoo kickout exhausts the chain, the last  */
+/* displaced victim is lost.  This test documents and verifies the     */
+/* behaviour so callers know not to insert past safe capacity.         */
+/* ================================================================== */
+static void
+test_kickout_corruption(void)
+{
+    printf("[T] kickout_corruption (known limitation)\n");
+
+    const unsigned NB_BK = 32u;
+    const unsigned CAPACITY = NB_BK * RIX_HASH_BUCKET_ENTRY_SZ; /* 512 */
+    const unsigned N = CAPACITY + 64u;
+
+    struct mynode *nodes = (struct mynode *)calloc((size_t)N, sizeof(*nodes));
+    if (!nodes) { perror("calloc"); exit(1); }
+    for (unsigned i = 0; i < N; i++) {
+        nodes[i].key.hi = (uint64_t)(i + 1);
+        nodes[i].key.lo = 0xB1B2B3B400000000ULL;
+    }
+
+    struct rix_hash_bucket_s *bk = NULL;
+    size_t bk_sz = (size_t)NB_BK * sizeof(*bk);
+    if (posix_memalign((void **)&bk, 64, bk_sz) != 0) {
+        perror("posix_memalign"); exit(1);
+    }
+    memset(bk, 0, bk_sz);
+
+    struct myht head;
+    RIX_HASH_INIT(myht, &head, NB_BK);
+
+    /* Phase 1: fill greedily */
+    unsigned inserted = 0;
+    for (unsigned i = 0; i < N; i++) {
+        struct mynode *ret = myht_insert(&head, bk, nodes, &nodes[i]);
+        if (ret == NULL)
+            inserted++;
+        else if (ret == &nodes[i])
+            break;
+    }
+
+    /* Phase 2: keep inserting past the first failure to trigger kickout
+     * chain exhaustion.  Count how many previously-findable entries
+     * become unreachable. */
+    unsigned pre_nb = head.rhh_nb;
+    unsigned lost = 0;
+    for (unsigned i = inserted; i < N; i++) {
+        struct mynode *ret = myht_insert(&head, bk, nodes, &nodes[i]);
+        if (ret == NULL) {
+            inserted++;
+        } else if (ret == &nodes[i]) {
+            /* Check for victim loss after each failed insert */
+            for (unsigned j = 0; j < inserted && j < i; j++) {
+                struct mynode *f = myht_find(&head, bk, nodes, &nodes[j].key);
+                if (f != &nodes[j]) {
+                    lost++;
+                    break; /* one is enough to confirm */
+                }
+            }
+            if (lost > 0) break;
+        }
+    }
+
+    printf("  pre_nb=%u post_nb=%u lost_victims=%u\n",
+           pre_nb, head.rhh_nb, lost);
+
+    /*
+     * We expect lost > 0: a failed insert after kickout chain exhaustion
+     * displaces a victim that cannot be placed back.
+     * If the implementation is ever fixed to undo the chain on failure,
+     * lost will be 0 and this test should be updated.
+     */
+    if (lost == 0)
+        printf("  NOTE: no victim loss detected - implementation may have been fixed\n");
+    else
+        printf("  confirmed: kickout exhaustion loses displaced victim (expected)\n");
+
+    free(bk);
+    free(nodes);
+}
+
+/* ================================================================== */
+/* test_slot_high_fill - slot variant integrity after kickout chains    */
+/* ================================================================== */
+static void
+test_slot_high_fill(void)
+{
+    printf("[T] slot_high_fill (90%%+)\n");
+
+    const unsigned NB_BK = 64u;
+    const unsigned N     = 960u;
+
+    struct mynode_slot *nodes =
+        (struct mynode_slot *)calloc((size_t)N, sizeof(*nodes));
+    if (!nodes) { perror("calloc"); exit(1); }
+    for (unsigned i = 0; i < N; i++) {
+        nodes[i].key.hi = (uint64_t)(i + 1);
+        nodes[i].key.lo = 0xC1C2C3C400000000ULL;
+    }
+
+    struct rix_hash_bucket_s *bk = NULL;
+    size_t bk_sz = (size_t)NB_BK * sizeof(*bk);
+    if (posix_memalign((void **)&bk, 64, bk_sz) != 0) {
+        perror("posix_memalign"); exit(1);
+    }
+    memset(bk, 0, bk_sz);
+
+    struct myht_slot head;
+    RIX_HASH_INIT(myht_slot, &head, NB_BK);
+
+    unsigned inserted = 0;
+    for (unsigned i = 0; i < N; i++) {
+        struct mynode_slot *ret = myht_slot_insert(&head, bk, nodes, &nodes[i]);
+        if (ret == NULL) {
+            inserted++;
+        } else if (ret == &nodes[i]) {
+            break;
+        } else {
+            FAILF("slot_high_fill insert[%u]: unexpected ret", i);
+        }
+    }
+    printf("  inserted %u / %u\n", inserted, NB_BK * RIX_HASH_BUCKET_ENTRY_SZ);
+
+    /* Verify cur_hash/slot integrity for every inserted entry */
+    for (unsigned i = 0; i < inserted; i++) {
+        struct mynode_slot *f =
+            myht_slot_find(&head, bk, nodes, &nodes[i].key);
+        if (f != &nodes[i])
+            FAILF("slot_high_fill find[%u] failed", i);
+        slot_verify_node(&head, bk, nodes, &nodes[i]);
+    }
+
+    /* Remove every 3rd entry, verify slot integrity of remaining */
+    unsigned removed = 0;
+    for (unsigned i = 0; i < inserted; i += 3) {
+        struct mynode_slot *r = myht_slot_remove(&head, bk, nodes, &nodes[i]);
+        if (r != &nodes[i])
+            FAILF("slot_high_fill remove[%u] failed", i);
+        removed++;
+    }
+
+    for (unsigned i = 0; i < inserted; i++) {
+        struct mynode_slot *f =
+            myht_slot_find(&head, bk, nodes, &nodes[i].key);
+        if (i % 3 == 0) {
+            if (f != NULL)
+                FAILF("slot_high_fill removed[%u] still found", i);
+        } else {
+            if (f != &nodes[i])
+                FAILF("slot_high_fill remaining[%u] not found", i);
+            slot_verify_node(&head, bk, nodes, &nodes[i]);
+        }
+    }
+
+    free(bk);
+    free(nodes);
+}
+
+/* ================================================================== */
+/* test_keyonly_high_fill - keyonly variant at high fill                     */
+/* ================================================================== */
+static void
+test_keyonly_high_fill(void)
+{
+    printf("[T] keyonly_high_fill (90%%+)\n");
+
+    const unsigned NB_BK = 64u;
+    const unsigned N     = 960u;
+
+    struct mynode_keyonly *nodes =
+        (struct mynode_keyonly *)calloc((size_t)N, sizeof(*nodes));
+    if (!nodes) { perror("calloc"); exit(1); }
+    for (unsigned i = 0; i < N; i++) {
+        nodes[i].key.hi = (uint64_t)(i + 1);
+        nodes[i].key.lo = 0xD1D2D3D400000000ULL;
+    }
+
+    struct rix_hash_bucket_s *bk = NULL;
+    size_t bk_sz = (size_t)NB_BK * sizeof(*bk);
+    if (posix_memalign((void **)&bk, 64, bk_sz) != 0) {
+        perror("posix_memalign"); exit(1);
+    }
+    memset(bk, 0, bk_sz);
+
+    struct myht_keyonly head;
+    RIX_HASH_INIT(myht_keyonly, &head, NB_BK);
+
+    unsigned inserted = 0;
+    for (unsigned i = 0; i < N; i++) {
+        struct mynode_keyonly *ret =
+            myht_keyonly_insert(&head, bk, nodes, &nodes[i]);
+        if (ret == NULL) {
+            inserted++;
+        } else if (ret == &nodes[i]) {
+            break;
+        } else {
+            FAILF("keyonly_high_fill insert[%u]: unexpected ret", i);
+        }
+    }
+    printf("  inserted %u / %u\n", inserted, NB_BK * RIX_HASH_BUCKET_ENTRY_SZ);
+
+    for (unsigned i = 0; i < inserted; i++) {
+        struct mynode_keyonly *f =
+            myht_keyonly_find(&head, bk, nodes, &nodes[i].key);
+        if (f != &nodes[i])
+            FAILF("keyonly_high_fill find[%u] failed", i);
+    }
+
+    /* Remove half, verify remaining */
+    unsigned removed = 0;
+    for (unsigned i = 0; i < inserted; i += 2) {
+        struct mynode_keyonly *r =
+            myht_keyonly_remove(&head, bk, nodes, &nodes[i]);
+        if (r != &nodes[i])
+            FAILF("keyonly_high_fill remove[%u] failed", i);
+        removed++;
+    }
+
+    for (unsigned i = 0; i < inserted; i++) {
+        struct mynode_keyonly *f =
+            myht_keyonly_find(&head, bk, nodes, &nodes[i].key);
+        if (i % 2 == 0) {
+            if (f != NULL)
+                FAILF("keyonly_high_fill removed[%u] still found", i);
+        } else {
+            if (f != &nodes[i])
+                FAILF("keyonly_high_fill remaining[%u] not found", i);
+        }
+    }
+
+    free(bk);
+    free(nodes);
+}
+
+/* ================================================================== */
+/* test_remove_miss - fp variant: remove node not in the table         */
+/* ================================================================== */
+static void
+test_remove_miss(void)
+{
+    printf("[T] remove_miss\n");
+    basic_init();
+
+    /* Remove a node that was never inserted */
+    struct mynode *ret = myht_remove(&g_head, g_bk, g_basic, &g_basic[0]);
+    if (ret != NULL)
+        FAIL("remove of never-inserted node should return NULL");
+
+    /* Insert node[0], remove it, then remove again (double remove) */
+    struct mynode *r0 = myht_insert(&g_head, g_bk, g_basic, &g_basic[0]);
+    if (r0 != NULL)
+        FAIL("insert should succeed");
+
+    struct mynode *r1 = myht_remove(&g_head, g_bk, g_basic, &g_basic[0]);
+    if (r1 != &g_basic[0])
+        FAIL("first remove should return the node");
+
+    struct mynode *r2 = myht_remove(&g_head, g_bk, g_basic, &g_basic[0]);
+    if (r2 != NULL)
+        FAIL("second remove (double remove) should return NULL");
+
+    if (g_head.rhh_nb != 0u)
+        FAILF("nb after double remove: expected 0 got %u", g_head.rhh_nb);
+}
+
+/* ================================================================== */
+/* test_slot_remove_miss - slot variant: remove node not in the table   */
+/* ================================================================== */
+static void
+test_slot_remove_miss(void)
+{
+    printf("[T] slot_remove_miss\n");
+    slot_basic_init();
+
+    /* Remove a node that was never inserted */
+    struct mynode_slot *ret =
+        myht_slot_remove(&g_head_slot, g_bk_slot, g_slot, &g_slot[0]);
+    if (ret != NULL)
+        FAIL("slot remove of never-inserted node should return NULL");
+
+    /* Insert node[0], remove it, then remove again (double remove) */
+    struct mynode_slot *r0 =
+        myht_slot_insert(&g_head_slot, g_bk_slot, g_slot, &g_slot[0]);
+    if (r0 != NULL)
+        FAIL("slot insert should succeed");
+
+    struct mynode_slot *r1 =
+        myht_slot_remove(&g_head_slot, g_bk_slot, g_slot, &g_slot[0]);
+    if (r1 != &g_slot[0])
+        FAIL("slot first remove should return the node");
+
+    struct mynode_slot *r2 =
+        myht_slot_remove(&g_head_slot, g_bk_slot, g_slot, &g_slot[0]);
+    if (r2 != NULL)
+        FAIL("slot second remove (double remove) should return NULL");
+
+    if (g_head_slot.rhh_nb != 0u)
+        FAILF("slot nb after double remove: expected 0 got %u",
+              g_head_slot.rhh_nb);
+}
+
+/* ================================================================== */
+/* test_keyonly_remove_miss - keyonly variant: remove node not in the table  */
+/* ================================================================== */
+static void
+test_keyonly_remove_miss(void)
+{
+    printf("[T] keyonly_remove_miss\n");
+    keyonly_init();
+
+    /* Remove a node that was never inserted */
+    struct mynode_keyonly *ret =
+        myht_keyonly_remove(&g_head_keyonly, g_bk_keyonly, g_keyonly, &g_keyonly[0]);
+    if (ret != NULL)
+        FAIL("keyonly remove of never-inserted node should return NULL");
+
+    /* Insert node[0], remove it, then remove again (double remove) */
+    struct mynode_keyonly *r0 =
+        myht_keyonly_insert(&g_head_keyonly, g_bk_keyonly, g_keyonly, &g_keyonly[0]);
+    if (r0 != NULL)
+        FAIL("keyonly insert should succeed");
+
+    struct mynode_keyonly *r1 =
+        myht_keyonly_remove(&g_head_keyonly, g_bk_keyonly, g_keyonly, &g_keyonly[0]);
+    if (r1 != &g_keyonly[0])
+        FAIL("keyonly first remove should return the node");
+
+    struct mynode_keyonly *r2 =
+        myht_keyonly_remove(&g_head_keyonly, g_bk_keyonly, g_keyonly, &g_keyonly[0]);
+    if (r2 != NULL)
+        FAIL("keyonly second remove (double remove) should return NULL");
+
+    if (g_head_keyonly.rhh_nb != 0u)
+        FAILF("keyonly nb after double remove: expected 0 got %u",
+              g_head_keyonly.rhh_nb);
+}
+
+/* ================================================================== */
+/* test_slot_kickout_corruption - slot variant kickout exhaustion       */
+/* ================================================================== */
+static void
+test_slot_kickout_corruption(void)
+{
+    printf("[T] slot_kickout_corruption (known limitation)\n");
+
+    const unsigned NB_BK = 32u;
+    const unsigned CAPACITY = NB_BK * RIX_HASH_BUCKET_ENTRY_SZ; /* 512 */
+    const unsigned N = CAPACITY + 64u;
+
+    struct mynode_slot *nodes =
+        (struct mynode_slot *)calloc((size_t)N, sizeof(*nodes));
+    if (!nodes) { perror("calloc"); exit(1); }
+    for (unsigned i = 0; i < N; i++) {
+        nodes[i].key.hi = (uint64_t)(i + 1);
+        nodes[i].key.lo = 0xB1B2B3B400000000ULL;
+    }
+
+    struct rix_hash_bucket_s *bk = NULL;
+    size_t bk_sz = (size_t)NB_BK * sizeof(*bk);
+    if (posix_memalign((void **)&bk, 64, bk_sz) != 0) {
+        perror("posix_memalign"); exit(1);
+    }
+    memset(bk, 0, bk_sz);
+
+    struct myht_slot head;
+    RIX_HASH_INIT(myht_slot, &head, NB_BK);
+
+    /* Phase 1: fill greedily */
+    unsigned inserted = 0;
+    for (unsigned i = 0; i < N; i++) {
+        struct mynode_slot *ret = myht_slot_insert(&head, bk, nodes, &nodes[i]);
+        if (ret == NULL)
+            inserted++;
+        else if (ret == &nodes[i])
+            break;
+    }
+
+    /* Phase 2: keep inserting past the first failure to trigger kickout
+     * chain exhaustion.  Count how many previously-findable entries
+     * become unreachable. */
+    unsigned pre_nb = head.rhh_nb;
+    unsigned lost = 0;
+    for (unsigned i = inserted; i < N; i++) {
+        struct mynode_slot *ret = myht_slot_insert(&head, bk, nodes, &nodes[i]);
+        if (ret == NULL) {
+            inserted++;
+        } else if (ret == &nodes[i]) {
+            /* Check for victim loss after each failed insert */
+            for (unsigned j = 0; j < inserted && j < i; j++) {
+                struct mynode_slot *f =
+                    myht_slot_find(&head, bk, nodes, &nodes[j].key);
+                if (f != &nodes[j]) {
+                    lost++;
+                    break; /* one is enough to confirm */
+                }
+            }
+            if (lost > 0) break;
+        }
+    }
+
+    printf("  pre_nb=%u post_nb=%u lost_victims=%u\n",
+           pre_nb, head.rhh_nb, lost);
+
+    if (lost == 0)
+        printf("  NOTE: no victim loss detected - implementation may have been fixed\n");
+    else
+        printf("  confirmed: kickout exhaustion loses displaced victim (expected)\n");
+
+    free(bk);
+    free(nodes);
+}
+
+/* ================================================================== */
+/* test_keyonly_kickout_corruption - keyonly variant kickout exhaustion      */
+/* ================================================================== */
+static void
+test_keyonly_kickout_corruption(void)
+{
+    printf("[T] keyonly_kickout_corruption (known limitation)\n");
+
+    const unsigned NB_BK = 32u;
+    const unsigned CAPACITY = NB_BK * RIX_HASH_BUCKET_ENTRY_SZ; /* 512 */
+    const unsigned N = CAPACITY + 64u;
+
+    struct mynode_keyonly *nodes =
+        (struct mynode_keyonly *)calloc((size_t)N, sizeof(*nodes));
+    if (!nodes) { perror("calloc"); exit(1); }
+    for (unsigned i = 0; i < N; i++) {
+        nodes[i].key.hi = (uint64_t)(i + 1);
+        nodes[i].key.lo = 0xB1B2B3B400000000ULL;
+    }
+
+    struct rix_hash_bucket_s *bk = NULL;
+    size_t bk_sz = (size_t)NB_BK * sizeof(*bk);
+    if (posix_memalign((void **)&bk, 64, bk_sz) != 0) {
+        perror("posix_memalign"); exit(1);
+    }
+    memset(bk, 0, bk_sz);
+
+    struct myht_keyonly head;
+    RIX_HASH_INIT(myht_keyonly, &head, NB_BK);
+
+    /* Phase 1: fill greedily */
+    unsigned inserted = 0;
+    for (unsigned i = 0; i < N; i++) {
+        struct mynode_keyonly *ret =
+            myht_keyonly_insert(&head, bk, nodes, &nodes[i]);
+        if (ret == NULL)
+            inserted++;
+        else if (ret == &nodes[i])
+            break;
+    }
+
+    /* Phase 2: keep inserting past the first failure to trigger kickout
+     * chain exhaustion. */
+    unsigned pre_nb = head.rhh_nb;
+    unsigned lost = 0;
+    for (unsigned i = inserted; i < N; i++) {
+        struct mynode_keyonly *ret =
+            myht_keyonly_insert(&head, bk, nodes, &nodes[i]);
+        if (ret == NULL) {
+            inserted++;
+        } else if (ret == &nodes[i]) {
+            /* Check for victim loss after each failed insert */
+            for (unsigned j = 0; j < inserted && j < i; j++) {
+                struct mynode_keyonly *f =
+                    myht_keyonly_find(&head, bk, nodes, &nodes[j].key);
+                if (f != &nodes[j]) {
+                    lost++;
+                    break; /* one is enough to confirm */
+                }
+            }
+            if (lost > 0) break;
+        }
+    }
+
+    printf("  pre_nb=%u post_nb=%u lost_victims=%u\n",
+           pre_nb, head.rhh_nb, lost);
+
+    if (lost == 0)
+        printf("  NOTE: no victim loss detected - implementation may have been fixed\n");
+    else
+        printf("  confirmed: kickout exhaustion loses displaced victim (expected)\n");
+
+    free(bk);
+    free(nodes);
+}
+
+/* ================================================================== */
+/* test_slot_max_fill - slot variant: fill until first failure          */
+/* ================================================================== */
+static void
+test_slot_max_fill(void)
+{
+    printf("[T] slot_max_fill\n");
+
+    const unsigned NB_BK = 128u;
+    const unsigned CAPACITY = NB_BK * RIX_HASH_BUCKET_ENTRY_SZ; /* 2048 */
+    const unsigned N = (CAPACITY * 95u) / 100u;                  /* 1945 */
+
+    struct mynode_slot *nodes =
+        (struct mynode_slot *)calloc((size_t)N, sizeof(*nodes));
+    if (!nodes) { perror("calloc"); exit(1); }
+    for (unsigned i = 0; i < N; i++) {
+        nodes[i].key.hi = (uint64_t)(i + 1);
+        nodes[i].key.lo = 0xB1B2B3B400000000ULL;
+    }
+
+    struct rix_hash_bucket_s *bk = NULL;
+    size_t bk_sz = (size_t)NB_BK * sizeof(*bk);
+    if (posix_memalign((void **)&bk, 64, bk_sz) != 0) {
+        perror("posix_memalign"); exit(1);
+    }
+    memset(bk, 0, bk_sz);
+
+    struct myht_slot head;
+    RIX_HASH_INIT(myht_slot, &head, NB_BK);
+
+    unsigned inserted = 0;
+    for (unsigned i = 0; i < N; i++) {
+        struct mynode_slot *ret = myht_slot_insert(&head, bk, nodes, &nodes[i]);
+        if (ret == NULL) {
+            inserted++;
+        } else if (ret == &nodes[i]) {
+            break;
+        } else {
+            FAILF("slot_max_fill insert[%u]: unexpected ret %p",
+                  i, (void *)ret);
+        }
+    }
+    printf("  inserted %u / %u (%.1f%%)\n",
+           inserted, CAPACITY,
+           100.0 * inserted / CAPACITY);
+
+    if (head.rhh_nb != inserted)
+        FAILF("slot_max_fill rhh_nb=%u expected %u", head.rhh_nb, inserted);
+
+    /* Every inserted entry must still be findable */
+    for (unsigned i = 0; i < inserted; i++) {
+        struct mynode_slot *f =
+            myht_slot_find(&head, bk, nodes, &nodes[i].key);
+        if (f != &nodes[i])
+            FAILF("slot_max_fill find[%u] failed", i);
+        slot_verify_node(&head, bk, nodes, &nodes[i]);
+    }
+
+    free(bk);
+    free(nodes);
+}
+
+/* ================================================================== */
+/* test_keyonly_max_fill - keyonly variant: fill until first failure         */
+/* ================================================================== */
+static void
+test_keyonly_max_fill(void)
+{
+    printf("[T] keyonly_max_fill\n");
+
+    const unsigned NB_BK = 128u;
+    const unsigned CAPACITY = NB_BK * RIX_HASH_BUCKET_ENTRY_SZ; /* 2048 */
+    const unsigned N = (CAPACITY * 95u) / 100u;                  /* 1945 */
+
+    struct mynode_keyonly *nodes =
+        (struct mynode_keyonly *)calloc((size_t)N, sizeof(*nodes));
+    if (!nodes) { perror("calloc"); exit(1); }
+    for (unsigned i = 0; i < N; i++) {
+        nodes[i].key.hi = (uint64_t)(i + 1);
+        nodes[i].key.lo = 0xB1B2B3B400000000ULL;
+    }
+
+    struct rix_hash_bucket_s *bk = NULL;
+    size_t bk_sz = (size_t)NB_BK * sizeof(*bk);
+    if (posix_memalign((void **)&bk, 64, bk_sz) != 0) {
+        perror("posix_memalign"); exit(1);
+    }
+    memset(bk, 0, bk_sz);
+
+    struct myht_keyonly head;
+    RIX_HASH_INIT(myht_keyonly, &head, NB_BK);
+
+    unsigned inserted = 0;
+    for (unsigned i = 0; i < N; i++) {
+        struct mynode_keyonly *ret =
+            myht_keyonly_insert(&head, bk, nodes, &nodes[i]);
+        if (ret == NULL) {
+            inserted++;
+        } else if (ret == &nodes[i]) {
+            break;
+        } else {
+            FAILF("keyonly_max_fill insert[%u]: unexpected ret %p",
+                  i, (void *)ret);
+        }
+    }
+    printf("  inserted %u / %u (%.1f%%)\n",
+           inserted, CAPACITY,
+           100.0 * inserted / CAPACITY);
+
+    if (head.rhh_nb != inserted)
+        FAILF("keyonly_max_fill rhh_nb=%u expected %u", head.rhh_nb, inserted);
+
+    /* Every inserted entry must still be findable */
+    for (unsigned i = 0; i < inserted; i++) {
+        struct mynode_keyonly *f =
+            myht_keyonly_find(&head, bk, nodes, &nodes[i].key);
+        if (f != &nodes[i])
+            FAILF("keyonly_max_fill find[%u] failed", i);
+    }
+
     free(bk);
     free(nodes);
 }
@@ -976,7 +1749,7 @@ main(int argc, char **argv)
 {
     unsigned seed   = 0xC0FFEE11u;
     unsigned N      = 512u;
-    unsigned nb_bk  = 64u;  /* 64 × 16 = 1024 slots; N/capacity = 0.5 */
+    unsigned nb_bk  = 64u;  /* 64 x 16 = 1024 slots; N/capacity = 0.5 */
     unsigned ops    = 200000u;
 
     if (argc >= 2) seed  = (unsigned)strtoul(argv[1], NULL, 10);
@@ -989,16 +1762,35 @@ main(int argc, char **argv)
     test_init_empty();
     test_insert_find_remove();
     test_duplicate();
+    test_remove_miss();
     test_staged_find();
     test_walk();
     test_fuzz(seed, N, nb_bk, ops);
     test_slot_insert_find_remove();
     test_slot_duplicate();
+    test_slot_remove_miss();
     test_slot_fuzz(seed, N, nb_bk, ops);
 
-    test_nohf_insert_find_remove();
-    test_nohf_duplicate();
-    test_nohf_fuzz(seed, N, nb_bk, ops);
+    test_keyonly_insert_find_remove();
+    test_keyonly_duplicate();
+    test_keyonly_remove_miss();
+    test_keyonly_fuzz(seed, N, nb_bk, ops);
+
+    /* High-fill / hash-conflict tests (all 3 variants) */
+    test_high_fill();
+    test_max_fill();
+    test_kickout_corruption();
+    test_slot_high_fill();
+    test_slot_max_fill();
+    test_slot_kickout_corruption();
+    test_keyonly_high_fill();
+    test_keyonly_max_fill();
+    test_keyonly_kickout_corruption();
+
+    /* Aggressive fuzz: 98% fill ratio (N ~ nb_bk x 16) */
+    test_fuzz(seed, 1000, 64, 500000);
+    test_slot_fuzz(seed, 1000, 64, 500000);
+    test_keyonly_fuzz(seed, 1000, 64, 500000);
 
     printf("ALL RIX_HASH TESTS PASSED\n");
     return 0;

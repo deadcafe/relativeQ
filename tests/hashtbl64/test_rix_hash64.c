@@ -1,5 +1,5 @@
 /* test_rix_hash64.c
- *  RIX_HASH64 (cuckoo hash table, 64-bit key) – unit & fuzz tests
+ *  RIX_HASH64 (cuckoo hash table, 64-bit key) - unit & fuzz tests
  */
 
 #include <stdio.h>
@@ -36,7 +36,7 @@ RIX_HASH64_GENERATE(myht64, mynode_t, key, INVALID_KEY)
 /* Globals for basic tests                                             */
 /* ================================================================== */
 #define NB_BASIC     20u
-#define NB_BK_BASIC   4u  /* 4 × 8 = 32 slots for 20 nodes */
+#define NB_BK_BASIC   4u  /* 4 x 8 = 32 slots for 20 nodes */
 
 static mynode_t                    g_basic[NB_BASIC];
 static struct rix_hash64_bucket_s  g_bk[NB_BK_BASIC] __attribute__((aligned(64)));
@@ -207,6 +207,80 @@ test_walk(void)
 }
 
 /* ================================================================== */
+/* test_remove_miss - remove not-in-table and double remove            */
+/* ================================================================== */
+static void
+test_remove_miss(void)
+{
+    printf("[T] remove_miss\n");
+    basic_init();
+
+    /* Remove a node that was never inserted -> should return NULL */
+    mynode_t *r = RIX_HASH64_REMOVE(myht64, &g_head, g_bk, g_basic, &g_basic[0]);
+    if (r != NULL)
+        FAILF("remove_miss: not-in-table returned %p, expected NULL", (void *)r);
+
+    /* Insert, remove, then remove again -> second remove returns NULL */
+    RIX_HASH64_INSERT(myht64, &g_head, g_bk, g_basic, &g_basic[1]);
+    r = RIX_HASH64_REMOVE(myht64, &g_head, g_bk, g_basic, &g_basic[1]);
+    if (r != &g_basic[1])
+        FAILF("remove_miss: first remove returned %p", (void *)r);
+    r = RIX_HASH64_REMOVE(myht64, &g_head, g_bk, g_basic, &g_basic[1]);
+    if (r != NULL)
+        FAILF("remove_miss: double remove returned %p, expected NULL", (void *)r);
+}
+
+/* ================================================================== */
+/* test_max_fill - 128 buckets, insert until first failure             */
+/* ================================================================== */
+static void
+test_max_fill(void)
+{
+    printf("[T] max_fill (128 buckets)\n");
+
+    const unsigned MF_NB_BK = 128u;
+    const unsigned MF_SLOTS = MF_NB_BK * RIX_HASH64_BUCKET_ENTRY_SZ;
+    const unsigned MF_N     = MF_SLOTS + 64u;  /* try beyond capacity */
+
+    mynode_t *mf_nodes = (mynode_t *)calloc(MF_N, sizeof(mynode_t));
+    struct rix_hash64_bucket_s *mf_bk =
+        (struct rix_hash64_bucket_s *)aligned_alloc(64, MF_NB_BK * sizeof(*mf_bk));
+    if (!mf_nodes || !mf_bk) { perror("alloc"); abort(); }
+
+    for (unsigned i = 0; i < MF_N; i++) {
+        mf_nodes[i].key = (uint64_t)(i + 1);
+        mf_nodes[i].val = (uint64_t)i;
+    }
+
+    struct myht64 mf_head;
+    RIX_HASH64_INIT(myht64, &mf_head, mf_bk, MF_NB_BK);
+
+    unsigned inserted = 0;
+    for (unsigned i = 0; i < MF_N; i++) {
+        mynode_t *r = RIX_HASH64_INSERT(myht64, &mf_head, mf_bk, mf_nodes, &mf_nodes[i]);
+        if (r == NULL)
+            inserted++;
+        else if (r == &mf_nodes[i])
+            break;
+    }
+
+    if (mf_head.rhh_nb != inserted)
+        FAILF("max_fill rhh_nb=%u expected %u", mf_head.rhh_nb, inserted);
+
+    /* Every inserted entry must be findable */
+    for (unsigned i = 0; i < inserted; i++) {
+        mynode_t *f = RIX_HASH64_FIND(myht64, &mf_head, mf_bk, mf_nodes, mf_nodes[i].key);
+        if (f != &mf_nodes[i])
+            FAILF("max_fill find[%u] failed", i);
+    }
+
+    printf("  inserted %u / %u (%.1f%%)\n", inserted, MF_SLOTS,
+           100.0 * inserted / MF_SLOTS);
+
+    free(mf_nodes); free(mf_bk);
+}
+
+/* ================================================================== */
 /* Fuzz test                                                           */
 /* ================================================================== */
 static void
@@ -260,6 +334,138 @@ test_fuzz(unsigned seed, unsigned N, unsigned nb_bk, unsigned ops)
 }
 
 /* ================================================================== */
+/* test_high_fill - fill to 90%+, verify all entries findable          */
+/* ================================================================== */
+static void
+test_high_fill(void)
+{
+    printf("[T] high_fill (90%%+)\n");
+
+    /* 64 buckets x 16 slots = 1024 slots. Insert 960 (~94% fill). */
+    const unsigned HF_NB_BK = 64u;
+    const unsigned HF_SLOTS = HF_NB_BK * RIX_HASH64_BUCKET_ENTRY_SZ;
+    const unsigned HF_N     = 960u;
+
+    mynode_t *hf_nodes = (mynode_t *)calloc(HF_N, sizeof(mynode_t));
+    struct rix_hash64_bucket_s *hf_bk =
+        (struct rix_hash64_bucket_s *)aligned_alloc(64, HF_NB_BK * sizeof(*hf_bk));
+    if (!hf_nodes || !hf_bk) { perror("alloc"); abort(); }
+
+    for (unsigned i = 0; i < HF_N; i++) {
+        hf_nodes[i].key = (uint64_t)(i + 1);
+        hf_nodes[i].val = (uint64_t)(i * 3);
+    }
+
+    struct myht64 hf_head;
+    RIX_HASH64_INIT(myht64, &hf_head, hf_bk, HF_NB_BK);
+
+    unsigned inserted = 0;
+    for (unsigned i = 0; i < HF_N; i++) {
+        mynode_t *r = RIX_HASH64_INSERT(myht64, &hf_head, hf_bk, hf_nodes, &hf_nodes[i]);
+        if (r == NULL)
+            inserted++;
+        else if (r == &hf_nodes[i])
+            break;
+        else
+            FAIL("high_fill insert: unexpected duplicate");
+    }
+    printf("  inserted %u / %u (%.1f%%)\n", inserted, HF_SLOTS,
+           100.0 * inserted / HF_SLOTS);
+
+    if (hf_head.rhh_nb != inserted)
+        FAILF("high_fill rhh_nb=%u expected %u", hf_head.rhh_nb, inserted);
+
+    /* Every inserted entry must be findable */
+    for (unsigned i = 0; i < inserted; i++) {
+        mynode_t *f = RIX_HASH64_FIND(myht64, &hf_head, hf_bk, hf_nodes, hf_nodes[i].key);
+        if (f != &hf_nodes[i])
+            FAILF("high_fill find[%u] failed", i);
+        if (f->val != hf_nodes[i].val)
+            FAILF("high_fill val mismatch for i=%u", i);
+    }
+
+    /* Remove every other, verify remaining */
+    for (unsigned i = 0; i < inserted; i += 2) {
+        mynode_t *r = RIX_HASH64_REMOVE(myht64, &hf_head, hf_bk, hf_nodes, &hf_nodes[i]);
+        if (r != &hf_nodes[i])
+            FAILF("high_fill remove[%u] failed", i);
+    }
+    for (unsigned i = 0; i < inserted; i++) {
+        mynode_t *f = RIX_HASH64_FIND(myht64, &hf_head, hf_bk, hf_nodes, hf_nodes[i].key);
+        if (i % 2 == 0) {
+            if (f != NULL) FAILF("high_fill removed[%u] still found", i);
+        } else {
+            if (f != &hf_nodes[i]) FAILF("high_fill remaining[%u] not found", i);
+        }
+    }
+
+    free(hf_nodes); free(hf_bk);
+}
+
+/* ================================================================== */
+/* test_kickout_corruption - verify no victim loss on failed insert     */
+/* ================================================================== */
+static void
+test_kickout_corruption(void)
+{
+    printf("[T] kickout_corruption\n");
+
+    const unsigned KC_NB_BK = 32u;
+    const unsigned KC_CAP   = KC_NB_BK * RIX_HASH64_BUCKET_ENTRY_SZ; /* 512 */
+    const unsigned KC_N     = KC_CAP + 64u;
+
+    mynode_t *kc_nodes = (mynode_t *)calloc(KC_N, sizeof(mynode_t));
+    struct rix_hash64_bucket_s *kc_bk =
+        (struct rix_hash64_bucket_s *)aligned_alloc(64, KC_NB_BK * sizeof(*kc_bk));
+    if (!kc_nodes || !kc_bk) { perror("alloc"); abort(); }
+
+    for (unsigned i = 0; i < KC_N; i++) {
+        kc_nodes[i].key = (uint64_t)(i + 1);
+        kc_nodes[i].val = (uint64_t)i;
+    }
+
+    struct myht64 kc_head;
+    RIX_HASH64_INIT(myht64, &kc_head, kc_bk, KC_NB_BK);
+
+    /* Phase 1: fill until first failure */
+    unsigned inserted = 0;
+    for (unsigned i = 0; i < KC_N; i++) {
+        mynode_t *r = RIX_HASH64_INSERT(myht64, &kc_head, kc_bk, kc_nodes, &kc_nodes[i]);
+        if (r == NULL)
+            inserted++;
+        else if (r == &kc_nodes[i])
+            break;
+    }
+
+    /* Phase 2: force more failed inserts, check no victim loss */
+    unsigned pre_nb = kc_head.rhh_nb;
+    unsigned lost = 0;
+    for (unsigned i = inserted; i < KC_N; i++) {
+        mynode_t *r = RIX_HASH64_INSERT(myht64, &kc_head, kc_bk, kc_nodes, &kc_nodes[i]);
+        if (r == NULL) {
+            inserted++;
+        } else if (r == &kc_nodes[i]) {
+            for (unsigned j = 0; j < inserted; j++) {
+                mynode_t *f = RIX_HASH64_FIND(myht64, &kc_head, kc_bk, kc_nodes, kc_nodes[j].key);
+                if (f != &kc_nodes[j]) {
+                    lost++;
+                    break;
+                }
+            }
+            if (lost > 0) break;
+        }
+    }
+
+    printf("  pre_nb=%u post_nb=%u lost_victims=%u\n",
+           pre_nb, kc_head.rhh_nb, lost);
+
+    if (lost > 0)
+        FAILF("kickout_corruption: victim loss detected (%u)", lost);
+
+    free(kc_nodes); free(kc_bk);
+}
+
+/* ================================================================== */
 /* main                                                                */
 /* ================================================================== */
 int
@@ -272,7 +478,12 @@ main(void)
     test_duplicate_insert();
     test_staged_find();
     test_walk();
+    test_remove_miss();
+    test_max_fill();
+    test_high_fill();
+    test_kickout_corruption();
     test_fuzz(3237998097u, 512, 64, 200000);
+    test_fuzz(3237998097u, 1000, 64, 500000);
 
     printf("ALL RIX_HASH64 TESTS PASSED\n");
     return 0;

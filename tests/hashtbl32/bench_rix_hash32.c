@@ -4,18 +4,18 @@
  *
  *  Usage: ./hash32_bench [table_n [nb_bk [repeat]]]
  *    table_n : number of table entries  (default: 10,000,000)
- *    nb_bk   : number of buckets       (default: auto – ~80% fill of table_n)
+ *    nb_bk   : number of buckets       (default: auto - ~80% fill of table_n)
  *    repeat  : number of iterations    (default: 2000)
  *
  *  Differences from the 128-bit variant:
  *    - Keys are uint32_t values directly; no pointer indirection to key data.
  *      key_pool is uint32_t[], so the HW prefetcher handles sequential access.
- *      → key prefetch stage (rix_hash_prefetch_key) is not needed/used.
+ *      -> key prefetch stage (rix_hash_prefetch_key) is not needed/used.
  *    - Since hash_field is not stored in the node, bk_0/bk_1 placement is
  *      determined by re-hashing each slot's key.
  *    - Node size is small (8 bytes), so bk_mem must be large to ensure
  *      DRAM-cold testing (increase the number of buckets).
- *    - cmp_key only checks idx != RIX_NIL (no full key comparison) → fast.
+ *    - cmp_key only checks idx != RIX_NIL (no full key comparison) -> fast.
  */
 
 #include <stdio.h>
@@ -77,11 +77,11 @@ now_sec(void)
 
 /*
  * Key prefetch distance (in batches):
- * ~48 cy per hash_key batch (CRC32×8 + prefetch×8×1)
- * DRAM latency ~300 cy → 300/48 ≈ 7 batches needed → use 8/11 with margin
+ * ~48 cy per hash_key batch (CRC32x8 + prefetchx8x1)
+ * DRAM latency ~300 cy -> 300/48 ~ 7 batches needed -> use 8/11 with margin
  */
-#define KPD8  8   /* x8 Nahead: 8 batches × 8 keys = 64 keys ahead */
-#define KPD6 11   /* x6 Nahead: 11 batches × 6 keys = 66 keys ahead */
+#define KPD8  8   /* x8 pipeline: 8 batches x 8 keys = 64 keys ahead */
+#define KPD6 11   /* x6 pipeline: 11 batches x 6 keys = 66 keys ahead */
 
 static struct rix_hash32_find_ctx_s g_ctx[BENCH_N];
 static mynode_t                    *g_res[BENCH_N];
@@ -158,9 +158,9 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
 
     /*
      * Insert path measurement (32-bit variant):
-     *   bk0_fast: bk_0 has a free slot → fast path to bk_0
-     *   bk1_fast: bk_0 full & bk_1 has a free slot → fast path to bk_1
-     *   kickout : both full → cuckoo kickout
+     *   bk0_fast: bk_0 has a free slot -> fast path to bk_0
+     *   bk1_fast: bk_0 full & bk_1 has a free slot -> fast path to bk_1
+     *   kickout : both full -> cuckoo kickout
      */
     uint64_t ins_bk0_fast = 0, ins_bk1_fast = 0, ins_kickout = 0;
 
@@ -230,11 +230,11 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
 
     /* ---- Key pool generation ----------------------------------------- */
     /*
-     * Generate repeat × BENCH_N uint32_t key values.
+     * Generate repeat x BENCH_N uint32_t key values.
      * Unlike the 128-bit variant, keys are values directly (no pointer indirection).
      * key_pool is accessed sequentially, so the HW prefetcher handles
      * DRAM misses for key data automatically.
-     * → key prefetch stage (equivalent to rix_hash_prefetch_key) is not needed.
+     * -> key prefetch stage (equivalent to rix_hash_prefetch_key) is not needed.
      *
      * key_pool stores only keys of inserted nodes so all lookups hit
      * (ensuring bk_1 access on miss does not always occur).
@@ -298,7 +298,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
             RIX_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b * 8], 8, nodes);
         for (int b = 0; b < BENCH_N8 / 8; b++)
             RIX_HASH32_CMP_KEY_N(myht32, &g_ctx[b * 8], 8, nodes, &g_res[b * 8]);
-        /* x8 Nahead warmup */
+        /* x8 pipeline warmup */
         for (int b = 0; b < KPD8 && b < BENCH_N8/8; b++)
             RIX_HASH32_HASH_KEY_N(myht32, &g_ctx[b*8], 8, &head, bk, wk + b*8);
         for (int b = 0; b < BENCH_N8/8; b++) {
@@ -311,7 +311,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
             RIX_HASH32_PREFETCH_NODE_N(myht32, &g_ctx[b*8], 8, nodes);
         for (int b = 0; b < BENCH_N8/8; b++)
             RIX_HASH32_CMP_KEY_N(myht32, &g_ctx[b*8], 8, nodes, &g_res[b*8]);
-        /* x6 Nahead warmup */
+        /* x6 pipeline warmup */
         for (int b = 0; b < KPD6 && b < BENCH_N6/6; b++)
             RIX_HASH32_HASH_KEY_N(myht32, &g_ctx[b*6], 6, &head, bk, wk + b*6);
         for (int b = 0; b < BENCH_N6/6; b++) {
@@ -346,7 +346,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         uint64_t min_cy;
         uint64_t sum_cy;
         int      ops;
-    } result[10] = {
+    } result[12] = {
         { "find (single)      ", UINT64_MAX, 0, BENCH_N  },
         { "x1 (bk only)       ", UINT64_MAX, 0, BENCH_N  },
         { "x1 (bk+node)       ", UINT64_MAX, 0, BENCH_N  },
@@ -355,8 +355,10 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         { "x4 (bk+node)       ", UINT64_MAX, 0, BENCH_N  },
         { "x6 (bk+node)       ", UINT64_MAX, 0, BENCH_N6 },
         { "x8 (bk+node)       ", UINT64_MAX, 0, BENCH_N8 },
-        { "x6 (bk) Nahead     ", UINT64_MAX, 0, BENCH_N6 },
-        { "x8 (bk) Nahead     ", UINT64_MAX, 0, BENCH_N8 },
+        { "x6 (bk) pipeline     ", UINT64_MAX, 0, BENCH_N6 },
+        { "x8 (bk) pipeline     ", UINT64_MAX, 0, BENCH_N8 },
+        { "remove             ", UINT64_MAX, 0, BENCH_N  },
+        { "insert             ", UINT64_MAX, 0, BENCH_N  },
     };
 
     /* ---- [0] Sequential find ----------------------------------------- */
@@ -370,7 +372,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         result[0].sum_cy += cy;
     }
 
-    /* ---- [1] x1: hash_key → scan_bk → cmp_key (node not prefetched) -- */
+    /* ---- [1] x1: hash_key -> scan_bk -> cmp_key (node not prefetched) -- */
     for (unsigned r = 0; r < repeat; r++) {
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
@@ -385,7 +387,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         result[1].sum_cy += cy;
     }
 
-    /* ---- [2] x1: hash_key → scan_bk → prefetch_node → cmp_key --- */
+    /* ---- [2] x1: hash_key -> scan_bk -> prefetch_node -> cmp_key --- */
     for (unsigned r = 0; r < repeat; r++) {
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
@@ -402,7 +404,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         result[2].sum_cy += cy;
     }
 
-    /* ---- [3] x2: hash_key2 → scan_bk2 → prefetch_node2 → cmp_key2 */
+    /* ---- [3] x2: hash_key2 -> scan_bk2 -> prefetch_node2 -> cmp_key2 */
     for (unsigned r = 0; r < repeat; r++) {
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
@@ -419,7 +421,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         result[3].sum_cy += cy;
     }
 
-    /* ---- [4] x4: hash_key4 → scan_bk4 → cmp_key4 (node not prefetched) */
+    /* ---- [4] x4: hash_key4 -> scan_bk4 -> cmp_key4 (node not prefetched) */
     for (unsigned r = 0; r < repeat; r++) {
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
@@ -434,7 +436,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         result[4].sum_cy += cy;
     }
 
-    /* ---- [5] x4: hash_key4 → scan_bk4 → prefetch_node4 → cmp_key4 */
+    /* ---- [5] x4: hash_key4 -> scan_bk4 -> prefetch_node4 -> cmp_key4 */
     for (unsigned r = 0; r < repeat; r++) {
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
@@ -451,7 +453,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         result[5].sum_cy += cy;
     }
 
-    /* ---- [6] x6: hash_key6 → scan_bk6 → prefetch_node6 → cmp_key6 */
+    /* ---- [6] x6: hash_key6 -> scan_bk6 -> prefetch_node6 -> cmp_key6 */
     for (unsigned r = 0; r < repeat; r++) {
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
@@ -468,7 +470,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         result[6].sum_cy += cy;
     }
 
-    /* ---- [7] x8: hash_key8 → scan_bk8 → prefetch_node8 → cmp_key8 */
+    /* ---- [7] x8: hash_key8 -> scan_bk8 -> prefetch_node8 -> cmp_key8 */
     for (unsigned r = 0; r < repeat; r++) {
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
@@ -485,7 +487,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         result[7].sum_cy += cy;
     }
 
-    /* ---- [8] x6 Nahead ----------------------------------------------- */
+    /* ---- [8] x6 pipeline ----------------------------------------------- */
     for (unsigned r = 0; r < repeat; r++) {
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
@@ -506,7 +508,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         result[8].sum_cy += cy;
     }
 
-    /* ---- [9] x8 Nahead ----------------------------------------------- */
+    /* ---- [9] x8 pipeline ----------------------------------------------- */
     for (unsigned r = 0; r < repeat; r++) {
         uint32_t *ik = key_pool + (size_t)r * BENCH_N;
         uint64_t t0 = tsc_start();
@@ -527,19 +529,54 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         result[9].sum_cy += cy;
     }
 
+    /* ---- [10] remove: remove BENCH_N entries, re-insert to restore ---- */
+    /*
+     * nodes[0..BENCH_N-1] are already inserted.
+     * Each repeat: remove BENCH_N (measured) -> re-insert BENCH_N (restore).
+     */
+    for (unsigned r = 0; r < repeat; r++) {
+        uint64_t t0 = tsc_start();
+        for (int i = 0; i < BENCH_N; i++)
+            RIX_HASH32_REMOVE(myht32, &head, bk, nodes, &nodes[i]);
+        uint64_t cy = tsc_end() - t0;
+        if (cy < result[10].min_cy) result[10].min_cy = cy;
+        result[10].sum_cy += cy;
+        for (int i = 0; i < BENCH_N; i++)
+            RIX_HASH32_INSERT(myht32, &head, bk, nodes, &nodes[i]);
+    }
+
+    /* ---- [11] insert: pre-remove BENCH_N, then measure insert ------- */
+    /*
+     * Remove BENCH_N entries to ensure free slots before measuring.
+     * Each repeat: insert BENCH_N (measured) -> remove BENCH_N (reset).
+     */
+    for (int i = 0; i < BENCH_N; i++)
+        RIX_HASH32_REMOVE(myht32, &head, bk, nodes, &nodes[i]);
+
+    for (unsigned r = 0; r < repeat; r++) {
+        uint64_t t0 = tsc_start();
+        for (int i = 0; i < BENCH_N; i++)
+            RIX_HASH32_INSERT(myht32, &head, bk, nodes, &nodes[i]);
+        uint64_t cy = tsc_end() - t0;
+        if (cy < result[11].min_cy) result[11].min_cy = cy;
+        result[11].sum_cy += cy;
+        for (int i = 0; i < BENCH_N; i++)
+            RIX_HASH32_REMOVE(myht32, &head, bk, nodes, &nodes[i]);
+    }
+
     /* ---- Output results ---------------------------------------------- */
     {
         /*
          * MSHR theoretical minimum (after bk_0-only optimization):
-         *   256 lookup × 3 CL (bk_0 CL0 + CL1 + node) = 768 fetches
-         *   bk_1 only on bk_0 miss (~80% fill → rare)
+         *   256 lookup x 3 CL (bk_0 CL0 + CL1 + node) = 768 fetches
+         *   bk_1 only on bk_0 miss (~80% fill -> rare)
          *   MSHR capacity ~20, DRAM latency ~300 cycles
-         *   → min: 768 / 20 × 300 = 11520 cycles/256 = 45 cycles/op
+         *   -> min: 768 / 20 x 300 = 11520 cycles/256 = 45 cycles/op
          *
          * Comparison points vs 128-bit variant:
          *   - hash_fn is cheaper (CRC32 of 32-bit vs 128-bit)
          *   - cmp_key only checks idx != NIL (no full key comparison)
-         *   - smaller node (8 bytes) → higher hit rate per node CL
+         *   - smaller node (8 bytes) -> higher hit rate per node CL
          */
         double mshr_min = 11520.0;
         printf("\n");
@@ -548,7 +585,10 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
         printf("  %-20s  %10s  %10s  %10s  %10s\n",
                "--------------------", "----------", "----------",
                "----------", "----------");
-        for (int p = 0; p < 10; p++) {
+        for (int p = 0; p < 12; p++) {
+            if (p == 10)
+                printf("  %-20s  %10s  %10s  %10s  %10s\n",
+                       "-- insert/remove --", "", "", "", "");
             uint64_t avg = result[p].sum_cy / (uint64_t)repeat;
             int ops = result[p].ops;
             printf("  %-20s  %10llu  %10llu  %10.2f  %10.2f\n",
@@ -564,7 +604,7 @@ bench_find(unsigned table_n, unsigned nb_bk, unsigned repeat)
                mshr_min, mshr_min / BENCH_N);
         printf("  note: avg reflects steady-state DRAM-bound throughput;\n");
         printf("        min reflects best-case (partially cache-warm) throughput.\n");
-        printf("        bk_mem=%.1f MB vs typical L3 cache → avg is cache-cold.\n\n",
+        printf("        bk_mem=%.1f MB vs typical L3 cache -> avg is cache-cold.\n\n",
                bk_mem / 1e6);
     }
 
