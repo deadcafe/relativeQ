@@ -38,17 +38,19 @@
  *     RIX_RB      -- red-black tree
  *
  *   Hash Tables (rix/rix_hash.h, rix/rix_hash32.h, rix/rix_hash64.h)
- *     RIX_HASH    -- cuckoo hash, 16-way bucket, fingerprint in bucket,
- *                    variable-length key in node.  O(1) remove via
- *                    cur_hash field.  SLOT variants additionally keep the
- *                    current slot in the node and remove without scanning
- *                    idx[16].
- *     RIX_HASH32  -- cuckoo hash, uint32_t key stored in bucket
- *     RIX_HASH64  -- cuckoo hash, uint64_t key stored in bucket
+ *     RIX_HASH (fp)      -- cuckoo hash, 16-way bucket, fingerprint
+ *                           in bucket, variable-length key in node.
+ *                           O(1) remove via hash_field.
+ *     RIX_HASH (slot)    -- fp + slot_field; O(1) remove without
+ *                           scanning idx[16].
+ *     RIX_HASH (keyonly)  -- fp without hash_field/slot_field in node;
+ *                           smaller node, remove requires re-hash.
+ *     RIX_HASH32         -- cuckoo hash, uint32_t key stored in bucket
+ *     RIX_HASH64         -- cuckoo hash, uint64_t key stored in bucket
  *
  *     All hash variants provide:
  *       - Runtime SIMD dispatch (Generic / AVX2 / AVX-512)
- *       - N-ahead pipelined staged find (hash_key, scan_bk,
+ *       - Pipelined staged find (hash_key, scan_bk,
  *         prefetch_node, cmp_key) for DRAM latency hiding
  *       - init, find, insert, remove, walk
  *
@@ -73,7 +75,6 @@
 #  include <rix/rix_queue.h>
 #  include <rix/rix_tree.h>
 #  include <rix/rix_hash.h>
-#  include <rix/rix_hash_key.h>
 
 #endif /* _LIBRIX_H_ */
 

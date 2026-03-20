@@ -32,19 +32,19 @@
 /*
  * rix_hash64.h - index-based cuckoo hash table for 64-bit keys, C11
  *
- * Key type: uint64_t, stored directly in bucket (no fingerprint array).
+ * Key type: u64, stored directly in bucket (no fingerprint array).
  * No hash_field required in the node struct.
  * Runtime SIMD dispatch via rix_hash_arch (shared with rix_hash.h).
  * Index-based: RIX_NIL=0, 1-origin indices (no raw pointers stored).
  *
  * Bucket layout:
- *   CL0+CL1: uint64_t key[16] - 128 bytes: actual 64-bit key values
- *   CL2:     uint32_t idx[16] -  64 bytes: 1-origin node indices
+ *   CL0+CL1: u64 key[16] - 128 bytes: actual 64-bit key values
+ *   CL2:     u32 idx[16] -  64 bytes: 1-origin node indices
  *
  * Empty slot sentinel: idx[s] == RIX_NIL (0).
  * scan_bk performs exact 64-bit key match against bk->key[] using find_u64x16.
  * remove re-hashes elm->key_field to locate the bucket, then uses find_u32x16
- * directly on idx[16] (16 uint32_t, perfectly sized) to find the slot by index.
+ * directly on idx[16] (16 u32, perfectly sized) to find the slot by index.
  * kickout re-hashes the victim key to find the alternate bucket.
  *
  * Slot count vs rix_hash32:
@@ -74,7 +74,7 @@
 #ifndef _RIX_HASH64_H_
 #  define _RIX_HASH64_H_
 
-#  include "rix_hash.h"
+#  include "rix_hash_common.h"
 
 /*===========================================================================
  * Bucket entry count
@@ -85,14 +85,14 @@
  * Bucket layout
  * 192 bytes = 3 x 64-byte cache lines, aligned to 64 bytes.
  *
- *   CL0+CL1  key[0..15] : 16 x uint64_t  = 128 B  (SIMD key scan target)
- *   CL2      idx[0..15] : 16 x uint32_t  =  64 B  (node indices, 1-origin)
+ *   CL0+CL1  key[0..15] : 16 x u64  = 128 B  (SIMD key scan target)
+ *   CL2      idx[0..15] : 16 x u32  =  64 B  (node indices, 1-origin)
  *
- * idx[16] is exactly uint32_t[16] - find_u32x16 scans it directly in remove.
+ * idx[16] is exactly u32[16] - find_u32x16 scans it directly in remove.
  *===========================================================================*/
 struct rix_hash64_bucket_s {
-    uint64_t key[RIX_HASH64_BUCKET_ENTRY_SZ]; /* CL0+CL1: 64-bit keys        */
-    uint32_t idx[RIX_HASH64_BUCKET_ENTRY_SZ]; /* CL2: 1-origin node idx      */
+    u64 key[RIX_HASH64_BUCKET_ENTRY_SZ]; /* CL0+CL1: 64-bit keys        */
+    u32 idx[RIX_HASH64_BUCKET_ENTRY_SZ]; /* CL2: 1-origin node idx      */
 } __attribute__((aligned(64)));
 
 /*===========================================================================
@@ -109,8 +109,8 @@ struct rix_hash64_bucket_s {
  *===========================================================================*/
 struct rix_hash64_find_ctx_s {
     struct rix_hash64_bucket_s *bk[2];
-    uint64_t                    key;        /* 64-bit search key             */
-    uint32_t                    hits[2];    /* bitmask: key match in bk[i]   */
+    u64                    key;        /* 64-bit search key             */
+    u32                    hits[2];    /* bitmask: key match in bk[i]   */
 };
 
 /*===========================================================================
@@ -119,7 +119,7 @@ struct rix_hash64_find_ctx_s {
  *   name        - head struct tag AND generated-function prefix (must match
  *                 the tag given to RIX_HASH64_HEAD)
  *   type        - element struct type
- *   key_field   - field name inside type; must be uint64_t
+ *   key_field   - field name inside type; must be u64
  *   invalid_key - compile-time constant written to bk->key[] for empty/
  *                 removed slots.  Must not equal any key the caller will
  *                 ever insert or search.
@@ -149,7 +149,7 @@ struct rix_hash64_find_ctx_s {
  *     void  name_init (head, buckets, nb_bk)
  *
  *   Staged find (x1):
- *     void  name_hash_key      (ctx, head, buckets, key)  key: uint64_t
+ *     void  name_hash_key      (ctx, head, buckets, key)  key: u64
  *     void  name_scan_bk       (ctx, head, buckets)
  *     void  name_prefetch_node (ctx, base)
  *     type *name_cmp_key       (ctx, base)
@@ -161,7 +161,7 @@ struct rix_hash64_find_ctx_s {
  *     void  name_cmp_key_n     (ctx, n, base, results)
  *
  *   Single-shot ops:
- *     type *name_find  (head, buckets, base, key)   key is uint64_t
+ *     type *name_find  (head, buckets, base, key)   key is u64
  *     type *name_insert(head, buckets, base, elm)
  *     type *name_remove(head, buckets, base, elm)   elm is type *
  *     int   name_walk  (head, buckets, base, cb, arg)
@@ -214,8 +214,8 @@ name##_init(struct name *head,                                                \
     for (unsigned _b = 0u; _b < nb_bk; _b++) {                                \
         struct rix_hash64_bucket_s *_bk = buckets + _b;                       \
         for (unsigned _s = 0u; _s < RIX_HASH64_BUCKET_ENTRY_SZ; _s++) {       \
-            _bk->key[_s] = (uint64_t)(invalid_key);                           \
-            _bk->idx[_s] = (uint32_t)RIX_NIL;                                 \
+            _bk->key[_s] = (u64)(invalid_key);                           \
+            _bk->idx[_s] = (u32)RIX_NIL;                                 \
         }                                                                     \
     }                                                                         \
 }                                                                             \
@@ -243,12 +243,12 @@ name##_hptr(type *base, unsigned i) {                                         \
 /*   CL2 (+128): idx[ 0..15] - needed by prefetch_node and cmp_key       */   \
 /* bk[1] is not prefetched; it is scanned lazily in cmp_key on bk[0]     */   \
 /* miss (moderate fill -> most hits land in bk[0]).                      */   \
-/* key is passed by value (uint64_t), not as a pointer.                  */   \
+/* key is passed by value (u64), not as a pointer.                  */   \
 static RIX_UNUSED RIX_FORCE_INLINE void                                       \
 name##_hash_key(struct rix_hash64_find_ctx_s *ctx,                            \
                 struct name *head,                                            \
                 struct rix_hash64_bucket_s *buckets,                          \
-                uint64_t key)                                                 \
+                u64 key)                                                 \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
     union rix_hash_hash_u _h = rix_hash_arch->hash_u64(key, mask);            \
@@ -276,7 +276,7 @@ static RIX_UNUSED RIX_FORCE_INLINE void                                       \
 name##_prefetch_node(struct rix_hash64_find_ctx_s *ctx,                       \
                      type *base)                                              \
 {                                                                             \
-    uint32_t _hits = ctx->hits[0];                                            \
+    u32 _hits = ctx->hits[0];                                            \
     while (_hits) {                                                           \
         unsigned _bit = (unsigned)__builtin_ctz(_hits);                       \
         _hits &= _hits - 1u;                                                  \
@@ -291,7 +291,7 @@ name##_cmp_key(struct rix_hash64_find_ctx_s *ctx,                             \
                type *base)                                                    \
 {                                                                             \
     /* Fast path: bk[0] */                                                    \
-    uint32_t _hits = ctx->hits[0];                                            \
+    u32 _hits = ctx->hits[0];                                            \
     if (_hits) {                                                              \
         unsigned _bit = (unsigned)__builtin_ctz(_hits);                       \
         return name##_hptr(base, ctx->bk[0]->idx[_bit]);                      \
@@ -316,7 +316,7 @@ name##_hash_key_n(struct rix_hash64_find_ctx_s *ctx,                          \
                   int n,                                                      \
                   struct name *head,                                          \
                   struct rix_hash64_bucket_s *buckets,                        \
-                  const uint64_t *keys)                                       \
+                  const u64 *keys)                                       \
 {                                                                             \
     for (int _j = 0; _j < n; _j++)                                            \
         name##_hash_key(&ctx[_j], head, buckets, keys[_j]);                   \
@@ -358,12 +358,99 @@ static RIX_UNUSED RIX_FORCE_INLINE type *                                     \
 name##_find(struct name *head,                                                \
             struct rix_hash64_bucket_s *buckets,                              \
             type *base,                                                       \
-            uint64_t key)                                                     \
+            u64 key)                                                     \
 {                                                                             \
     struct rix_hash64_find_ctx_s _ctx;                                        \
     name##_hash_key(&_ctx, head, buckets, key);                               \
     name##_scan_bk (&_ctx, head, buckets);                                    \
     return name##_cmp_key(&_ctx, base);                                       \
+}                                                                             \
+                                                                              \
+/* ================================================================== */      \
+/* find_empty - return first empty slot in bucket, or -1              */      \
+/* ================================================================== */      \
+static RIX_UNUSED int                                                         \
+name##_find_empty(struct rix_hash64_bucket_s *buckets,                        \
+                  unsigned bk_idx)                                            \
+{                                                                             \
+    u32 _nilm = rix_hash_arch->find_u64x16(                              \
+        buckets[bk_idx].key, (u64)(invalid_key));                        \
+    if (!_nilm) return -1;                                                    \
+    return (int)__builtin_ctz(_nilm);                                         \
+}                                                                             \
+                                                                              \
+/* ================================================================== */      \
+/* flipflop - move bk[slot] to its alt bucket if room exists          */      \
+/* Returns freed slot index on success, -1 on failure.                */      \
+/* ================================================================== */      \
+static RIX_UNUSED int                                                         \
+name##_flipflop(struct rix_hash64_bucket_s *buckets,                          \
+                unsigned mask,                                                \
+                unsigned bk_idx,                                              \
+                unsigned slot)                                                \
+{                                                                             \
+    struct rix_hash64_bucket_s *_bk = buckets + bk_idx;                       \
+    u64 _key = _bk->key[slot];                                           \
+    unsigned _idx = _bk->idx[slot];                                           \
+    if (_idx == (unsigned)RIX_NIL) return -1;                                 \
+    union rix_hash_hash_u _rh = rix_hash_arch->hash_u64(_key, mask);          \
+    unsigned _rb0 = _rh.val32[0] & mask;                                       \
+    unsigned _rb1 = _rh.val32[1] & mask;                                       \
+    unsigned _ab  = (bk_idx == _rb0) ? _rb1 : _rb0;                           \
+    int _es = name##_find_empty(buckets, _ab);                                \
+    if (_es < 0) return -1;                                                   \
+    struct rix_hash64_bucket_s *_alt = buckets + _ab;                         \
+    _alt->key[_es] = _key;                                                     \
+    _alt->idx[_es] = _idx;                                                     \
+    _bk->key[slot] = (u64)(invalid_key);                                 \
+    _bk->idx[slot] = (u32)RIX_NIL;                                       \
+    return (int)slot;                                                         \
+}                                                                             \
+                                                                              \
+/* ================================================================== */      \
+/* kickout - non-destructive recursive cuckoo displacement            */      \
+/* Pass 1: try flipflop on each slot (immediate neighbour has room).  */      \
+/* Pass 2: recurse into alt buckets; inline move on unwind.           */      \
+/* Returns freed slot index on success, -1 on failure.                */      \
+/* ================================================================== */      \
+static RIX_UNUSED int                                                         \
+name##_kickout(struct rix_hash64_bucket_s *buckets,                           \
+               unsigned mask,                                                 \
+               unsigned bk_idx,                                               \
+               int depth)                                                     \
+{                                                                             \
+    if (depth <= 0) return -1;                                                \
+    struct rix_hash64_bucket_s *_bk = buckets + bk_idx;                       \
+                                                                              \
+    for (unsigned _s = 0; _s < RIX_HASH64_BUCKET_ENTRY_SZ; _s++) {           \
+        if (name##_flipflop(buckets, mask, bk_idx, _s) >= 0)                 \
+            return (int)_s;                                                   \
+    }                                                                         \
+    for (unsigned _s = 0; _s < RIX_HASH64_BUCKET_ENTRY_SZ; _s++) {           \
+        u64 _key = _bk->key[_s];                                         \
+        unsigned _si  = _bk->idx[_s];                                          \
+        if (_si == (unsigned)RIX_NIL) continue;                               \
+        union rix_hash_hash_u _sh = rix_hash_arch->hash_u64(_key, mask);      \
+        unsigned _sb0 = _sh.val32[0] & mask;                                   \
+        unsigned _sb1 = _sh.val32[1] & mask;                                   \
+        unsigned _ab  = (bk_idx == _sb0) ? _sb1 : _sb0;                       \
+        if (name##_kickout(buckets, mask, _ab, depth - 1) >= 0) {             \
+            /* Re-check: recursive chain may have relocated bk[_s] */        \
+            if (_bk->key[_s] != _key || _bk->idx[_s] != _si) {              \
+                int _fs = name##_find_empty(buckets, bk_idx);                \
+                if (_fs >= 0) return _fs;                                    \
+                continue;                                                    \
+            }                                                                \
+            int _es = name##_find_empty(buckets, _ab);                        \
+            struct rix_hash64_bucket_s *_alt = buckets + _ab;                 \
+            _alt->key[_es] = _key;                                             \
+            _alt->idx[_es] = _si;                                              \
+            _bk->key[_s] = (u64)(invalid_key);                           \
+            _bk->idx[_s] = (u32)RIX_NIL;                                \
+            return (int)_s;                                                   \
+        }                                                                     \
+    }                                                                         \
+    return -1;                                                                \
 }                                                                             \
                                                                               \
 /* ================================================================== */      \
@@ -373,9 +460,6 @@ name##_find(struct name *head,                                                \
 /*   NULL     - inserted successfully                                 */      \
 /*   elm      - table full (kickout exhausted)                        */      \
 /*   other    - duplicate found, returns the existing node            */      \
-/*                                                                    */      \
-/* No hash_field in node: kickout re-hashes victim key to find alt    */      \
-/* bucket (slightly more expensive than XOR trick, but rare path).    */      \
 /* ================================================================== */      \
 attr type *                                                                   \
 name##_insert(struct name *head,                                              \
@@ -385,83 +469,53 @@ name##_insert(struct name *head,                                              \
 {                                                                             \
     unsigned mask = head->rhh_mask;                                           \
     union rix_hash_hash_u _h =                                                \
-        rix_hash_arch->hash_u64((uint64_t)elm->key_field, mask);              \
+        rix_hash_arch->hash_u64((u64)elm->key_field, mask);              \
     unsigned _bk0 = _h.val32[0] & mask;                                       \
     unsigned _bk1 = _h.val32[1] & mask;                                       \
                                                                               \
-    /* Duplicate check in both candidate buckets. */                          \
+    /* Duplicate check */                                                     \
     for (int _i = 0; _i < 2; _i++) {                                          \
         struct rix_hash64_bucket_s *_bk =                                     \
             buckets + (_i == 0 ? _bk0 : _bk1);                                \
-        uint32_t _hits = rix_hash_arch->find_u64x16(_bk->key,                 \
-                                                   (uint64_t)elm->key_field); \
+        u32 _hits = rix_hash_arch->find_u64x16(_bk->key,                 \
+                                                   (u64)elm->key_field); \
         if (_hits) {                                                          \
             unsigned _bit = (unsigned)__builtin_ctz(_hits);                   \
-            return name##_hptr(base, _bk->idx[_bit]); /* duplicate */         \
+            return name##_hptr(base, _bk->idx[_bit]);                         \
         }                                                                     \
     }                                                                         \
                                                                               \
-    /* Fast path: find an empty slot in bk0 then bk1 */                       \
+    /* Fast path: empty slot in bk0 or bk1 */                                \
     for (int _i = 0; _i < 2; _i++) {                                          \
         unsigned _bki = (_i == 0) ? _bk0 : _bk1;                              \
-        struct rix_hash64_bucket_s *_bk = buckets + _bki;                     \
-        uint32_t _nilm = rix_hash_arch->find_u64x16(_bk->key,                 \
-                                            (uint64_t)(invalid_key));         \
-        if (_nilm) {                                                          \
-            unsigned _slot    = (unsigned)__builtin_ctz(_nilm);               \
-            _bk->key[_slot] = (uint64_t)elm->key_field;                       \
+        int _slot = name##_find_empty(buckets, _bki);                         \
+        if (_slot >= 0) {                                                     \
+            struct rix_hash64_bucket_s *_bk = buckets + _bki;                 \
+            _bk->key[_slot] = (u64)elm->key_field;                       \
             _bk->idx[_slot] = name##_hidx(base, elm);                         \
             head->rhh_nb++;                                                   \
-            return NULL; /* success */                                        \
+            return NULL;                                                      \
         }                                                                     \
     }                                                                         \
                                                                               \
-    /* Slow path: cuckoo kickout loop. */                                     \
-    /* No hash_field in node: re-hash victim key to find its alt bucket. */   \
+    /* Slow path: non-destructive recursive kickout */                        \
     {                                                                         \
-        uint64_t _new_key = (uint64_t)elm->key_field;                         \
-        unsigned _new_idx = name##_hidx(base, elm);                           \
-        unsigned _cur_bk  = _bk0;                                             \
-                                                                              \
-        for (int _d = 0; _d < RIX_HASH_FOLLOW_DEPTH; _d++) {                  \
-            struct rix_hash64_bucket_s *_bk = buckets + _cur_bk;              \
-            unsigned _pos =                                                   \
-                (unsigned)_d & (RIX_HASH64_BUCKET_ENTRY_SZ - 1u);             \
-                                                                              \
-            /* Save victim */                                                 \
-            uint64_t _vic_key = _bk->key[_pos];                               \
-            unsigned _vic_idx = _bk->idx[_pos];                               \
-                                                                              \
-            /* Place new entry */                                             \
-            _bk->key[_pos] = _new_key;                                        \
-            _bk->idx[_pos] = _new_idx;                                        \
-                                                                              \
-            /* Re-hash victim to find its two candidate buckets */            \
-            union rix_hash_hash_u _vh = rix_hash_arch->hash_u64(_vic_key, mask);\
-            unsigned _vic_bk0 = _vh.val32[0] & mask;                          \
-            unsigned _alt_bk  = (_vic_bk0 == _cur_bk)                         \
-                                ? (_vh.val32[1] & mask)                       \
-                                : _vic_bk0;                                   \
-                                                                              \
-            /* Try to place victim in alt bucket */                           \
-            struct rix_hash64_bucket_s *_alt = buckets + _alt_bk;             \
-            uint32_t _nilm = rix_hash_arch->find_u64x16(_alt->key,            \
-                                            (uint64_t)(invalid_key));         \
-            if (_nilm) {                                                      \
-                unsigned _slot    = (unsigned)__builtin_ctz(_nilm);           \
-                _alt->key[_slot] = _vic_key;                                  \
-                _alt->idx[_slot] = _vic_idx;                                  \
-                head->rhh_nb++;                                               \
-                return NULL; /* success */                                    \
-            }                                                                 \
-            /* Victim becomes the next entry to displace */                   \
-            _new_key = _vic_key;                                              \
-            _new_idx = _vic_idx;                                              \
-            _cur_bk  = _alt_bk;                                               \
+        int _slot; unsigned _bki;                                             \
+        _slot = name##_kickout(buckets, mask, _bk0,                           \
+                               RIX_HASH_FOLLOW_DEPTH);                        \
+        if (_slot >= 0) { _bki = _bk0; }                                      \
+        else {                                                                \
+            _slot = name##_kickout(buckets, mask, _bk1,                       \
+                                   RIX_HASH_FOLLOW_DEPTH);                    \
+            if (_slot < 0) return elm; /* table full - no modification */     \
+            _bki = _bk1;                                                      \
         }                                                                     \
-        /* Kickout exhausted; elm was not inserted */                         \
+        struct rix_hash64_bucket_s *_bk = buckets + _bki;                     \
+        _bk->key[_slot] = (u64)elm->key_field;                           \
+        _bk->idx[_slot] = name##_hidx(base, elm);                             \
+        head->rhh_nb++;                                                       \
+        return NULL;                                                          \
     }                                                                         \
-    return elm; /* table full */                                              \
 }                                                                             \
                                                                               \
 /* ================================================================== */      \
@@ -469,7 +523,7 @@ name##_insert(struct name *head,                                              \
 /*                                                                    */      \
 /* Re-hashes elm->key_field to locate the two candidate buckets, then */      \
 /* searches each by node index using find_u32x16 on idx[16] (exactly  */      \
-/* 16 uint32_t).                                                      */      \
+/* 16 u32).                                                      */      \
 /* Returns elm on success, NULL if elm is not currently in the table. */      \
 /* ================================================================== */      \
 attr type *                                                                   \
@@ -481,21 +535,21 @@ name##_remove(struct name *head,                                              \
     unsigned mask     = head->rhh_mask;                                       \
     unsigned node_idx = name##_hidx(base, elm);                               \
     union rix_hash_hash_u _h =                                                \
-        rix_hash_arch->hash_u64((uint64_t)elm->key_field, mask);              \
+        rix_hash_arch->hash_u64((u64)elm->key_field, mask);              \
     unsigned _bk0 = _h.val32[0] & mask;                                       \
     unsigned _bk1 = _h.val32[1] & mask;                                       \
                                                                               \
     for (int _i = 0; _i < 2; _i++) {                                          \
         struct rix_hash64_bucket_s *_bk =                                     \
             buckets + (_i == 0 ? _bk0 : _bk1);                                \
-        /* Scan idx[16] as uint32_t[16] to locate slot by node index */       \
-        uint32_t _hits = rix_hash_arch->find_u32x16(                          \
-                             (const uint32_t *)_bk->idx,                      \
-                             (uint32_t)node_idx);                             \
+        /* Scan idx[16] as u32[16] to locate slot by node index */       \
+        u32 _hits = rix_hash_arch->find_u32x16(                          \
+                             (const u32 *)_bk->idx,                      \
+                             (u32)node_idx);                             \
         if (_hits) {                                                          \
             unsigned _slot    = (unsigned)__builtin_ctz(_hits);               \
-            _bk->key[_slot] = (uint64_t)(invalid_key);                        \
-            _bk->idx[_slot] = (uint32_t)RIX_NIL;                              \
+            _bk->key[_slot] = (u64)(invalid_key);                        \
+            _bk->idx[_slot] = (u32)RIX_NIL;                              \
             head->rhh_nb--;                                                   \
             return elm;                                                       \
         }                                                                     \
