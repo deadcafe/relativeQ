@@ -26,6 +26,11 @@ fc_flow6_cmp(const struct fc_flow6_key *a, const struct fc_flow6_key *b)
 FC_CACHE_GENERATE(flow6, FC_FLOW6_DEFAULT_PRESSURE_EMPTY_SLOTS,
                    fc_flow6_hash_fn, fc_flow6_cmp)
 
+#ifdef FC_ARCH_SUFFIX
+#include "fc_ops.h"
+FC_OPS_TABLE(flow6, FC_ARCH_SUFFIX);
+#endif
+
 /*
  * Local Variables:
  * c-file-style: "bsd"

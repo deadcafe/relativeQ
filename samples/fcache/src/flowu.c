@@ -26,6 +26,11 @@ fc_flowu_cmp(const struct fc_flowu_key *a, const struct fc_flowu_key *b)
 FC_CACHE_GENERATE(flowu, FC_FLOWU_DEFAULT_PRESSURE_EMPTY_SLOTS,
                    fc_flowu_hash_fn, fc_flowu_cmp)
 
+#ifdef FC_ARCH_SUFFIX
+#include "fc_ops.h"
+FC_OPS_TABLE(flowu, FC_ARCH_SUFFIX);
+#endif
+
 /*
  * Local Variables:
  * c-file-style: "bsd"

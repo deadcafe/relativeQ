@@ -66,6 +66,11 @@ fc_flow4_cmp(const struct fc_flow4_key *a, const struct fc_flow4_key *b)
 FC_CACHE_GENERATE(flow4, FC_FLOW4_DEFAULT_PRESSURE_EMPTY_SLOTS,
                    fc_flow4_hash_fn, fc_flow4_cmp)
 
+#ifdef FC_ARCH_SUFFIX
+#include "fc_ops.h"
+FC_OPS_TABLE(flow4, FC_ARCH_SUFFIX);
+#endif
+
 /*
  * Local Variables:
  * c-file-style: "bsd"

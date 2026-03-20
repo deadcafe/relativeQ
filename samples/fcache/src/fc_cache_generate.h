@@ -33,7 +33,15 @@
 
 #define _FCG_HT(p, name)   _FCG_CAT(fc_, _FCG_CAT(p, _ht_##name))
 #define _FCG_INT(p, name)  _FCG_CAT(fc_, _FCG_CAT(p, _##name))
+
+/* Public API names: when FC_ARCH_SUFFIX is defined (e.g. -DFC_ARCH_SUFFIX=_avx2),
+ * generated function names become fc_flow4_cache_lookup_batch_avx2 etc.
+ * Without FC_ARCH_SUFFIX, the original names are generated (fc_flow4_cache_lookup_batch). */
+#ifdef FC_ARCH_SUFFIX
+#define _FCG_API(p, name)  _FCG_CAT(_FCG_CAT(fc_, _FCG_CAT(p, _cache_##name)), FC_ARCH_SUFFIX)
+#else
 #define _FCG_API(p, name)  _FCG_CAT(fc_, _FCG_CAT(p, _cache_##name))
+#endif
 
 #define _FCG_KEY_T(p)       struct _FCG_CAT(fc_, _FCG_CAT(p, _key))
 #define _FCG_RESULT_T(p)    struct _FCG_CAT(fc_, _FCG_CAT(p, _result))
@@ -478,9 +486,43 @@ _FCG_INT(p, insert_relief_hashed)(_FCG_CACHE_T(p) *fc,                  \
 }
 
 /*===========================================================================
+ * Sub-macro 3a: Forward declarations for API functions
+ *
+ * When FC_ARCH_SUFFIX is defined, the suffixed function names have no
+ * prototypes in any header.  Emit forward declarations to satisfy
+ * -Wmissing-prototypes.
+ *===========================================================================*/
+#ifdef FC_ARCH_SUFFIX
+#define _FC_GENERATE_API_DECLS(p)                                          \
+void _FCG_API(p, init)(_FCG_CACHE_T(p) *,                                \
+                        struct rix_hash_bucket_s *, unsigned,               \
+                        _FCG_ENTRY_T(p) *, unsigned,                      \
+                        const _FCG_CONFIG_T(p) *);                        \
+void _FCG_API(p, flush)(_FCG_CACHE_T(p) *);                              \
+unsigned _FCG_API(p, nb_entries)(const _FCG_CACHE_T(p) *);                \
+unsigned _FCG_API(p, lookup_batch)(_FCG_CACHE_T(p) *,                     \
+    const _FCG_KEY_T(p) *, unsigned, uint64_t,                             \
+    _FCG_RESULT_T(p) *, uint16_t *);                                      \
+unsigned _FCG_API(p, fill_miss_batch)(_FCG_CACHE_T(p) *,                  \
+    const _FCG_KEY_T(p) *, const uint16_t *, unsigned, uint64_t,           \
+    _FCG_RESULT_T(p) *);                                                  \
+unsigned _FCG_API(p, maintain)(_FCG_CACHE_T(p) *,                         \
+    unsigned, unsigned, uint64_t);                                         \
+unsigned _FCG_API(p, maintain_step_ex)(_FCG_CACHE_T(p) *,                 \
+    unsigned, unsigned, unsigned, uint64_t);                                \
+unsigned _FCG_API(p, maintain_step)(_FCG_CACHE_T(p) *,                    \
+    uint64_t, int);                                                        \
+int _FCG_API(p, remove_idx)(_FCG_CACHE_T(p) *, uint32_t);                \
+void _FCG_API(p, stats)(const _FCG_CACHE_T(p) *, _FCG_STATS_T(p) *);
+#else
+#define _FC_GENERATE_API_DECLS(p) /* prototypes in variant header */
+#endif
+
+/*===========================================================================
  * Sub-macro 3: Public API functions
  *===========================================================================*/
 #define _FC_GENERATE_API(p, pressure, hash_fn)                             \
+_FC_GENERATE_API_DECLS(p)                                                  \
                                                                            \
 void                                                                       \
 _FCG_API(p, init)(_FCG_CACHE_T(p) *fc,                                  \
@@ -753,12 +795,60 @@ _FCG_API(p, stats)(const _FCG_CACHE_T(p) *fc, _FCG_STATS_T(p) *out)   \
 }
 
 /*===========================================================================
+ * Per-TU rix_hash_arch auto-initialization (constructor)
+ *
+ * Each arch-specific TU has its own static rix_hash_arch pointer.
+ * Without this, rix_hash_hash_bytes_fast() falls back to Generic
+ * even when compiled with -mavx2.  The constructor runs once per
+ * shared-library load (or at program start for static linking).
+ *===========================================================================*/
+#ifdef FC_ARCH_SUFFIX
+#define _FC_RIX_ARCH_CTOR(prefix)                                         \
+    __attribute__((constructor)) static void                               \
+    _FCG_CAT(_fc_rix_arch_init_, prefix)(void)                            \
+    {                                                                      \
+        rix_hash_arch_init(RIX_HASH_ARCH_AUTO);                            \
+    }
+#else
+#define _FC_RIX_ARCH_CTOR(prefix) /* no-op without FC_ARCH_SUFFIX */
+#endif
+
+/*===========================================================================
  * Top-level GENERATE macro
  *===========================================================================*/
 #define FC_CACHE_GENERATE(prefix, pressure, hash_fn, cmp_fn)              \
-    _FC_GENERATE_HT(prefix, hash_fn, cmp_fn)                             \
-    _FC_GENERATE_INTERNAL(prefix)                                         \
+    _FC_RIX_ARCH_CTOR(prefix)                                             \
+    _FC_GENERATE_HT(prefix, hash_fn, cmp_fn)                              \
+    _FC_GENERATE_INTERNAL(prefix)                                          \
     _FC_GENERATE_API(prefix, pressure, hash_fn)
+
+/*===========================================================================
+ * Ops table instance generation (for arch-specific builds)
+ *
+ * Usage in each arch .c file, after FC_CACHE_GENERATE:
+ *   FC_OPS_TABLE(flow4, _avx2)
+ *
+ * This defines a const struct fc_flow4_ops fc_flow4_ops_avx2 = { ... }
+ * pointing to the suffixed function names.
+ *===========================================================================*/
+#ifdef FC_ARCH_SUFFIX
+
+#define _FC_OPS_FNAME(prefix, name) \
+    _FCG_CAT(_FCG_CAT(fc_, _FCG_CAT(prefix, _cache_##name)), FC_ARCH_SUFFIX)
+
+#define _FC_OPS_TNAME(prefix, suffix) \
+    _FCG_CAT(_FCG_CAT(fc_, _FCG_CAT(prefix, _ops)), suffix)
+
+#define FC_OPS_TABLE(prefix, suffix)                                           \
+const struct fc_##prefix##_ops _FC_OPS_TNAME(prefix, suffix) = {               \
+    .lookup_batch    = _FC_OPS_FNAME(prefix, lookup_batch),                    \
+    .fill_miss_batch = _FC_OPS_FNAME(prefix, fill_miss_batch),                 \
+    .maintain        = _FC_OPS_FNAME(prefix, maintain),                        \
+    .maintain_step_ex = _FC_OPS_FNAME(prefix, maintain_step_ex),               \
+    .maintain_step   = _FC_OPS_FNAME(prefix, maintain_step),                   \
+}
+
+#endif /* FC_ARCH_SUFFIX */
 
 #endif /* _FC_CACHE_GENERATE_H_ */
 

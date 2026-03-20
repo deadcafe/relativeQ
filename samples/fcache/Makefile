@@ -35,35 +35,68 @@ SRCDIR       = src
 INCDIR       = include
 LIBDIR       = lib
 
-PUB_HDRS     = $(INCDIR)/flow_cache.h $(INCDIR)/flow4_cache.h $(INCDIR)/flow6_cache.h $(INCDIR)/flowu_cache.h
-OBJS         = $(LIBDIR)/flow4.o $(LIBDIR)/flow6.o $(LIBDIR)/flowu.o
+VARIANTS     = flow4 flow6 flowu
+
+PUB_HDRS     = $(INCDIR)/flow_cache.h \
+               $(INCDIR)/flow4_cache.h \
+               $(INCDIR)/flow6_cache.h \
+               $(INCDIR)/flowu_cache.h \
+               $(INCDIR)/fc_ops.h
+
+# Per-arch objects: <variant>_<arch>.o
+ARCH_OBJS    = $(foreach v,$(VARIANTS), \
+                 $(LIBDIR)/$(v)_gen.o \
+                 $(LIBDIR)/$(v)_sse.o \
+                 $(LIBDIR)/$(v)_avx2.o \
+                 $(LIBDIR)/$(v)_avx512.o)
+
+# Dispatch wrapper
+DISPATCH_OBJ = $(LIBDIR)/fc_dispatch.o
+
+OBJS         = $(ARCH_OBJS) $(DISPATCH_OBJ)
 LIB_STATIC   = $(LIBDIR)/libfcache.a
 LIB_SHARED   = $(LIBDIR)/libfcache.so
 LIB_SONAME   = libfcache.so.1
 
 PREFIX       ?= /usr/local
 
-.PHONY: all static shared matrix clean install
+.PHONY: all static shared clean install
 
 all: static shared
 static: $(LIB_STATIC)
 shared: $(LIB_SHARED)
 
-matrix:
-	../test/run_fc_bench_matrix.sh flow4
-
 $(LIBDIR):
 	mkdir -p $@
 
-$(LIBDIR)/flow4.o: $(SRCDIR)/flow4.c | $(LIBDIR)
-	$(CC) $(CFLAGS_BASE) -mavx2 -msse4.2 -c -o $@ $<
+#---------------------------------------------------------------------------
+# Arch-specific compilation rules
+#---------------------------------------------------------------------------
+# GEN (portable, no SIMD flags)
+$(LIBDIR)/%_gen.o: $(SRCDIR)/%.c | $(LIBDIR)
+	$(CC) $(CFLAGS_BASE) -DFC_ARCH_SUFFIX=_gen -c -o $@ $<
 
-$(LIBDIR)/flow6.o: $(SRCDIR)/flow6.c | $(LIBDIR)
-	$(CC) $(CFLAGS_BASE) -mavx2 -msse4.2 -c -o $@ $<
+# SSE4.2
+$(LIBDIR)/%_sse.o: $(SRCDIR)/%.c | $(LIBDIR)
+	$(CC) $(CFLAGS_BASE) -msse4.2 -DFC_ARCH_SUFFIX=_sse -c -o $@ $<
 
-$(LIBDIR)/flowu.o: $(SRCDIR)/flowu.c | $(LIBDIR)
-	$(CC) $(CFLAGS_BASE) -mavx2 -msse4.2 -c -o $@ $<
+# AVX2
+$(LIBDIR)/%_avx2.o: $(SRCDIR)/%.c | $(LIBDIR)
+	$(CC) $(CFLAGS_BASE) -mavx2 -msse4.2 -DFC_ARCH_SUFFIX=_avx2 -c -o $@ $<
 
+# AVX-512
+$(LIBDIR)/%_avx512.o: $(SRCDIR)/%.c | $(LIBDIR)
+	$(CC) $(CFLAGS_BASE) -mavx512f -mavx2 -msse4.2 -DFC_ARCH_SUFFIX=_avx512 -c -o $@ $<
+
+#---------------------------------------------------------------------------
+# Dispatch wrapper (no arch flags, no FC_ARCH_SUFFIX)
+#---------------------------------------------------------------------------
+$(DISPATCH_OBJ): $(SRCDIR)/fc_dispatch.c | $(LIBDIR)
+	$(CC) $(CFLAGS_BASE) -c -o $@ $<
+
+#---------------------------------------------------------------------------
+# Library targets
+#---------------------------------------------------------------------------
 $(LIB_STATIC): $(OBJS)
 	$(AR) rcs $@ $^
 

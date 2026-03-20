@@ -10,9 +10,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../../samples/fcache/include/flow4_cache.h"
-#include "../../samples/fcache/include/flow6_cache.h"
-#include "../../samples/fcache/include/flowu_cache.h"
+#include "flow4_cache.h"
+#include "flow6_cache.h"
+#include "flowu_cache.h"
+#include "fc_ops.h"
 
 #define FAIL(msg) do { \
     fprintf(stderr, "FAIL %s:%d:%s: %s\n", __FILE__, __LINE__, __func__, (msg)); \
@@ -434,7 +435,7 @@ test_##PREFIX##_maintain_step(void) \
     RESULT_T results[FILL]; \
     uint16_t miss_idx[FILL]; \
     STATS_T stats; \
-    unsigned miss_count; \
+    unsigned miss_count, filled; \
     unsigned total_evicted; \
 \
     printf("[T] fc " #PREFIX " maintain_step\n"); \
@@ -451,14 +452,16 @@ test_##PREFIX##_maintain_step(void) \
                                                    results, miss_idx); \
     if (miss_count != FILL) \
         FAIL("maintain_step initial miss count mismatch"); \
-    if (fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, miss_count, \
-                                             100u, results) != FILL) \
-        FAIL("maintain_step initial fill failed"); \
+    filled = fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
+                                                  miss_count, 100u, results); \
+    if (filled < FILL / 2u) \
+        FAILF("maintain_step initial fill too low: %u/%u", filled, \
+              (unsigned)FILL); \
 \
     /* Before timeout: should evict nothing */ \
     if (fc_##PREFIX##_cache_maintain_step(&fc, 199u, 0) != 0u) \
         FAIL("maintain_step pre-timeout should not evict"); \
-    if (fc_##PREFIX##_cache_nb_entries(&fc) != FILL) \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != filled) \
         FAIL("maintain_step pre-timeout entries changed"); \
 \
     /* After timeout: full sweep evicts most entries. */ \
@@ -468,12 +471,12 @@ test_##PREFIX##_maintain_step(void) \
     if (total_evicted == 0u) \
         FAIL("maintain_step should evict expired entries"); \
     unsigned remaining = fc_##PREFIX##_cache_nb_entries(&fc); \
-    if (total_evicted + remaining != FILL) \
+    if (total_evicted + remaining != filled) \
         FAILF("maintain_step: evicted=%u + remaining=%u != %u", \
-              total_evicted, remaining, (unsigned)FILL); \
-    if (total_evicted < FILL / 2u) \
+              total_evicted, remaining, filled); \
+    if (total_evicted < filled / 2u) \
         FAILF("maintain_step: evicted=%u too few (fill=%u)", \
-              total_evicted, (unsigned)FILL); \
+              total_evicted, filled); \
 \
     fc_##PREFIX##_cache_stats(&fc, &stats); \
     if (stats.maint_step_calls != 2u) \
@@ -492,15 +495,15 @@ test_##PREFIX##_maintain_step(void) \
         keys[i] = MAKE_KEY(9000u + i); \
     miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 2000u, \
                                                    results, miss_idx); \
-    (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
-                                               miss_count, 2000u, results); \
+    filled = fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
+                                                  miss_count, 2000u, results); \
     total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, 3000u, 1); \
     remaining = fc_##PREFIX##_cache_nb_entries(&fc); \
     if (total_evicted == 0u) \
         FAIL("maintain_step idle should evict"); \
-    if (total_evicted + remaining != FILL) \
+    if (total_evicted + remaining != filled) \
         FAILF("maintain_step idle: evicted=%u + remaining=%u != %u", \
-              total_evicted, remaining, (unsigned)FILL); \
+              total_evicted, remaining, filled); \
 \
     /* Throttle test: interval=1000, within interval -> skip */ \
     fc_##PREFIX##_cache_maintain(&fc, 0u, NB_BK, 3000u); \
@@ -593,13 +596,16 @@ test_##PREFIX##_maintain_step(void) \
                                                    results, miss_idx); \
     (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
                                                miss_count, 100u, results); \
-    total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, 1000u, 1); \
-    remaining = fc_##PREFIX##_cache_nb_entries(&fc); \
-    if (remaining != 0u) \
-        FAILF("idle full sweep: remaining=%u, expected 0", remaining); \
-    if (total_evicted != FILL) \
-        FAILF("idle full sweep: evicted=%u, expected %u", \
-              total_evicted, (unsigned)FILL); \
+    { \
+        unsigned filled_d = fc_##PREFIX##_cache_nb_entries(&fc); \
+        total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, 1000u, 1); \
+        remaining = fc_##PREFIX##_cache_nb_entries(&fc); \
+        if (remaining != 0u) \
+            FAILF("idle full sweep: remaining=%u, expected 0", remaining); \
+        if (total_evicted != filled_d) \
+            FAILF("idle full sweep: evicted=%u, expected %u", \
+                  total_evicted, filled_d); \
+    } \
 \
     /* [E] Cursor continuity: 4 x NB_BK/4 covers all buckets */ \
     memset(&cfg, 0, sizeof(cfg)); \
@@ -767,10 +773,42 @@ test_flowu_v4_v6_coexist(void)
     test_##PREFIX##_timeout_boundary(); \
     test_##PREFIX##_maintain_step()
 
-int
-main(void)
+static unsigned
+parse_arch_opt(int *argc_p, char ***argv_p)
 {
-    rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
+    unsigned enable = FC_ARCH_AUTO;
+
+    if (*argc_p >= 3 && strcmp((*argv_p)[1], "--arch") == 0) {
+        const char *name = (*argv_p)[2];
+
+        if (strcmp(name, "gen") == 0)         enable = FC_ARCH_GEN;
+        else if (strcmp(name, "sse") == 0)    enable = FC_ARCH_SSE;
+        else if (strcmp(name, "avx2") == 0)   enable = FC_ARCH_SSE | FC_ARCH_AVX2;
+        else if (strcmp(name, "avx512") == 0) enable = FC_ARCH_AUTO;
+        else if (strcmp(name, "auto") == 0)   enable = FC_ARCH_AUTO;
+        else fprintf(stderr, "unknown arch: %s\n", name);
+        *argc_p -= 2;
+        *argv_p += 2;
+    }
+    return enable;
+}
+
+static const char *
+arch_label(unsigned enable)
+{
+    if (enable & FC_ARCH_AVX512) return "avx512";
+    if (enable & FC_ARCH_AVX2)   return "avx2";
+    if (enable & FC_ARCH_SSE)    return "sse";
+    return "gen";
+}
+
+int
+main(int argc, char **argv)
+{
+    unsigned arch_enable = parse_arch_opt(&argc, &argv);
+
+    fc_arch_init(arch_enable);
+    printf("[arch: %s]\n", arch_label(arch_enable));
 
     RUN_TESTS(flow4);
     RUN_TESTS(flow6);

@@ -19,6 +19,7 @@
 #include <time.h>
 
 #include "flow_cache.h"
+#include "fc_ops.h"
 
 /*===========================================================================
  * Constants
@@ -158,6 +159,52 @@ fcb_batch_maint_kicks(unsigned fill_pct,
     else
         kicks = 0u;
     return kicks * kick_scale;
+}
+
+/*===========================================================================
+ * Arch option parser (shared by fc_bench and fc_test)
+ *
+ *   --arch gen|sse|avx2|avx512|auto   (default: auto)
+ *
+ * Returns the consumed argument count (0 or 2).
+ *===========================================================================*/
+static inline unsigned
+fc_parse_arch_flag(const char *name)
+{
+    if (strcmp(name, "gen") == 0)    return FC_ARCH_GEN;
+    if (strcmp(name, "sse") == 0)    return FC_ARCH_SSE;
+    if (strcmp(name, "avx2") == 0)   return FC_ARCH_SSE | FC_ARCH_AVX2;
+    if (strcmp(name, "avx512") == 0) return FC_ARCH_AUTO;
+    if (strcmp(name, "auto") == 0)   return FC_ARCH_AUTO;
+    fprintf(stderr, "unknown arch: %s (valid: gen sse avx2 avx512 auto)\n",
+            name);
+    return FC_ARCH_AUTO;
+}
+
+static inline const char *
+fc_arch_label(unsigned enable)
+{
+    if (enable & FC_ARCH_AVX512) return "avx512";
+    if (enable & FC_ARCH_AVX2)   return "avx2";
+    if (enable & FC_ARCH_SSE)    return "sse";
+    return "gen";
+}
+
+/**
+ * Parse --arch from argv.  Modifies *argc_p / *argv_p to skip consumed args.
+ * Returns the arch enable mask.
+ */
+static inline unsigned
+fc_parse_arch_args(int *argc_p, char ***argv_p)
+{
+    unsigned enable = FC_ARCH_AUTO;
+
+    if (*argc_p >= 3 && strcmp((*argv_p)[1], "--arch") == 0) {
+        enable = fc_parse_arch_flag((*argv_p)[2]);
+        *argc_p -= 2;
+        *argv_p += 2;
+    }
+    return enable;
 }
 
 #endif /* _BENCH_FC_COMMON_H_ */

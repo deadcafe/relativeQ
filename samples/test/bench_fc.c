@@ -115,9 +115,8 @@ fcb_make_keyu(unsigned i)
  * Quick 3-variant datapath comparison (no args needed)
  *===========================================================================*/
 static void
-bench_datapath(void)
+bench_datapath_one(unsigned desired)
 {
-    unsigned desired = 32768u;
     unsigned max_entries = fcb_pool_count(desired);
     unsigned nb_bk = fcb_nb_bk_hint(max_entries);
     unsigned prefill_n = max_entries / 2u;
@@ -169,14 +168,14 @@ bench_datapath(void)
     (void)fcb_flow6_prefill(&ctx6, p6, prefill_n, 1u);
     (void)fcb_flowu_prefill(&ctxu, pu, prefill_n, 1u);
 
-    printf("fcache variant comparison: entries=%u nb_bk=%u query=%u\n",
+    printf("  entries=%u nb_bk=%u query=%u\n",
            max_entries, nb_bk, FCB_QUERY);
-    printf("  entries active: flow4=%u  flow6=%u  flowu=%u\n\n",
+    printf("  entries active: flow4=%u  flow6=%u  flowu=%u\n",
            fc_flow4_cache_nb_entries(&ctx4.fc),
            fc_flow6_cache_nb_entries(&ctx6.fc),
            fc_flowu_cache_nb_entries(&ctxu.fc));
 
-    printf("pure datapath (cycles/key, no expire):\n");
+    printf("  pure datapath (cycles/key, no expire):\n");
     fcb_emit3("hit_lookup",
                fcb_flow4_bench_hit(&ctx4, h4, FCB_QUERY, FCB_HIT_REPEAT),
                fcb_flow6_bench_hit(&ctx6, h6, FCB_QUERY, FCB_HIT_REPEAT),
@@ -206,6 +205,19 @@ bench_datapath(void)
     fcb_flowu_ctx_free(&ctxu);
     fcb_flow6_ctx_free(&ctx6);
     fcb_flow4_ctx_free(&ctx4);
+}
+
+static void
+bench_datapath(void)
+{
+    unsigned sizes[] = { 32768u, 1048576u };
+
+    printf("fcache variant comparison\n\n");
+    for (unsigned s = 0; s < sizeof(sizes) / sizeof(sizes[0]); s++) {
+        printf("[%uK entries]\n", sizes[s] / 1024u);
+        bench_datapath_one(sizes[s]);
+        printf("\n");
+    }
 }
 
 /*===========================================================================
@@ -317,11 +329,11 @@ static void
 usage(const char *prog)
 {
     printf("usage:\n");
-    printf("  %s datapath\n", prog);
-    printf("  %s maint\n", prog);
-    printf("  %s maint_partial\n", prog);
-    printf("  %s [flow4|flow6|flowu] rate_fc_only <desired> <start_fill%%> <hit%%> <pps>\n", prog);
-    printf("  %s [flow4|flow6|flowu] rate_trace_custom <desired> <start_fill%%> <hit%%> <pps>"
+    printf("  %s [--arch gen|sse|avx2|avx512] datapath\n", prog);
+    printf("  %s [--arch ...] maint\n", prog);
+    printf("  %s [--arch ...] maint_partial\n", prog);
+    printf("  %s [--arch ...] [flow4|flow6|flowu] rate_fc_only <desired> <start_fill%%> <hit%%> <pps>\n", prog);
+    printf("  %s [--arch ...] [flow4|flow6|flowu] rate_trace_custom <desired> <start_fill%%> <hit%%> <pps>"
            " <timeout_ms> <soak_mul> <report_ms>"
            " <fill0> <fill1> <fill2> <fill3>"
            " <k0> <k1> <k2> <k3> [kick_scale]\n", prog);
@@ -333,8 +345,11 @@ main(int argc, char **argv)
     const char *variant = "flow4";
     const char *mode;
     int arg_off;
+    unsigned arch_enable;
 
-    rix_hash_arch_init(RIX_HASH_ARCH_AUTO);
+    arch_enable = fc_parse_arch_args(&argc, &argv);
+    fc_arch_init(arch_enable);
+    printf("[arch: %s]\n\n", fc_arch_label(arch_enable));
 
     if (argc < 2) {
         usage(argv[0]);
