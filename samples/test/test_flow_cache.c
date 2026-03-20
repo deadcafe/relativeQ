@@ -429,7 +429,7 @@ test_##PREFIX##_maintain_step(void) \
     struct rix_hash_bucket_s buckets[NB_BK]; \
     ENTRY_T pool[MAX_ENTRIES]; \
     CACHE_T fc; \
-    CONFIG_T cfg = { .timeout_tsc = 100u, .pressure_empty_slots = 1u }; \
+    CONFIG_T cfg; \
     KEY_T keys[FILL]; \
     RESULT_T results[FILL]; \
     uint16_t miss_idx[FILL]; \
@@ -438,6 +438,10 @@ test_##PREFIX##_maintain_step(void) \
     unsigned total_evicted; \
 \
     printf("[T] fc " #PREFIX " maintain_step\n"); \
+    /* interval=0 -> run every call, base_bk=nb_bk -> full sweep */ \
+    memset(&cfg, 0, sizeof(cfg)); \
+    cfg.timeout_tsc = 100u; \
+    cfg.pressure_empty_slots = 1u; \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(8000u + i); \
@@ -451,16 +455,16 @@ test_##PREFIX##_maintain_step(void) \
                                              100u, results) != FILL) \
         FAIL("maintain_step initial fill failed"); \
 \
-    /* Before timeout: full-table sweep should evict nothing */ \
-    if (fc_##PREFIX##_cache_maintain_step(&fc, NB_BK, 199u) != 0u) \
+    /* Before timeout: should evict nothing */ \
+    if (fc_##PREFIX##_cache_maintain_step(&fc, 199u, 0) != 0u) \
         FAIL("maintain_step pre-timeout should not evict"); \
     if (fc_##PREFIX##_cache_nb_entries(&fc) != FILL) \
         FAIL("maintain_step pre-timeout entries changed"); \
 \
-    /* After timeout: full-table sweep evicts most entries. */ \
+    /* After timeout: full sweep evicts most entries. */ \
     /* Sparse buckets (used_slots <= pressure_empty_slots) are */ \
     /* intentionally skipped. */ \
-    total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, NB_BK, 1000u); \
+    total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, 1000u, 0); \
     if (total_evicted == 0u) \
         FAIL("maintain_step should evict expired entries"); \
     unsigned remaining = fc_##PREFIX##_cache_nb_entries(&fc); \
@@ -483,23 +487,192 @@ test_##PREFIX##_maintain_step(void) \
     if (fc_##PREFIX##_cache_nb_entries(&fc) != 0u) \
         FAIL("maintain() should clean up remaining entries"); \
 \
-    /* Split-call test: refill, then sweep in 4 x 4 bk chunks */ \
+    /* Idle=true test: full sweep regardless of throttle */ \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(9000u + i); \
     miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 2000u, \
                                                    results, miss_idx); \
     (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
                                                miss_count, 2000u, results); \
+    total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, 3000u, 1); \
+    remaining = fc_##PREFIX##_cache_nb_entries(&fc); \
+    if (total_evicted == 0u) \
+        FAIL("maintain_step idle should evict"); \
+    if (total_evicted + remaining != FILL) \
+        FAILF("maintain_step idle: evicted=%u + remaining=%u != %u", \
+              total_evicted, remaining, (unsigned)FILL); \
+\
+    /* Throttle test: interval=1000, within interval -> skip */ \
+    fc_##PREFIX##_cache_maintain(&fc, 0u, NB_BK, 3000u); \
+    memset(&cfg, 0, sizeof(cfg)); \
+    cfg.timeout_tsc = 100u; \
+    cfg.pressure_empty_slots = 1u; \
+    cfg.maint_interval_tsc = 1000u; \
+    cfg.maint_base_bk = NB_BK / 4u; \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
+    for (unsigned i = 0; i < FILL; i++) \
+        keys[i] = MAKE_KEY(10000u + i); \
+    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
+                                                   results, miss_idx); \
+    (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
+                                               miss_count, 100u, results); \
+    /* First call: elapsed is large (100 - 0 = 100 >= interval... */ \
+    /* actually last_maint_tsc=0, so elapsed=500, scale=0 since 500/1000=0 */ \
+    /* -> skip!  Force first run with idle=1 */ \
+    total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, 500u, 1); \
+    /* Now last_maint_tsc=500; call at 600 -> elapsed=100 < 1000 -> skip */ \
+    if (fc_##PREFIX##_cache_maintain_step(&fc, 600u, 0) != 0u) \
+        FAIL("maintain_step should throttle within interval"); \
+    /* Call at 1600 -> elapsed=1100, scale=1 -> sweep base_bk=4 */ \
+    total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, 1600u, 0); \
+    fc_##PREFIX##_cache_stats(&fc, &stats); \
+    if (stats.maint_bucket_checks == 0u) \
+        FAIL("maintain_step after interval should scan buckets"); \
+\
+    /* [A] maint_fill_threshold trigger */ \
+    memset(&cfg, 0, sizeof(cfg)); \
+    cfg.timeout_tsc = 100u; \
+    cfg.pressure_empty_slots = 1u; \
+    cfg.maint_interval_tsc = 100000u; /* very long - time won't trigger */ \
+    cfg.maint_base_bk = NB_BK / 4u; \
+    cfg.maint_fill_threshold = 10u; \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
+    for (unsigned i = 0; i < FILL; i++) \
+        keys[i] = MAKE_KEY(11000u + i); \
+    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
+                                                   results, miss_idx); \
+    (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
+                                               miss_count, 100u, results); \
+    /* fills=48, threshold=10 -> entry_scale=4, time_scale=0 -> sweep=4*4=16=NB_BK */ \
+    fc.last_maint_tsc = 100u; /* reset so time won't trigger */ \
+    fc.last_maint_fills = 0u; /* 48 fills since last maint */ \
+    total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, 1000u, 0); \
+    if (total_evicted == 0u) \
+        FAIL("fill_threshold should trigger GC"); \
+\
+    /* [B] scale-up: elapsed = 5 * interval -> sweep = 5 * base_bk */ \
+    memset(&cfg, 0, sizeof(cfg)); \
+    cfg.timeout_tsc = 100u; \
+    cfg.pressure_empty_slots = 1u; \
+    cfg.maint_interval_tsc = 100u; \
+    cfg.maint_base_bk = 2u; \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
+    for (unsigned i = 0; i < FILL; i++) \
+        keys[i] = MAKE_KEY(12000u + i); \
+    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
+                                                   results, miss_idx); \
+    (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
+                                               miss_count, 100u, results); \
+    fc.last_maint_tsc = 500u; \
+    /* elapsed=500, scale=5, sweep=5*2=10 */ \
+    total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, 1000u, 0); \
+    /* Should have swept 10 buckets (clamped to NB_BK if over) */ \
+    if (fc.last_maint_sweep_bk != 10u) \
+        FAILF("scale-up: sweep_bk=%u expected 10", fc.last_maint_sweep_bk); \
+\
+    /* [C] last_maint_start_bk / last_maint_sweep_bk verification */ \
+    memset(&cfg, 0, sizeof(cfg)); \
+    cfg.timeout_tsc = 100u; \
+    cfg.pressure_empty_slots = 1u; \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
+    (void)fc_##PREFIX##_cache_maintain_step(&fc, 1000u, 0); \
+    if (fc.last_maint_start_bk != 0u) \
+        FAILF("last_maint_start_bk=%u expected 0", fc.last_maint_start_bk); \
+    if (fc.last_maint_sweep_bk != NB_BK) \
+        FAILF("last_maint_sweep_bk=%u expected %u", \
+              fc.last_maint_sweep_bk, (unsigned)NB_BK); \
+\
+    /* [D] idle=1 cleans ALL entries including sparse-bucket ones */ \
+    memset(&cfg, 0, sizeof(cfg)); \
+    cfg.timeout_tsc = 100u; \
+    cfg.pressure_empty_slots = 1u; \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
+    for (unsigned i = 0; i < FILL; i++) \
+        keys[i] = MAKE_KEY(13000u + i); \
+    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
+                                                   results, miss_idx); \
+    (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
+                                               miss_count, 100u, results); \
+    total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, 1000u, 1); \
+    remaining = fc_##PREFIX##_cache_nb_entries(&fc); \
+    if (remaining != 0u) \
+        FAILF("idle full sweep: remaining=%u, expected 0", remaining); \
+    if (total_evicted != FILL) \
+        FAILF("idle full sweep: evicted=%u, expected %u", \
+              total_evicted, (unsigned)FILL); \
+\
+    /* [E] Cursor continuity: 4 x NB_BK/4 covers all buckets */ \
+    memset(&cfg, 0, sizeof(cfg)); \
+    cfg.timeout_tsc = 100u; \
+    cfg.pressure_empty_slots = 1u; \
+    /* interval=0 -> time_scale=1 always, sweep=base_bk */ \
+    cfg.maint_base_bk = NB_BK / 4u; \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
+    for (unsigned i = 0; i < FILL; i++) \
+        keys[i] = MAKE_KEY(14000u + i); \
+    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
+                                                   results, miss_idx); \
+    (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
+                                               miss_count, 100u, results); \
     total_evicted = 0u; \
     for (unsigned s = 0; s < 4u; s++) \
-        total_evicted += fc_##PREFIX##_cache_maintain_step(&fc, \
-                             NB_BK / 4u, 3000u); \
-    remaining = fc_##PREFIX##_cache_nb_entries(&fc); \
-    if (total_evicted + remaining != FILL) \
-        FAILF("maintain_step split: evicted=%u + remaining=%u != %u", \
-              total_evicted, remaining, (unsigned)FILL); \
+        total_evicted += fc_##PREFIX##_cache_maintain_step( \
+            &fc, 1000u + s * 2u, 0); \
+    /* cursor should have wrapped back to 0 */ \
+    if (fc.maint_cursor != 0u) \
+        FAILF("cursor continuity: cursor=%u expected 0", fc.maint_cursor); \
     if (total_evicted < FILL / 2u) \
-        FAILF("maintain_step split: evicted=%u too few", total_evicted); \
+        FAILF("cursor continuity: evicted=%u too few", total_evicted); \
+\
+    /* [F] _ex cursor override + record verification */ \
+    memset(&cfg, 0, sizeof(cfg)); \
+    cfg.timeout_tsc = 100u; \
+    cfg.pressure_empty_slots = 1u; \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
+    for (unsigned i = 0; i < FILL; i++) \
+        keys[i] = MAKE_KEY(15000u + i); \
+    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
+                                                   results, miss_idx); \
+    (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
+                                               miss_count, 100u, results); \
+    (void)fc_##PREFIX##_cache_maintain_step_ex(&fc, 4u, 8u, 0u, 1000u); \
+    if (fc.last_maint_start_bk != 4u) \
+        FAILF("_ex start_bk=%u expected 4", fc.last_maint_start_bk); \
+    if (fc.last_maint_sweep_bk != 8u) \
+        FAILF("_ex sweep_bk=%u expected 8", fc.last_maint_sweep_bk); \
+    /* cursor should advance to 4+8=12 */ \
+    if (fc.maint_cursor != 12u) \
+        FAILF("_ex cursor=%u expected 12", fc.maint_cursor); \
+\
+    /* [G] Both triggers: max(time_scale, entry_scale) */ \
+    memset(&cfg, 0, sizeof(cfg)); \
+    cfg.timeout_tsc = 100u; \
+    cfg.pressure_empty_slots = 1u; \
+    cfg.maint_interval_tsc = 100u; \
+    cfg.maint_base_bk = 2u; \
+    cfg.maint_fill_threshold = 10u; \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
+    for (unsigned i = 0; i < FILL; i++) \
+        keys[i] = MAKE_KEY(16000u + i); \
+    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
+                                                   results, miss_idx); \
+    (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
+                                               miss_count, 100u, results); \
+    fc.last_maint_tsc = 700u; \
+    fc.last_maint_fills = 38u; /* added=48-38=10, entry_scale=1 */ \
+    /* elapsed=1000-700=300, time_scale=3 > entry_scale=1 -> sweep=3*2=6 */ \
+    (void)fc_##PREFIX##_cache_maintain_step(&fc, 1000u, 0); \
+    if (fc.last_maint_sweep_bk != 6u) \
+        FAILF("max trigger: sweep_bk=%u expected 6", fc.last_maint_sweep_bk); \
+    /* Now test entry_scale > time_scale */ \
+    fc.last_maint_tsc = 990u; \
+    fc.last_maint_fills = 0u; /* added=fills_now-0, entry_scale large */ \
+    /* elapsed=1010-990=20, time_scale=0 but entry_scale > 0 -> runs */ \
+    fc_##PREFIX##_cache_stats(&fc, &stats); \
+    fc.last_maint_fills = stats.fills - 30u; /* added=30, scale=3 -> sweep=6 */ \
+    (void)fc_##PREFIX##_cache_maintain_step(&fc, 1010u, 0); \
+    if (fc.last_maint_sweep_bk != 6u) \
+        FAILF("entry trigger: sweep_bk=%u expected 6", fc.last_maint_sweep_bk); \
 }
 
 /*===========================================================================

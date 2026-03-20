@@ -545,6 +545,134 @@ FCB_FN(rate_trace_custom)(unsigned desired_entries, unsigned nb_bk,
     FCB_FN(ctx_free)(&ctx);
 }
 
+/*===========================================================================
+ * maintain_step benchmark
+ *
+ * Uses idle=1 to force full sweep, bypassing throttle logic.
+ *===========================================================================*/
+static double
+FCB_FN(bench_maint_step)(struct FCB_FN(ctx) *ctx,
+                          const FCB_KEY_T *fill_keys, unsigned fill_n,
+                          unsigned repeat)
+{
+    uint64_t total = 0u;
+
+    for (unsigned r = 0; r < repeat; r++) {
+        uint64_t fill_ts = (uint64_t)r * 10000u + 1u;
+        uint64_t expire_ts = fill_ts + ctx->fc.timeout_tsc + 1u;
+        uint64_t t0, t1;
+
+        FCB_FN(ctx_reset)(ctx);
+        (void)FCB_FN(prefill)(ctx, fill_keys, fill_n, fill_ts);
+
+        t0 = fcb_rdtsc();
+        (void)FCB_API(maintain_step)(&ctx->fc, expire_ts, 1);
+        t1 = fcb_rdtsc();
+        total += t1 - t0;
+    }
+    return (double)total / (double)repeat;
+}
+
+static void
+FCB_FN(bench_maintain_step_report)(unsigned desired, unsigned nb_bk)
+{
+    struct FCB_FN(ctx) ctx;
+    unsigned max_entries = fcb_pool_count(desired);
+    unsigned total_slots = nb_bk * RIX_HASH_BUCKET_ENTRY_SZ;
+    FCB_KEY_T *keys;
+    enum { REPEAT = 50u };
+    unsigned fill_pcts[] = { 0u, 25u, 50u, 75u, 100u };
+
+    FCB_FN(ctx_init)(&ctx, nb_bk, max_entries, 1000u);
+    keys = fcb_alloc((size_t)max_entries * sizeof(*keys));
+    for (unsigned i = 0; i < max_entries; i++)
+        keys[i] = FCB_MAKE_KEY(i);
+
+    for (unsigned p = 0; p < sizeof(fill_pcts) / sizeof(fill_pcts[0]); p++) {
+        unsigned fill_n = (unsigned)(((uint64_t)total_slots * fill_pcts[p]) / 100u);
+        double cy;
+
+        if (fill_n > max_entries) fill_n = max_entries;
+        cy = FCB_FN(bench_maint_step)(&ctx, keys, fill_n, REPEAT);
+        printf("    fill=%3u%%  entries=%-6u  cy/call=%8.0f  cy/bk=%6.1f",
+               fill_pcts[p], fill_n, cy, cy / (double)nb_bk);
+        if (fill_n > 0u)
+            printf("  cy/entry=%6.1f", cy / (double)fill_n);
+        printf("\n");
+    }
+
+    free(keys);
+    FCB_FN(ctx_free)(&ctx);
+}
+
+/*===========================================================================
+ * maintain_step partial-sweep benchmark
+ *
+ * Configures maint_base_bk=step and maint_interval_tsc=0 (run every call),
+ * then calls maintain_step(idle=0) repeatedly.
+ *===========================================================================*/
+static void
+FCB_FN(bench_maint_step_partial)(unsigned desired, unsigned nb_bk,
+                                   unsigned fill_pct,
+                                   const unsigned *step_bks, unsigned n_steps)
+{
+    unsigned max_entries = fcb_pool_count(desired);
+    unsigned total_slots = nb_bk * RIX_HASH_BUCKET_ENTRY_SZ;
+    unsigned fill_n = (unsigned)(((uint64_t)total_slots * fill_pct) / 100u);
+    FCB_KEY_T *keys;
+    enum { REPEAT = 20u };
+
+    if (fill_n > max_entries) fill_n = max_entries;
+
+    keys = fcb_alloc((size_t)max_entries * sizeof(*keys));
+    for (unsigned i = 0; i < max_entries; i++)
+        keys[i] = FCB_MAKE_KEY(i);
+
+    for (unsigned s = 0; s < n_steps; s++) {
+        unsigned step = step_bks[s];
+        unsigned calls_per_sweep = (nb_bk + step - 1u) / step;
+        uint64_t total_cy = 0u;
+        struct FCB_FN(ctx) ctx;
+        FCB_CONFIG_T cfg;
+
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.timeout_tsc = 1000u;
+        cfg.pressure_empty_slots = FCB_PRESSURE;
+        cfg.maint_base_bk = step;
+        /* maint_interval_tsc=0 -> run every call */
+        FCB_FN(ctx_init_cfg)(&ctx, nb_bk, max_entries, &cfg);
+
+        for (unsigned r = 0; r < REPEAT; r++) {
+            uint64_t fill_ts = (uint64_t)r * 10000u + 1u;
+            uint64_t expire_ts = fill_ts + ctx.fc.timeout_tsc + 1u;
+
+            FCB_FN(ctx_reset)(&ctx);
+            (void)FCB_FN(prefill)(&ctx, keys, fill_n, fill_ts);
+
+            for (unsigned c = 0; c < calls_per_sweep; c++) {
+                uint64_t t0 = fcb_rdtsc();
+                (void)FCB_API(maintain_step)(&ctx.fc, expire_ts, 0);
+                uint64_t t1 = fcb_rdtsc();
+                total_cy += t1 - t0;
+            }
+        }
+
+        double cy_per_call = (double)total_cy / (double)(REPEAT * calls_per_sweep);
+        double cy_per_bk = cy_per_call / (double)step;
+        unsigned evict_per_call = fill_n / calls_per_sweep;
+
+        printf("    step=%5u  calls/sweep=%3u  cy/call=%8.0f  cy/bk=%6.1f",
+               step, calls_per_sweep, cy_per_call, cy_per_bk);
+        if (evict_per_call > 0u)
+            printf("  cy/entry=%6.1f", cy_per_call / (double)evict_per_call);
+        printf("\n");
+
+        FCB_FN(ctx_free)(&ctx);
+    }
+
+    free(keys);
+}
+
 /* Clean up macros for next inclusion */
 #undef FCB_PREFIX
 #undef FCB_KEY_T

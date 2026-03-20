@@ -51,6 +51,9 @@ RIX_SLIST_HEAD(fc_flow6_free_head, fc_flow6_entry);
 struct fc_flow6_config {
     uint64_t timeout_tsc;
     unsigned pressure_empty_slots;
+    uint64_t maint_interval_tsc;
+    unsigned maint_base_bk;
+    unsigned maint_fill_threshold;
 };
 
 struct fc_flow6_stats {
@@ -89,6 +92,13 @@ struct fc_flow6_cache {
     unsigned                   relief_mid_entries;
     unsigned                   relief_hi_entries;
     unsigned                   maint_cursor;
+    uint64_t                   last_maint_tsc;
+    uint64_t                   last_maint_fills;
+    uint64_t                   maint_interval_tsc;
+    unsigned                   maint_base_bk;
+    unsigned                   maint_fill_threshold;
+    unsigned                   last_maint_start_bk;
+    unsigned                   last_maint_sweep_bk;
     struct fc_flow6_free_head free_head;
     struct fc_flow6_stats     stats;
 };
@@ -117,9 +127,14 @@ unsigned fc_flow6_cache_maintain(struct fc_flow6_cache *fc,
                                   unsigned start_bk,
                                   unsigned bucket_count,
                                   uint64_t now);
+unsigned fc_flow6_cache_maintain_step_ex(struct fc_flow6_cache *fc,
+                                          unsigned start_bk,
+                                          unsigned bucket_count,
+                                          unsigned skip_threshold,
+                                          uint64_t now);
 unsigned fc_flow6_cache_maintain_step(struct fc_flow6_cache *fc,
-                                       unsigned bucket_count,
-                                       uint64_t now);
+                                       uint64_t now,
+                                       int idle);
 int fc_flow6_cache_remove_idx(struct fc_flow6_cache *fc, uint32_t entry_idx);
 void fc_flow6_cache_stats(const struct fc_flow6_cache *fc,
                            struct fc_flow6_stats *out);

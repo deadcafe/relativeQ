@@ -209,6 +209,79 @@ bench_datapath(void)
 }
 
 /*===========================================================================
+ * maintain_step comparison (no args needed)
+ *===========================================================================*/
+static void
+bench_maint(void)
+{
+    unsigned configs[][2] = {
+        /* { desired_entries, nb_bk } */
+        {    1024u,   128u },
+        {    8192u,  1024u },
+        {   65536u,  8192u },
+        { 1048576u, 65536u },
+    };
+
+    printf("maintain_step benchmark (full-table sweep, all expired)\n\n");
+    for (unsigned c = 0; c < sizeof(configs) / sizeof(configs[0]); c++) {
+        unsigned desired = configs[c][0];
+        unsigned nb_bk   = configs[c][1];
+        unsigned max_entries = fcb_pool_count(desired);
+        double data_mb = ((double)nb_bk * sizeof(struct rix_hash_bucket_s)
+                          + (double)max_entries * sizeof(struct fc_flow4_entry))
+                         / (1024.0 * 1024.0);
+
+        printf("  nb_bk=%u  pool=%u  (%.1f MB)\n", nb_bk, max_entries, data_mb);
+        printf("  [flow4]\n");
+        fcb_flow4_bench_maintain_step_report(desired, nb_bk);
+        printf("  [flow6]\n");
+        fcb_flow6_bench_maintain_step_report(desired, nb_bk);
+        printf("  [flowu]\n");
+        fcb_flowu_bench_maintain_step_report(desired, nb_bk);
+        printf("\n");
+    }
+}
+
+/*===========================================================================
+ * maintain_step partial-sweep benchmark
+ *===========================================================================*/
+static void
+bench_maint_partial(void)
+{
+    unsigned configs[][2] = {
+        {    8192u,  1024u },
+        {   65536u,  8192u },
+        { 1048576u, 65536u },
+    };
+    unsigned steps[] = { 64u, 128u, 256u, 512u, 1024u };
+    unsigned n_steps = sizeof(steps) / sizeof(steps[0]);
+
+    printf("maintain_step partial-sweep (fill=75%%, all expired)\n\n");
+    for (unsigned c = 0; c < sizeof(configs) / sizeof(configs[0]); c++) {
+        unsigned desired = configs[c][0];
+        unsigned nb_bk   = configs[c][1];
+        unsigned max_entries = fcb_pool_count(desired);
+        double data_mb = ((double)nb_bk * sizeof(struct rix_hash_bucket_s)
+                          + (double)max_entries * sizeof(struct fc_flow4_entry))
+                         / (1024.0 * 1024.0);
+        /* skip steps larger than nb_bk */
+        unsigned valid_steps = 0u;
+        for (unsigned s = 0; s < n_steps; s++) {
+            if (steps[s] <= nb_bk)
+                valid_steps = s + 1u;
+        }
+        printf("  nb_bk=%u  pool=%u  (%.1f MB)\n", nb_bk, max_entries, data_mb);
+        printf("  [flow4]\n");
+        fcb_flow4_bench_maint_step_partial(desired, nb_bk, 75u, steps, valid_steps);
+        printf("  [flow6]\n");
+        fcb_flow6_bench_maint_step_partial(desired, nb_bk, 75u, steps, valid_steps);
+        printf("  [flowu]\n");
+        fcb_flowu_bench_maint_step_partial(desired, nb_bk, 75u, steps, valid_steps);
+        printf("\n");
+    }
+}
+
+/*===========================================================================
  * Variant dispatch helpers
  *===========================================================================*/
 typedef void (*rate_fc_only_fn)(unsigned, unsigned, unsigned, unsigned, unsigned);
@@ -245,6 +318,8 @@ usage(const char *prog)
 {
     printf("usage:\n");
     printf("  %s datapath\n", prog);
+    printf("  %s maint\n", prog);
+    printf("  %s maint_partial\n", prog);
     printf("  %s [flow4|flow6|flowu] rate_fc_only <desired> <start_fill%%> <hit%%> <pps>\n", prog);
     printf("  %s [flow4|flow6|flowu] rate_trace_custom <desired> <start_fill%%> <hit%%> <pps>"
            " <timeout_ms> <soak_mul> <report_ms>"
@@ -266,9 +341,17 @@ main(int argc, char **argv)
         return 1;
     }
 
-    /* No-args mode */
+    /* No-args modes */
     if (strcmp(argv[1], "datapath") == 0) {
         bench_datapath();
+        return 0;
+    }
+    if (strcmp(argv[1], "maint") == 0) {
+        bench_maint();
+        return 0;
+    }
+    if (strcmp(argv[1], "maint_partial") == 0) {
+        bench_maint_partial();
         return 0;
     }
     if (strcmp(argv[1], "help") == 0 || strcmp(argv[1], "--help") == 0) {

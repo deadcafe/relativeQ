@@ -136,6 +136,12 @@ struct fc_flow4_config {
                                          Relief eviction triggers when a
                                          target bucket has <= this many
                                          empty slots. */
+    uint64_t maint_interval_tsc;    /**< Minimum interval between GC runs
+                                         (TSC ticks).  0 = every call. */
+    unsigned maint_base_bk;         /**< Buckets per GC step at 1x scale.
+                                         0 = nb_bk (full sweep). */
+    unsigned maint_fill_threshold;  /**< Fill count increase that triggers
+                                         GC scale-up.  0 = disabled. */
 };
 
 /**
@@ -187,6 +193,13 @@ struct fc_flow4_cache {
     unsigned                   relief_mid_entries;
     unsigned                   relief_hi_entries;
     unsigned                   maint_cursor;
+    uint64_t                   last_maint_tsc;
+    uint64_t                   last_maint_fills;
+    uint64_t                   maint_interval_tsc;
+    unsigned                   maint_base_bk;
+    unsigned                   maint_fill_threshold;
+    unsigned                   last_maint_start_bk;  /**< Start bk of last sweep. */
+    unsigned                   last_maint_sweep_bk;   /**< Buckets swept last time. */
     struct fc_flow4_free_head free_head;
     struct fc_flow4_stats     stats;
 };
@@ -304,31 +317,53 @@ unsigned fc_flow4_cache_maintain(struct fc_flow4_cache *fc,
                                   uint64_t now);
 
 /**
- * @brief Cursor-managed periodic maintenance (recommended).
+ * @brief Adaptive GC for DPDK-style poll loops.
  *
- * Scans @p bucket_count buckets starting from an internal cursor,
- * advancing the cursor after each call.  Buckets with few occupied
- * slots are skipped via a SIMD check to avoid DRAM entry accesses.
+ * Call unconditionally from the main loop.  Internally throttled:
+ * a GC pass runs only when enough time has elapsed or enough new
+ * entries have been inserted since the last run.  The sweep width
+ * scales with the trigger ratio so idle->active transitions clean
+ * up stale entries promptly.
  *
- * Typical usage — scan all buckets every N packets:
+ * When @p idle is true the full table is swept regardless of
+ * throttle state, allowing rapid cleanup when no packets arrive.
+ *
+ * Typical DPDK usage:
  * @code
- *   fc_flow4_cache_maintain_step(&fc, fc.nb_bk, now_tsc);
+ *   nb_rx = rte_eth_rx_burst(...);
+ *   // lookup + fill ...
+ *   fc_flow4_cache_maintain_step(&fc, now_tsc, nb_rx == 0);
  * @endcode
  *
- * Or amortize over multiple calls:
- * @code
- *   // 4 calls to cover 256 buckets
- *   fc_flow4_cache_maintain_step(&fc, 64, now_tsc);
- * @endcode
- *
- * @param[in,out] fc            Cache instance.
- * @param[in]     bucket_count  Number of buckets to scan (clamped to nb_bk).
- * @param[in]     now           Current TSC timestamp.
+ * @param[in,out] fc    Cache instance.
+ * @param[in]     now   Current TSC timestamp.
+ * @param[in]     idle  True when no traffic (e.g. rx_burst == 0).
  * @return Number of entries evicted.
  */
+/**
+ * @brief Low-level cursor-managed maintenance with full parameter control.
+ *
+ * Scans @p bucket_count buckets starting from @p start_bk, using
+ * @p skip_threshold to filter sparse buckets.  The internal cursor
+ * is set to @p start_bk before scanning and advanced afterwards.
+ *
+ * @param[in,out] fc              Cache instance.
+ * @param[in]     start_bk        First bucket to scan (masked internally).
+ * @param[in]     bucket_count    Number of buckets to scan.
+ * @param[in]     skip_threshold  Buckets with used_slots <= this are skipped.
+ *                                0 = evaluate all buckets.
+ * @param[in]     now             Current TSC timestamp.
+ * @return Number of entries evicted.
+ */
+unsigned fc_flow4_cache_maintain_step_ex(struct fc_flow4_cache *fc,
+                                          unsigned start_bk,
+                                          unsigned bucket_count,
+                                          unsigned skip_threshold,
+                                          uint64_t now);
+
 unsigned fc_flow4_cache_maintain_step(struct fc_flow4_cache *fc,
-                                       unsigned bucket_count,
-                                       uint64_t now);
+                                       uint64_t now,
+                                       int idle);
 
 /**
  * @brief Remove a single entry by pool index.

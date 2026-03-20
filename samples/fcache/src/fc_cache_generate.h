@@ -73,7 +73,7 @@
 #endif
 
 /* Maximum buckets per maintain_step filter+reclaim pass (VLA cap). */
-/* 256 entries * 4B = 1 KB — safe for any stack. */
+/* 256 entries * 4B = 1 KB - safe for any stack. */
 #ifndef _FC_MAINT_STEP_MAX_BKS
 #define _FC_MAINT_STEP_MAX_BKS 256u
 #endif
@@ -363,13 +363,13 @@ _FCG_INT(p, maintain_step_filter_reclaim)(                                 \
     _FCG_CACHE_T(p) *fc,                                                   \
     unsigned start_bk,                                                     \
     unsigned bucket_count,                                                 \
-    uint64_t expire_before)                                                \
+    uint64_t expire_before,                                                \
+    unsigned skip_threshold)                                               \
 {                                                                          \
     enum { PF_AHEAD = 4u };                                                \
     unsigned evicted = 0u;                                                 \
-    unsigned skip_threshold = fc->pressure_empty_slots;                    \
     unsigned mask = fc->ht_head.rhh_mask;                                  \
-    /* Pass 1 — filter: SIMD-scan idx[] to collect non-sparse buckets. */ \
+    /* Pass 1 - filter: SIMD-scan idx[] to collect non-sparse buckets. */ \
     /* Touches only the idx[] cache line per bucket (sequential). */       \
     unsigned work[bucket_count];                                           \
     unsigned work_count = 0u;                                              \
@@ -386,7 +386,7 @@ _FCG_INT(p, maintain_step_filter_reclaim)(                                 \
         }                                                                  \
         scan_bk = (scan_bk + 1u) & mask;                                   \
     }                                                                      \
-    /* Pass 2 — reclaim: process only candidate buckets with N-ahead */   \
+    /* Pass 2 - reclaim: process only candidate buckets with N-ahead */   \
     /* prefetch.  Prefetch distance is stable (no skip branches). */       \
     for (unsigned j = 0; j < PF_AHEAD && j < work_count; j++)              \
         _rix_hash_prefetch_bucket(&fc->buckets[work[j]]);                  \
@@ -405,7 +405,8 @@ _FCG_INT(p, maintain_step_filter_reclaim)(                                 \
 static unsigned                                                            \
 _FCG_INT(p, maintain_step_grouped)(_FCG_CACHE_T(p) *fc,                   \
                                     unsigned bucket_count,                  \
-                                    uint64_t now_tsc)                       \
+                                    uint64_t now_tsc,                       \
+                                    unsigned skip_threshold)                \
 {                                                                          \
     unsigned evicted = 0u;                                                 \
     unsigned mask;                                                         \
@@ -416,16 +417,20 @@ _FCG_INT(p, maintain_step_grouped)(_FCG_CACHE_T(p) *fc,                   \
         bucket_count = fc->nb_bk;                                          \
     expire_before = (now_tsc > fc->eff_timeout_tsc) ?                      \
         (now_tsc - fc->eff_timeout_tsc) : 0u;                             \
-    unsigned cur_bk = fc->maint_cursor & mask;                             \
+    unsigned start_bk = fc->maint_cursor & mask;                            \
+    unsigned cur_bk = start_bk;                                            \
+    unsigned swept = bucket_count;                                         \
     while (bucket_count > 0u) {                                            \
         unsigned chunk = (bucket_count > _FC_MAINT_STEP_MAX_BKS) ?         \
             _FC_MAINT_STEP_MAX_BKS : bucket_count;                        \
         evicted += _FCG_INT(p, maintain_step_filter_reclaim)(              \
-            fc, cur_bk, chunk, expire_before);                             \
+            fc, cur_bk, chunk, expire_before, skip_threshold);             \
         cur_bk = (cur_bk + chunk) & mask;                                  \
         bucket_count -= chunk;                                             \
     }                                                                      \
     fc->maint_cursor = cur_bk;                                             \
+    fc->last_maint_start_bk = start_bk;                                   \
+    fc->last_maint_sweep_bk = swept;                                       \
     return evicted;                                                        \
 }                                                                          \
                                                                            \
@@ -503,6 +508,11 @@ _FCG_API(p, init)(_FCG_CACHE_T(p) *fc,                                  \
     fc->eff_timeout_tsc = cfg->timeout_tsc ? cfg->timeout_tsc : 1u;        \
     fc->pressure_empty_slots = cfg->pressure_empty_slots ?                 \
         cfg->pressure_empty_slots : (pressure);                            \
+    fc->maint_interval_tsc = cfg->maint_interval_tsc;                      \
+    fc->maint_base_bk = cfg->maint_base_bk ? cfg->maint_base_bk : nb_bk;  \
+    fc->maint_fill_threshold = cfg->maint_fill_threshold;                  \
+    fc->last_maint_tsc = 0u;                                               \
+    fc->last_maint_fills = 0u;                                             \
     _FCG_INT(p, init_thresholds)(fc);                                     \
     RIX_SLIST_INIT(&fc->free_head);                                        \
     _FCG_HT(p, init)(&fc->ht_head, nb_bk);                               \
@@ -667,14 +677,57 @@ _FCG_API(p, maintain)(_FCG_CACHE_T(p) *fc,                              \
 }                                                                          \
                                                                            \
 unsigned                                                                   \
-_FCG_API(p, maintain_step)(_FCG_CACHE_T(p) *fc,                          \
-                            unsigned bucket_count,                          \
-                            uint64_t now)                                   \
+_FCG_API(p, maintain_step_ex)(_FCG_CACHE_T(p) *fc,                       \
+                               unsigned start_bk,                           \
+                               unsigned bucket_count,                       \
+                               unsigned skip_threshold,                     \
+                               uint64_t now)                                \
 {                                                                          \
     fc->stats.maint_step_calls++;                                          \
     fc->stats.maint_calls++;                                               \
     _FCG_INT(p, update_eff_timeout)(fc);                                  \
-    return _FCG_INT(p, maintain_step_grouped)(fc, bucket_count, now);     \
+    fc->maint_cursor = start_bk & fc->ht_head.rhh_mask;                   \
+    return _FCG_INT(p, maintain_step_grouped)(fc, bucket_count, now,      \
+                                               skip_threshold);             \
+}                                                                          \
+                                                                           \
+unsigned                                                                   \
+_FCG_API(p, maintain_step)(_FCG_CACHE_T(p) *fc,                          \
+                            uint64_t now,                                   \
+                            int idle)                                       \
+{                                                                          \
+    unsigned sweep;                                                        \
+    unsigned skip_threshold;                                               \
+    fc->stats.maint_step_calls++;                                          \
+    if (idle) {                                                            \
+        sweep = fc->nb_bk;                                                 \
+        skip_threshold = 0u;                                               \
+    } else {                                                               \
+        uint64_t elapsed = now - fc->last_maint_tsc;                       \
+        uint64_t added   = fc->stats.fills - fc->last_maint_fills;         \
+        unsigned time_scale = 0u;                                          \
+        unsigned entry_scale = 0u;                                         \
+        unsigned scale;                                                    \
+        if (fc->maint_interval_tsc != 0u)                                  \
+            time_scale = (unsigned)(elapsed / fc->maint_interval_tsc);     \
+        else                                                               \
+            time_scale = 1u;                                               \
+        if (fc->maint_fill_threshold != 0u)                                \
+            entry_scale = (unsigned)(added / fc->maint_fill_threshold);    \
+        scale = (time_scale > entry_scale) ? time_scale : entry_scale;     \
+        if (scale == 0u)                                                   \
+            return 0u;                                                     \
+        sweep = fc->maint_base_bk * scale;                                 \
+        if (sweep > fc->nb_bk)                                             \
+            sweep = fc->nb_bk;                                             \
+        skip_threshold = fc->pressure_empty_slots;                         \
+    }                                                                      \
+    fc->last_maint_tsc   = now;                                            \
+    fc->last_maint_fills = fc->stats.fills;                                \
+    fc->stats.maint_calls++;                                               \
+    _FCG_INT(p, update_eff_timeout)(fc);                                  \
+    return _FCG_INT(p, maintain_step_grouped)(fc, sweep, now,             \
+                                               skip_threshold);             \
 }                                                                          \
                                                                            \
 int                                                                        \

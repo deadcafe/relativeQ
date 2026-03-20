@@ -107,6 +107,9 @@ RIX_SLIST_HEAD(fc_flowu_free_head, fc_flowu_entry);
 struct fc_flowu_config {
     uint64_t timeout_tsc;
     unsigned pressure_empty_slots;
+    uint64_t maint_interval_tsc;
+    unsigned maint_base_bk;
+    unsigned maint_fill_threshold;
 };
 
 struct fc_flowu_stats {
@@ -145,6 +148,13 @@ struct fc_flowu_cache {
     unsigned                   relief_mid_entries;
     unsigned                   relief_hi_entries;
     unsigned                   maint_cursor;
+    uint64_t                   last_maint_tsc;
+    uint64_t                   last_maint_fills;
+    uint64_t                   maint_interval_tsc;
+    unsigned                   maint_base_bk;
+    unsigned                   maint_fill_threshold;
+    unsigned                   last_maint_start_bk;
+    unsigned                   last_maint_sweep_bk;
     struct fc_flowu_free_head free_head;
     struct fc_flowu_stats     stats;
 };
@@ -173,9 +183,14 @@ unsigned fc_flowu_cache_maintain(struct fc_flowu_cache *fc,
                                   unsigned start_bk,
                                   unsigned bucket_count,
                                   uint64_t now);
+unsigned fc_flowu_cache_maintain_step_ex(struct fc_flowu_cache *fc,
+                                          unsigned start_bk,
+                                          unsigned bucket_count,
+                                          unsigned skip_threshold,
+                                          uint64_t now);
 unsigned fc_flowu_cache_maintain_step(struct fc_flowu_cache *fc,
-                                       unsigned bucket_count,
-                                       uint64_t now);
+                                       uint64_t now,
+                                       int idle);
 int fc_flowu_cache_remove_idx(struct fc_flowu_cache *fc, uint32_t entry_idx);
 void fc_flowu_cache_stats(const struct fc_flowu_cache *fc,
                            struct fc_flowu_stats *out);
