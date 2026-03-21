@@ -615,14 +615,14 @@ _FCG_API(p, find_bulk)(_FCG_CACHE_T(p) *fc,                              \
                 _FCG_HT(p, hash_key_2bk)(&ctx[i + j], &fc->ht_head,     \
                                            fc->buckets, &keys[i + j]);    \
         }                                                                  \
-        /* Stage 2: scan_bk_empties */                                     \
+        /* Stage 2: scan_bk (no empty tracking needed) */                   \
         if (i >= ahead_keys && i - ahead_keys < nb_keys) {                \
             unsigned base = i - ahead_keys;                                \
             unsigned n = (base + step_keys <= nb_keys) ?                   \
                 step_keys : (nb_keys - base);                              \
             for (unsigned j = 0; j < n; j++)                               \
-                _FCG_HT(p, scan_bk_empties)(&ctx[base + j],              \
-                                              &fc->ht_head, fc->buckets); \
+                _FCG_HT(p, scan_bk)(&ctx[base + j],                      \
+                                      &fc->ht_head, fc->buckets);         \
         }                                                                  \
         /* Stage 3: prefetch_node */                                       \
         if (i >= 2u * ahead_keys &&                                        \
@@ -633,7 +633,7 @@ _FCG_API(p, find_bulk)(_FCG_CACHE_T(p) *fc,                              \
             for (unsigned j = 0; j < n; j++)                               \
                 _FCG_HT(p, prefetch_node)(&ctx[base + j], fc->pool);     \
         }                                                                  \
-        /* Stage 4: cmp_key_empties — hit or miss, no insert */            \
+        /* Stage 4: cmp_key - hit or miss, no insert */                    \
         if (i >= 3u * ahead_keys &&                                        \
             i - 3u * ahead_keys < nb_keys) {                               \
             unsigned base = i - 3u * ahead_keys;                           \
@@ -642,8 +642,8 @@ _FCG_API(p, find_bulk)(_FCG_CACHE_T(p) *fc,                              \
             for (unsigned j = 0; j < n; j++) {                             \
                 unsigned idx = base + j;                                   \
                 _FCG_ENTRY_T(p) *entry;                                   \
-                entry = _FCG_HT(p, cmp_key_empties)(&ctx[idx],           \
-                                                      fc->pool);          \
+                entry = _FCG_HT(p, cmp_key)(&ctx[idx],                   \
+                                              fc->pool);                   \
                 if (RIX_LIKELY(entry != NULL)) {                           \
                     if (now)                                                \
                         entry->last_ts = now;                              \
@@ -1015,7 +1015,7 @@ _FCG_API(p, del_bulk)(_FCG_CACHE_T(p) *fc,                              \
     const unsigned ahead_keys = FLOW_CACHE_LOOKUP_AHEAD_KEYS;              \
     const unsigned step_keys = FLOW_CACHE_LOOKUP_STEP_KEYS;                \
     const unsigned total = nb_keys + 3u * ahead_keys;                      \
-    /* 4-stage pipeline: hash → scan → prefetch → cmp+remove */           \
+    /* 4-stage pipeline: hash -> scan -> prefetch -> cmp+remove */           \
     for (unsigned i = 0; i < total; i += step_keys) {                      \
         /* Stage 1: hash_key_2bk */                                        \
         if (i < nb_keys) {                                                 \
@@ -1025,14 +1025,14 @@ _FCG_API(p, del_bulk)(_FCG_CACHE_T(p) *fc,                              \
                 _FCG_HT(p, hash_key_2bk)(&ctx[i + j], &fc->ht_head,     \
                                            fc->buckets, &keys[i + j]);    \
         }                                                                  \
-        /* Stage 2: scan_bk_empties */                                     \
+        /* Stage 2: scan_bk (no empty tracking needed) */                   \
         if (i >= ahead_keys && i - ahead_keys < nb_keys) {                \
             unsigned base = i - ahead_keys;                                \
             unsigned n = (base + step_keys <= nb_keys) ?                   \
                 step_keys : (nb_keys - base);                              \
             for (unsigned j = 0; j < n; j++)                               \
-                _FCG_HT(p, scan_bk_empties)(&ctx[base + j],              \
-                                              &fc->ht_head, fc->buckets); \
+                _FCG_HT(p, scan_bk)(&ctx[base + j],                      \
+                                      &fc->ht_head, fc->buckets);         \
         }                                                                  \
         /* Stage 3: prefetch_node */                                       \
         if (i >= 2u * ahead_keys &&                                        \
@@ -1052,8 +1052,8 @@ _FCG_API(p, del_bulk)(_FCG_CACHE_T(p) *fc,                              \
             for (unsigned j = 0; j < n; j++) {                             \
                 unsigned idx = base + j;                                   \
                 _FCG_ENTRY_T(p) *entry;                                   \
-                entry = _FCG_HT(p, cmp_key_empties)(&ctx[idx],           \
-                                                      fc->pool);          \
+                entry = _FCG_HT(p, cmp_key)(&ctx[idx],                   \
+                                              fc->pool);                   \
                 if (entry != NULL) {                                       \
                     _FCG_HT(p, remove)(&fc->ht_head, fc->buckets,        \
                                         fc->pool, entry);                  \

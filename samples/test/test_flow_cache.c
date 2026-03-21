@@ -933,14 +933,14 @@ test_##PREFIX##_findadd_single(void) \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, NULL); \
     key = MAKE_KEY(28000u); \
 \
-    /* first call: miss → insert */ \
+    /* first call: miss -> insert */ \
     idx1 = fc_##PREFIX##_cache_findadd(&fc, &key, 100u); \
     if (idx1 == 0u) \
         FAIL("findadd single miss should insert"); \
     if (fc_##PREFIX##_cache_nb_entries(&fc) != 1u) \
         FAIL("findadd single: nb_entries should be 1"); \
 \
-    /* second call: hit → same idx */ \
+    /* second call: hit -> same idx */ \
     idx2 = fc_##PREFIX##_cache_findadd(&fc, &key, 200u); \
     if (idx2 != idx1) \
         FAILF("findadd single hit: idx=%u expected %u", idx2, idx1); \

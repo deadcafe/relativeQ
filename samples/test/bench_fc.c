@@ -310,7 +310,7 @@ bench_maint_partial(void)
  *
  * Pre-fills to the specified fill%, then runs findadd_bulk in a tight
  * loop with 90% hit keys for ~10 seconds.  No active_scan or other
- * overhead — pure findadd_bulk cost.
+ * overhead -- pure findadd_bulk cost.
  *===========================================================================*/
 static void __attribute__((noinline))
 perf_findadd_flow4(struct fcb_flow4_ctx *ctx,

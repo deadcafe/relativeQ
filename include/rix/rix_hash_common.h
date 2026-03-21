@@ -117,7 +117,7 @@ rix_hash_prefetch_bucket(const struct rix_hash_bucket_s *bucket)
 }
 
 /*---------------------------------------------------------------------------
- * Private aliases — used by GENERATE macros internally.
+ * Private aliases -- used by GENERATE macros internally.
  * Applications should use the public rix_hash_xxx() forms above.
  *---------------------------------------------------------------------------*/
 static RIX_FORCE_INLINE void

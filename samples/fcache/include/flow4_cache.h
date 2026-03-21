@@ -275,7 +275,7 @@ void fc_flow4_cache_findadd_bulk(struct fc_flow4_cache *fc,
 /**
  * @brief Pipelined batch insert (no duplicate check).
  *
- * 2-stage pipeline (hash+prefetch → alloc+insert).  Always inserts
+ * 2-stage pipeline (hash+prefetch -> alloc+insert).  Always inserts
  * a new entry; caller must ensure no duplicate exists.
  *
  * @param[in,out] fc        Cache instance.
@@ -292,7 +292,7 @@ void fc_flow4_cache_add_bulk(struct fc_flow4_cache *fc,
 /**
  * @brief Pipelined batch delete by key.
  *
- * 4-stage pipeline (hash → scan → prefetch → match+remove).
+ * 4-stage pipeline (hash -> scan -> prefetch -> match+remove).
  *
  * @param[in,out] fc        Cache instance.
  * @param[in]     keys      Array of @p nb_keys keys to remove.
@@ -305,7 +305,7 @@ void fc_flow4_cache_del_bulk(struct fc_flow4_cache *fc,
 /**
  * @brief Pipelined batch delete by pool index.
  *
- * 2-stage pipeline (prefetch → validate+remove).
+ * 2-stage pipeline (prefetch -> validate+remove).
  *
  * @param[in,out] fc     Cache instance.
  * @param[in]     idxs   Array of 1-origin pool indices.
