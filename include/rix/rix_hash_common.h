@@ -58,11 +58,13 @@ struct rix_hash_bucket_s {
  * Find context (staged pipeline)
  *===========================================================================*/
 struct rix_hash_find_ctx_s {
-    union rix_hash_hash_u     hash;
-    struct rix_hash_bucket_s *bk[2];
-    u32                  fp;          /* full fingerprint stored in bk  */
-    u32                  fp_hits[2];  /* bitmask: fp match & slot !NIL  */
-    const void               *key;         /* pointer to search key          */
+    union rix_hash_hash_u     hash;       /*  8B  offset  0 */
+    struct rix_hash_bucket_s *bk[2];      /* 16B  offset  8 */
+    const void               *key;        /*  8B  offset 24 */
+    u32                  fp;              /*  4B  offset 32 */
+    u32                  fp_hits[2];      /*  8B  offset 36 */
+    u32                  empties[2];      /*  8B  offset 44 */
+    /* 52B + 4B tail padding = 56B (8B aligned) */
 };
 
 /*---------------------------------------------------------------------------
@@ -85,40 +87,61 @@ rix_hash_prefetch_key(const void *key)
     __builtin_prefetch(key, 0, 0);
 }
 
-/* Prefetch a node/entry head before key comparison. */
+/* Prefetch a node/entry before key comparison. */
 static RIX_FORCE_INLINE void
-_rix_hash_prefetch_entry(const void *entry)
+rix_hash_prefetch_entry(const void *entry)
 {
     __builtin_prefetch(entry, 0, 1);
 }
 
 /* Prefetch only the fingerprint/hash line of a bucket. */
 static RIX_FORCE_INLINE void
-_rix_hash_prefetch_bucket_hash(const struct rix_hash_bucket_s *bucket)
+rix_hash_prefetch_bucket_hash(const struct rix_hash_bucket_s *bucket)
 {
     __builtin_prefetch(&bucket->hash[0], 0, 1);
 }
 
 /* Prefetch only the idx[] line of a bucket. */
 static RIX_FORCE_INLINE void
-_rix_hash_prefetch_bucket_idx(const struct rix_hash_bucket_s *bucket)
+rix_hash_prefetch_bucket_idx(const struct rix_hash_bucket_s *bucket)
 {
     __builtin_prefetch(&bucket->idx[0], 0, 1);
 }
 
 /* Prefetch both cache lines of a bucket for ordinary read-mostly access. */
 static RIX_FORCE_INLINE void
-_rix_hash_prefetch_bucket(const struct rix_hash_bucket_s *bucket)
+rix_hash_prefetch_bucket(const struct rix_hash_bucket_s *bucket)
 {
-    _rix_hash_prefetch_bucket_hash(bucket);
-    _rix_hash_prefetch_bucket_idx(bucket);
+    rix_hash_prefetch_bucket_hash(bucket);
+    rix_hash_prefetch_bucket_idx(bucket);
 }
 
-/* Backward-compatible alias: insert path also wants both bucket lines. */
+/*---------------------------------------------------------------------------
+ * Private aliases — used by GENERATE macros internally.
+ * Applications should use the public rix_hash_xxx() forms above.
+ *---------------------------------------------------------------------------*/
 static RIX_FORCE_INLINE void
-_rix_hash_prefetch_bucket_insert(const struct rix_hash_bucket_s *bucket)
+_rix_hash_prefetch_entry(const void *entry)
 {
-    _rix_hash_prefetch_bucket(bucket);
+    rix_hash_prefetch_entry(entry);
+}
+
+static RIX_FORCE_INLINE void
+_rix_hash_prefetch_bucket_hash(const struct rix_hash_bucket_s *bucket)
+{
+    rix_hash_prefetch_bucket_hash(bucket);
+}
+
+static RIX_FORCE_INLINE void
+_rix_hash_prefetch_bucket_idx(const struct rix_hash_bucket_s *bucket)
+{
+    rix_hash_prefetch_bucket_idx(bucket);
+}
+
+static RIX_FORCE_INLINE void
+_rix_hash_prefetch_bucket(const struct rix_hash_bucket_s *bucket)
+{
+    rix_hash_prefetch_bucket(bucket);
 }
 
 /*===========================================================================
@@ -149,12 +172,20 @@ _rix_hash_prefetch_bucket_insert(const struct rix_hash_bucket_s *bucket)
  * Remove: bk = hash_field & mask -> direct O(1) slot lookup, no hash call.
  */
 static RIX_FORCE_INLINE void
-_rix_hash_buckets(const union rix_hash_hash_u h, unsigned mask,
-                  unsigned *bk0_out, unsigned *bk1_out, u32 *fp_out)
+rix_hash_buckets(const union rix_hash_hash_u h, unsigned mask,
+                 unsigned *bk0_out, unsigned *bk1_out, u32 *fp_out)
 {
     *bk0_out = h.val32[0] & mask;
     *bk1_out = h.val32[1] & mask;
     *fp_out  = h.val32[0] ^ h.val32[1];
+}
+
+/* Private alias for GENERATE macros */
+static RIX_FORCE_INLINE void
+_rix_hash_buckets(const union rix_hash_hash_u h, unsigned mask,
+                  unsigned *bk0_out, unsigned *bk1_out, u32 *fp_out)
+{
+    rix_hash_buckets(h, mask, bk0_out, bk1_out, fp_out);
 }
 
 /*===========================================================================

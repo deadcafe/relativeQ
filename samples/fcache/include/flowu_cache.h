@@ -167,18 +167,11 @@ void fc_flowu_cache_init(struct fc_flowu_cache *fc,
                           const struct fc_flowu_config *cfg);
 void fc_flowu_cache_flush(struct fc_flowu_cache *fc);
 unsigned fc_flowu_cache_nb_entries(const struct fc_flowu_cache *fc);
-unsigned fc_flowu_cache_lookup_batch(struct fc_flowu_cache *fc,
-                                      const struct fc_flowu_key *keys,
-                                      unsigned nb_keys,
-                                      uint64_t now,
-                                      struct fc_flowu_result *results,
-                                      uint16_t *miss_idx);
-unsigned fc_flowu_cache_fill_miss_batch(struct fc_flowu_cache *fc,
-                                         const struct fc_flowu_key *keys,
-                                         const uint16_t *miss_idx,
-                                         unsigned miss_count,
-                                         uint64_t now,
-                                         struct fc_flowu_result *results);
+void fc_flowu_cache_lookup_batch(struct fc_flowu_cache *fc,
+                                  const struct fc_flowu_key *keys,
+                                  unsigned nb_keys,
+                                  uint64_t now,
+                                  struct fc_flowu_result *results);
 unsigned fc_flowu_cache_maintain(struct fc_flowu_cache *fc,
                                   unsigned start_bk,
                                   unsigned bucket_count,

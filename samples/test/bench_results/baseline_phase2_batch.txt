@@ -1,0 +1,48 @@
+=== Baseline: Phase 2 batch insert (before inline insert optimization) ===
+Config: STEP_KEYS=8, AHEAD_STEPS=4, ahead_keys=32
+Pipeline: hash_key_2bk -> scan_bk_empties -> prefetch_node -> cmp_key_empties
+Insert:   Phase 2 batch (collect miss_buf, then batch insert_hashed)
+Date:     2026-03-21
+Arch:     avx512
+
+--- flow4 summary (3 runs, cycles/key) ---
+
+                    run1      run2      run3      avg
+32K hit_lookup      38.79     38.94     40.92     39.55
+32K miss_fill      125.19    113.49    109.55    116.08
+32K mixed_90_10     47.77     47.54     49.88     48.40
+1M  hit_lookup      41.08     39.95     41.94     40.99
+1M  miss_fill      311.85    343.36    326.45    327.22
+1M  mixed_90_10    116.42    119.69    122.02    119.38
+
+--- full output ---
+
+--- run 1 ---
+[32K entries]
+  hit_lookup            flow4=  38.79  flow6=  55.11  flowu=  55.76
+  miss_fill             flow4= 125.19  flow6= 121.91  flowu= 130.19
+  mixed_90_10           flow4=  47.77  flow6=  66.79  flowu=  71.85
+[1024K entries]
+  hit_lookup            flow4=  41.08  flow6=  57.10  flowu=  57.75
+  miss_fill             flow4= 311.85  flow6= 395.36  flowu= 395.32
+  mixed_90_10           flow4= 116.42  flow6= 133.06  flowu= 123.51
+
+--- run 2 ---
+[32K entries]
+  hit_lookup            flow4=  38.94  flow6=  55.51  flowu=  54.32
+  miss_fill             flow4= 113.49  flow6= 121.76  flowu= 126.75
+  mixed_90_10           flow4=  47.54  flow6=  63.83  flowu=  70.23
+[1024K entries]
+  hit_lookup            flow4=  39.95  flow6=  58.61  flowu=  57.47
+  miss_fill             flow4= 343.36  flow6= 394.83  flowu= 429.13
+  mixed_90_10           flow4= 119.69  flow6= 124.72  flowu= 135.30
+
+--- run 3 ---
+[32K entries]
+  hit_lookup            flow4=  40.92  flow6=  55.53  flowu=  55.86
+  miss_fill             flow4= 109.55  flow6= 124.73  flowu= 126.54
+  mixed_90_10           flow4=  49.88  flow6=  66.24  flowu=  65.47
+[1024K entries]
+  hit_lookup            flow4=  41.94  flow6=  58.85  flowu=  58.59
+  miss_fill             flow4= 326.45  flow6= 414.77  flowu= 391.13
+  mixed_90_10           flow4= 122.02  flow6= 122.24  flowu= 142.36

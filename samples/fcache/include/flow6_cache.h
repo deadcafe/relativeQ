@@ -111,18 +111,11 @@ void fc_flow6_cache_init(struct fc_flow6_cache *fc,
                           const struct fc_flow6_config *cfg);
 void fc_flow6_cache_flush(struct fc_flow6_cache *fc);
 unsigned fc_flow6_cache_nb_entries(const struct fc_flow6_cache *fc);
-unsigned fc_flow6_cache_lookup_batch(struct fc_flow6_cache *fc,
-                                      const struct fc_flow6_key *keys,
-                                      unsigned nb_keys,
-                                      uint64_t now,
-                                      struct fc_flow6_result *results,
-                                      uint16_t *miss_idx);
-unsigned fc_flow6_cache_fill_miss_batch(struct fc_flow6_cache *fc,
-                                         const struct fc_flow6_key *keys,
-                                         const uint16_t *miss_idx,
-                                         unsigned miss_count,
-                                         uint64_t now,
-                                         struct fc_flow6_result *results);
+void fc_flow6_cache_lookup_batch(struct fc_flow6_cache *fc,
+                                  const struct fc_flow6_key *keys,
+                                  unsigned nb_keys,
+                                  uint64_t now,
+                                  struct fc_flow6_result *results);
 unsigned fc_flow6_cache_maintain(struct fc_flow6_cache *fc,
                                   unsigned start_bk,
                                   unsigned bucket_count,

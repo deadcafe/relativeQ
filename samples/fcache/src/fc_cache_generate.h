@@ -65,11 +65,12 @@
 /*===========================================================================
  * Pipeline geometry defaults
  *===========================================================================*/
+/* Pipeline geometry (single source of truth for all variants) */
 #ifndef FLOW_CACHE_LOOKUP_STEP_KEYS
-#define FLOW_CACHE_LOOKUP_STEP_KEYS   16u
+#define FLOW_CACHE_LOOKUP_STEP_KEYS   8u
 #endif
 #ifndef FLOW_CACHE_LOOKUP_AHEAD_STEPS
-#define FLOW_CACHE_LOOKUP_AHEAD_STEPS 8u
+#define FLOW_CACHE_LOOKUP_AHEAD_STEPS 4u
 #endif
 #ifndef FLOW_CACHE_LOOKUP_AHEAD_KEYS
 #define FLOW_CACHE_LOOKUP_AHEAD_KEYS \
@@ -101,17 +102,17 @@ RIX_HASH_GENERATE_STATIC_SLOT_EX(                                         \
  *===========================================================================*/
 #define _FC_GENERATE_INTERNAL(p)                                          \
                                                                            \
-static inline void                                                         \
+static inline void __attribute__((unused))                                  \
 _FCG_INT(p, prefetch_insert_hash)(const _FCG_CACHE_T(p) *fc,            \
                                    union rix_hash_hash_u h)                \
 {                                                                          \
     unsigned bk0, bk1;                                                     \
     uint32_t fp;                                                           \
     unsigned mask = fc->ht_head.rhh_mask;                                  \
-    _rix_hash_buckets(h, mask, &bk0, &bk1, &fp);                          \
+    rix_hash_buckets(h, mask, &bk0, &bk1, &fp);                          \
     (void)fp;                                                              \
-    _rix_hash_prefetch_bucket(fc->buckets + bk0);                          \
-    _rix_hash_prefetch_bucket(fc->buckets + bk1);                          \
+    rix_hash_prefetch_bucket(fc->buckets + bk0);                          \
+    rix_hash_prefetch_bucket(fc->buckets + bk1);                          \
 }                                                                          \
                                                                            \
 static inline void                                                         \
@@ -344,12 +345,12 @@ _FCG_INT(p, maintain_grouped)(_FCG_CACHE_T(p) *fc,                   \
     expire_before = (now_tsc > fc->eff_timeout_tsc) ?                      \
         (now_tsc - fc->eff_timeout_tsc) : 0u;                             \
     next_bk = start_bk & mask;                                            \
-    _rix_hash_prefetch_bucket_idx(&fc->buckets[next_bk]);                  \
+    rix_hash_prefetch_bucket_idx(&fc->buckets[next_bk]);                  \
     while (bucket_count-- != 0u) {                                         \
         unsigned reclaimed;                                                \
         cur_bk = next_bk;                                                  \
         next_bk = (next_bk + 1u) & mask;                                  \
-        _rix_hash_prefetch_bucket_idx(&fc->buckets[next_bk]);              \
+        rix_hash_prefetch_bucket_idx(&fc->buckets[next_bk]);              \
         fc->stats.maint_bucket_checks++;                                   \
         reclaimed = _FCG_INT(p, reclaim_bucket_all)(fc, cur_bk,           \
                                                      expire_before);       \
@@ -397,11 +398,11 @@ _FCG_INT(p, maintain_step_filter_reclaim)(                                 \
     /* Pass 2 - reclaim: process only candidate buckets with N-ahead */   \
     /* prefetch.  Prefetch distance is stable (no skip branches). */       \
     for (unsigned j = 0; j < PF_AHEAD && j < work_count; j++)              \
-        _rix_hash_prefetch_bucket(&fc->buckets[work[j]]);                  \
+        rix_hash_prefetch_bucket(&fc->buckets[work[j]]);                  \
     for (unsigned i = 0; i < work_count; i++) {                            \
         unsigned reclaimed;                                                \
         if (i + PF_AHEAD < work_count)                                     \
-            _rix_hash_prefetch_bucket(&fc->buckets[work[i + PF_AHEAD]]);   \
+            rix_hash_prefetch_bucket(&fc->buckets[work[i + PF_AHEAD]]);   \
         reclaimed = _FCG_INT(p, reclaim_bucket_all)(fc, work[i],           \
                                                      expire_before);       \
         fc->stats.maint_evictions += reclaimed;                            \
@@ -442,7 +443,7 @@ _FCG_INT(p, maintain_step_grouped)(_FCG_CACHE_T(p) *fc,                   \
     return evicted;                                                        \
 }                                                                          \
                                                                            \
-static void                                                                \
+static void __attribute__((unused))                                        \
 _FCG_INT(p, insert_relief_hashed)(_FCG_CACHE_T(p) *fc,                  \
                                    union rix_hash_hash_u h,                \
                                    uint64_t now_tsc)                       \
@@ -459,7 +460,7 @@ _FCG_INT(p, insert_relief_hashed)(_FCG_CACHE_T(p) *fc,                  \
     _FCG_INT(p, update_eff_timeout)(fc);                                  \
     expire_before = (now_tsc > fc->eff_timeout_tsc) ?                      \
         (now_tsc - fc->eff_timeout_tsc) : 0u;                             \
-    _rix_hash_buckets(h, fc->ht_head.rhh_mask, &bk0, &bk1, &fp);         \
+    rix_hash_buckets(h, fc->ht_head.rhh_mask, &bk0, &bk1, &fp);         \
     pressure_empty_slots = _FCG_INT(p, relief_empty_slots)(fc);           \
     fc->stats.relief_bucket_checks++;                                      \
     rix_hash_arch->find_u32x16_2(fc->buckets[bk0].hash, fp, 0u,           \
@@ -494,26 +495,23 @@ _FCG_INT(p, insert_relief_hashed)(_FCG_CACHE_T(p) *fc,                  \
  *===========================================================================*/
 #ifdef FC_ARCH_SUFFIX
 #define _FC_GENERATE_API_DECLS(p)                                          \
-void _FCG_API(p, init)(_FCG_CACHE_T(p) *,                                \
+static void _FCG_API(p, init)(_FCG_CACHE_T(p) *,                         \
                         struct rix_hash_bucket_s *, unsigned,               \
                         _FCG_ENTRY_T(p) *, unsigned,                      \
                         const _FCG_CONFIG_T(p) *);                        \
-void _FCG_API(p, flush)(_FCG_CACHE_T(p) *);                              \
-unsigned _FCG_API(p, nb_entries)(const _FCG_CACHE_T(p) *);                \
-unsigned _FCG_API(p, lookup_batch)(_FCG_CACHE_T(p) *,                     \
+static void _FCG_API(p, flush)(_FCG_CACHE_T(p) *);                       \
+static unsigned _FCG_API(p, nb_entries)(const _FCG_CACHE_T(p) *);         \
+static void _FCG_API(p, lookup_batch)(_FCG_CACHE_T(p) *,                 \
     const _FCG_KEY_T(p) *, unsigned, uint64_t,                             \
-    _FCG_RESULT_T(p) *, uint16_t *);                                      \
-unsigned _FCG_API(p, fill_miss_batch)(_FCG_CACHE_T(p) *,                  \
-    const _FCG_KEY_T(p) *, const uint16_t *, unsigned, uint64_t,           \
     _FCG_RESULT_T(p) *);                                                  \
-unsigned _FCG_API(p, maintain)(_FCG_CACHE_T(p) *,                         \
+static unsigned _FCG_API(p, maintain)(_FCG_CACHE_T(p) *,                  \
     unsigned, unsigned, uint64_t);                                         \
-unsigned _FCG_API(p, maintain_step_ex)(_FCG_CACHE_T(p) *,                 \
+static unsigned _FCG_API(p, maintain_step_ex)(_FCG_CACHE_T(p) *,          \
     unsigned, unsigned, unsigned, uint64_t);                                \
-unsigned _FCG_API(p, maintain_step)(_FCG_CACHE_T(p) *,                    \
+static unsigned _FCG_API(p, maintain_step)(_FCG_CACHE_T(p) *,             \
     uint64_t, int);                                                        \
-int _FCG_API(p, remove_idx)(_FCG_CACHE_T(p) *, uint32_t);                \
-void _FCG_API(p, stats)(const _FCG_CACHE_T(p) *, _FCG_STATS_T(p) *);
+static int _FCG_API(p, remove_idx)(_FCG_CACHE_T(p) *, uint32_t);         \
+static void _FCG_API(p, stats)(const _FCG_CACHE_T(p) *, _FCG_STATS_T(p) *);
 #else
 #define _FC_GENERATE_API_DECLS(p) /* prototypes in variant header */
 #endif
@@ -524,7 +522,7 @@ void _FCG_API(p, stats)(const _FCG_CACHE_T(p) *, _FCG_STATS_T(p) *);
 #define _FC_GENERATE_API(p, pressure, hash_fn)                             \
 _FC_GENERATE_API_DECLS(p)                                                  \
                                                                            \
-void                                                                       \
+static void                                                                \
 _FCG_API(p, init)(_FCG_CACHE_T(p) *fc,                                  \
                    struct rix_hash_bucket_s *buckets,                      \
                    unsigned nb_bk,                                         \
@@ -563,7 +561,7 @@ _FCG_API(p, init)(_FCG_CACHE_T(p) *fc,                                  \
                               &fc->pool[i], free_link);                    \
 }                                                                          \
                                                                            \
-void                                                                       \
+static void                                                                \
 _FCG_API(p, flush)(_FCG_CACHE_T(p) *fc)                                 \
 {                                                                          \
     memset(fc->buckets, 0, (size_t)fc->nb_bk * sizeof(*fc->buckets));      \
@@ -576,42 +574,52 @@ _FCG_API(p, flush)(_FCG_CACHE_T(p) *fc)                                 \
     }                                                                      \
 }                                                                          \
                                                                            \
-unsigned                                                                   \
+static unsigned                                                            \
 _FCG_API(p, nb_entries)(const _FCG_CACHE_T(p) *fc)                      \
 {                                                                          \
     return fc->ht_head.rhh_nb;                                             \
 }                                                                          \
                                                                            \
-unsigned                                                                   \
+static void                                                                \
 _FCG_API(p, lookup_batch)(_FCG_CACHE_T(p) *fc,                          \
                            const _FCG_KEY_T(p) *keys,                     \
                            unsigned nb_keys,                               \
                            uint64_t now,                                   \
-                           _FCG_RESULT_T(p) *results,                     \
-                           uint16_t *miss_idx)                             \
+                           _FCG_RESULT_T(p) *results)                     \
 {                                                                          \
     struct rix_hash_find_ctx_s ctx[nb_keys];                               \
-    unsigned miss_count = 0u;                                              \
     uint64_t hit_count = 0u;                                               \
+    uint64_t miss_count = 0u;                                              \
     const unsigned ahead_keys = FLOW_CACHE_LOOKUP_AHEAD_KEYS;              \
     const unsigned step_keys = FLOW_CACHE_LOOKUP_STEP_KEYS;                \
     const unsigned total = nb_keys + 3u * ahead_keys;                      \
+    /* Prefetch free list head so first miss insert is warm */              \
+    {                                                                      \
+        _FCG_ENTRY_T(p) *_fh =                                           \
+            RIX_SLIST_FIRST(&fc->free_head, fc->pool);                    \
+        if (_fh != NULL)                                                   \
+            rix_hash_prefetch_entry(_fh);                                 \
+    }                                                                      \
+    /* 4-stage N-ahead pipeline: lookup + inline insert on miss */         \
     for (unsigned i = 0; i < total; i += step_keys) {                      \
+        /* Stage 1: hash_key_2bk (prefetch both bk[0] and bk[1]) */       \
         if (i < nb_keys) {                                                 \
             unsigned n = (i + step_keys <= nb_keys) ?                      \
                 step_keys : (nb_keys - i);                                 \
             for (unsigned j = 0; j < n; j++)                               \
-                _FCG_HT(p, hash_key)(&ctx[i + j], &fc->ht_head,          \
-                                      fc->buckets, &keys[i + j]);         \
+                _FCG_HT(p, hash_key_2bk)(&ctx[i + j], &fc->ht_head,     \
+                                           fc->buckets, &keys[i + j]);    \
         }                                                                  \
+        /* Stage 2: scan_bk_empties (bk[0] fp + empty scan) */            \
         if (i >= ahead_keys && i - ahead_keys < nb_keys) {                \
             unsigned base = i - ahead_keys;                                \
             unsigned n = (base + step_keys <= nb_keys) ?                   \
                 step_keys : (nb_keys - base);                              \
             for (unsigned j = 0; j < n; j++)                               \
-                _FCG_HT(p, scan_bk)(&ctx[base + j],                      \
-                                     &fc->ht_head, fc->buckets);          \
+                _FCG_HT(p, scan_bk_empties)(&ctx[base + j],              \
+                                              &fc->ht_head, fc->buckets); \
         }                                                                  \
+        /* Stage 3: prefetch_node */                                       \
         if (i >= 2u * ahead_keys &&                                        \
             i - 2u * ahead_keys < nb_keys) {                               \
             unsigned base = i - 2u * ahead_keys;                           \
@@ -620,6 +628,7 @@ _FCG_API(p, lookup_batch)(_FCG_CACHE_T(p) *fc,                          \
             for (unsigned j = 0; j < n; j++)                               \
                 _FCG_HT(p, prefetch_node)(&ctx[base + j], fc->pool);     \
         }                                                                  \
+        /* Stage 4: cmp_key_empties + inline insert on miss */             \
         if (i >= 3u * ahead_keys &&                                        \
             i - 3u * ahead_keys < nb_keys) {                               \
             unsigned base = i - 3u * ahead_keys;                           \
@@ -628,85 +637,102 @@ _FCG_API(p, lookup_batch)(_FCG_CACHE_T(p) *fc,                          \
             for (unsigned j = 0; j < n; j++) {                             \
                 unsigned idx = base + j;                                   \
                 _FCG_ENTRY_T(p) *entry;                                   \
-                entry = _FCG_HT(p, cmp_key)(&ctx[idx], fc->pool);        \
-                if (RIX_UNLIKELY(entry == NULL)) {                         \
-                    _FCG_INT(p, result_set_miss)(&results[idx]);          \
-                    if (miss_idx != NULL)                                   \
-                        miss_idx[miss_count] = (uint16_t)idx;              \
-                    miss_count++;                                          \
+                entry = _FCG_HT(p, cmp_key_empties)(&ctx[idx],           \
+                                                      fc->pool);          \
+                if (RIX_LIKELY(entry != NULL)) {                           \
+                    /* --- HIT --- */                                      \
+                    entry->last_ts = now;                                  \
+                    _FCG_INT(p, result_set_hit)(&results[idx],            \
+                        RIX_IDX_FROM_PTR(fc->pool, entry));                \
+                    hit_count++;                                           \
                     continue;                                              \
                 }                                                          \
+                /* --- MISS: inline insert --- */                          \
+                miss_count++;                                              \
+                /* Relief: use empties[] popcount (no re-scan) */          \
+                if (fc->total_slots != 0u) {                               \
+                    unsigned _pe =                                         \
+                        _FCG_INT(p, relief_empty_slots)(fc);              \
+                    unsigned _bk0i =                                       \
+                        (unsigned)(ctx[idx].bk[0] - fc->buckets);          \
+                    fc->stats.relief_calls++;                              \
+                    fc->stats.relief_bucket_checks++;                      \
+                    if ((unsigned)__builtin_popcount(                       \
+                            ctx[idx].empties[0]) <= _pe) {            \
+                        _FCG_INT(p, update_eff_timeout)(fc);              \
+                        uint64_t _eb = (now > fc->eff_timeout_tsc) ?       \
+                            (now - fc->eff_timeout_tsc) : 0u;             \
+                        if (_FCG_INT(p, reclaim_bucket)(               \
+                                fc, _bk0i, _eb)) {                        \
+                            fc->stats.relief_evictions++;                  \
+                            fc->stats.relief_bk0_evictions++;              \
+                        } else {                                           \
+                            unsigned _bk1i = (unsigned)(                   \
+                                ctx[idx].bk[1] - fc->buckets);             \
+                            fc->stats.relief_bucket_checks++;              \
+                            if ((unsigned)__builtin_popcount(               \
+                                    ctx[idx].empties[1]) <= _pe &&    \
+                                _bk1i != _bk0i &&                          \
+                                _FCG_INT(p, reclaim_bucket)(           \
+                                    fc, _bk1i, _eb)) {                     \
+                                fc->stats.relief_evictions++;              \
+                                fc->stats.relief_bk1_evictions++;          \
+                            }                                              \
+                        }                                                  \
+                    }                                                      \
+                }                                                          \
+                /* Alloc from free list (head already prefetched) */       \
+                entry = _FCG_INT(p, alloc_entry)(fc);                     \
+                if (RIX_UNLIKELY(entry == NULL)) {                         \
+                    fc->stats.fill_full++;                                 \
+                    _FCG_INT(p, result_set_miss)(&results[idx]);          \
+                    continue;                                              \
+                }                                                          \
+                entry->key = keys[idx];                                    \
                 entry->last_ts = now;                                      \
-                _FCG_INT(p, result_set_hit)(&results[idx],                \
-                    RIX_IDX_FROM_PTR(fc->pool, entry));                    \
-                hit_count++;                                               \
+                /* insert_hashed: buckets in L1 from cmp_key,      */     \
+                /* hash reused from ctx (no rehash), dup-safe.     */     \
+                {                                                          \
+                    _FCG_ENTRY_T(p) *_ret;                                \
+                    _ret = _FCG_HT(p, insert_hashed)(                     \
+                        &fc->ht_head, fc->buckets, fc->pool,              \
+                        entry, ctx[idx].hash);                             \
+                    if (RIX_LIKELY(_ret == NULL)) {                        \
+                        fc->stats.fills++;                                 \
+                        _FCG_INT(p, result_set_filled)(&results[idx],     \
+                            RIX_IDX_FROM_PTR(fc->pool, entry));            \
+                    } else {                                               \
+                        _FCG_INT(p, free_entry)(fc, entry);               \
+                        if (_ret != entry) {                               \
+                            /* duplicate found */                          \
+                            _ret->last_ts = now;                           \
+                            _FCG_INT(p, result_set_filled)(               \
+                                &results[idx],                              \
+                                RIX_IDX_FROM_PTR(fc->pool, _ret));         \
+                        } else {                                           \
+                            /* table full */                               \
+                            fc->stats.fill_full++;                         \
+                            _FCG_INT(p, result_set_miss)(                 \
+                                &results[idx]);                             \
+                        }                                                  \
+                    }                                                      \
+                }                                                          \
+                /* Prefetch next free list head for future miss */         \
+                {                                                          \
+                    _FCG_ENTRY_T(p) *_nf =                                \
+                        RIX_SLIST_FIRST(&fc->free_head, fc->pool);        \
+                    if (_nf != NULL)                                       \
+                        rix_hash_prefetch_entry(_nf);                     \
+                }                                                          \
             }                                                              \
         }                                                                  \
     }                                                                      \
     fc->stats.lookups += nb_keys;                                          \
     fc->stats.hits += hit_count;                                           \
-    fc->stats.misses += nb_keys - hit_count;                               \
-    return miss_count;                                                     \
+    fc->stats.misses += miss_count;                                        \
 }                                                                          \
                                                                            \
-unsigned                                                                   \
-_FCG_API(p, fill_miss_batch)(_FCG_CACHE_T(p) *fc,                       \
-                              const _FCG_KEY_T(p) *keys,                  \
-                              const uint16_t *miss_idx,                    \
-                              unsigned miss_count,                         \
-                              uint64_t now,                                \
-                              _FCG_RESULT_T(p) *results)                  \
-{                                                                          \
-    unsigned inserted = 0u;                                                \
-    for (unsigned base = 0; base < miss_count; base += 64u) {              \
-        union rix_hash_hash_u hashes[64];                                  \
-        unsigned n = miss_count - base;                                    \
-        if (n > 64u)                                                       \
-            n = 64u;                                                       \
-        for (unsigned i = 0; i < n; i++) {                                 \
-            unsigned key_idx = miss_idx[base + i];                         \
-            hashes[i] = hash_fn(&keys[key_idx],                            \
-                                      fc->ht_head.rhh_mask);              \
-            _FCG_INT(p, prefetch_insert_hash)(fc, hashes[i]);             \
-        }                                                                  \
-        for (unsigned i = 0; i < n; i++) {                                 \
-            unsigned key_idx = miss_idx[base + i];                         \
-            _FCG_ENTRY_T(p) *entry;                                       \
-            _FCG_ENTRY_T(p) *ret;                                         \
-            _FCG_INT(p, insert_relief_hashed)(fc, hashes[i], now);        \
-            entry = _FCG_INT(p, alloc_entry)(fc);                         \
-            if (RIX_UNLIKELY(entry == NULL)) {                             \
-                fc->stats.fill_full++;                                     \
-                _FCG_INT(p, result_set_miss)(&results[key_idx]);          \
-                continue;                                                  \
-            }                                                              \
-            entry->key = keys[key_idx];                                    \
-            entry->last_ts = now;                                          \
-            ret = _FCG_HT(p, insert_hashed)(&fc->ht_head,                \
-                fc->buckets, fc->pool, entry, hashes[i]);                  \
-            if (RIX_LIKELY(ret == NULL)) {                                  \
-                fc->stats.fills++;                                         \
-                _FCG_INT(p, result_set_filled)(&results[key_idx],         \
-                    RIX_IDX_FROM_PTR(fc->pool, entry));                    \
-                inserted++;                                                \
-                continue;                                                  \
-            }                                                              \
-            _FCG_INT(p, free_entry)(fc, entry);                           \
-            if (RIX_UNLIKELY(ret != entry)) {                               \
-                ret->last_ts = now;                                        \
-                _FCG_INT(p, result_set_filled)(&results[key_idx],         \
-                    RIX_IDX_FROM_PTR(fc->pool, ret));                      \
-                continue;                                                  \
-            }                                                              \
-            fc->stats.fill_full++;                                         \
-            _FCG_INT(p, result_set_miss)(&results[key_idx]);              \
-            continue;                                                      \
-        }                                                                  \
-    }                                                                      \
-    return inserted;                                                       \
-}                                                                          \
-                                                                           \
-unsigned                                                                   \
+static unsigned                                                            \
 _FCG_API(p, maintain)(_FCG_CACHE_T(p) *fc,                              \
                        unsigned start_bk,                                  \
                        unsigned bucket_count,                              \
@@ -718,7 +744,7 @@ _FCG_API(p, maintain)(_FCG_CACHE_T(p) *fc,                              \
                                             bucket_count, now);            \
 }                                                                          \
                                                                            \
-unsigned                                                                   \
+static unsigned                                                            \
 _FCG_API(p, maintain_step_ex)(_FCG_CACHE_T(p) *fc,                       \
                                unsigned start_bk,                           \
                                unsigned bucket_count,                       \
@@ -733,7 +759,7 @@ _FCG_API(p, maintain_step_ex)(_FCG_CACHE_T(p) *fc,                       \
                                                skip_threshold);             \
 }                                                                          \
                                                                            \
-unsigned                                                                   \
+static unsigned                                                            \
 _FCG_API(p, maintain_step)(_FCG_CACHE_T(p) *fc,                          \
                             uint64_t now,                                   \
                             int idle)                                       \
@@ -772,7 +798,7 @@ _FCG_API(p, maintain_step)(_FCG_CACHE_T(p) *fc,                          \
                                                skip_threshold);             \
 }                                                                          \
                                                                            \
-int                                                                        \
+static int                                                                 \
 _FCG_API(p, remove_idx)(_FCG_CACHE_T(p) *fc, uint32_t entry_idx)        \
 {                                                                          \
     _FCG_ENTRY_T(p) *entry;                                               \
@@ -788,7 +814,7 @@ _FCG_API(p, remove_idx)(_FCG_CACHE_T(p) *fc, uint32_t entry_idx)        \
     return 1;                                                              \
 }                                                                          \
                                                                            \
-void                                                                       \
+static void                                                                \
 _FCG_API(p, stats)(const _FCG_CACHE_T(p) *fc, _FCG_STATS_T(p) *out)   \
 {                                                                          \
     *out = fc->stats;                                                      \
@@ -841,8 +867,12 @@ _FCG_API(p, stats)(const _FCG_CACHE_T(p) *fc, _FCG_STATS_T(p) *out)   \
 
 #define FC_OPS_TABLE(prefix, suffix)                                           \
 const struct fc_##prefix##_ops _FC_OPS_TNAME(prefix, suffix) = {               \
+    .init            = _FC_OPS_FNAME(prefix, init),                            \
+    .flush           = _FC_OPS_FNAME(prefix, flush),                           \
+    .nb_entries      = _FC_OPS_FNAME(prefix, nb_entries),                      \
+    .remove_idx      = _FC_OPS_FNAME(prefix, remove_idx),                      \
+    .stats           = _FC_OPS_FNAME(prefix, stats),                           \
     .lookup_batch    = _FC_OPS_FNAME(prefix, lookup_batch),                    \
-    .fill_miss_batch = _FC_OPS_FNAME(prefix, fill_miss_batch),                 \
     .maintain        = _FC_OPS_FNAME(prefix, maintain),                        \
     .maintain_step_ex = _FC_OPS_FNAME(prefix, maintain_step_ex),               \
     .maintain_step   = _FC_OPS_FNAME(prefix, maintain_step),                   \

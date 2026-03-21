@@ -19,7 +19,6 @@
 #include <time.h>
 
 #include "flow_cache.h"
-#include "fc_ops.h"
 
 /*===========================================================================
  * Constants

@@ -10,10 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "flow4_cache.h"
-#include "flow6_cache.h"
-#include "flowu_cache.h"
-#include "fc_ops.h"
+#include "flow_cache.h"
 
 #define FAIL(msg) do { \
     fprintf(stderr, "FAIL %s:%d:%s: %s\n", __FILE__, __LINE__, __func__, (msg)); \
@@ -119,36 +116,24 @@ test_##PREFIX##_lookup_fill_remove(void) \
     CACHE_T fc; \
     KEY_T keys[NB_KEYS]; \
     RESULT_T results[NB_KEYS]; \
-    uint16_t miss_idx[NB_KEYS]; \
-    unsigned miss_count; \
 \
     printf("[T] fc " #PREFIX " lookup/fill/remove\n"); \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, NULL); \
     for (unsigned i = 0; i < NB_KEYS; i++) \
         keys[i] = MAKE_KEY(i); \
 \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, NB_KEYS, 1u, \
-                                                   results, miss_idx); \
-    if (miss_count != NB_KEYS) \
-        FAILF("initial miss_count=%u expected %u", miss_count, NB_KEYS); \
-    for (unsigned i = 0; i < NB_KEYS; i++) { \
-        if (results[i].entry_idx != 0u) \
-            FAILF("initial result[%u].entry_idx=%u", i, results[i].entry_idx); \
-        if (miss_idx[i] != i) \
-            FAILF("miss_idx[%u]=%u expected %u", i, miss_idx[i], i); \
-    } \
-\
-    if (fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, miss_count, \
-                                             10u, results) != NB_KEYS) \
-        FAIL("fill_miss_batch inserted count mismatch"); \
+    /* First lookup auto-fills all misses */ \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, NB_KEYS, 1u, results); \
     if (fc_##PREFIX##_cache_nb_entries(&fc) != NB_KEYS) \
         FAILF("nb_entries=%u expected %u", \
               fc_##PREFIX##_cache_nb_entries(&fc), NB_KEYS); \
+    for (unsigned i = 0; i < NB_KEYS; i++) { \
+        if (results[i].entry_idx == 0u) \
+            FAILF("result[%u] entry_idx is 0 after auto-fill", i); \
+    } \
 \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, NB_KEYS, 20u, \
-                                                   results, miss_idx); \
-    if (miss_count != 0u) \
-        FAILF("post-fill miss_count=%u expected 0", miss_count); \
+    /* Second lookup: all hit */ \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, NB_KEYS, 20u, results); \
     for (unsigned i = 0; i < NB_KEYS; i++) { \
         if (results[i].entry_idx == 0u) \
             FAILF("result[%u] entry_idx is 0", i); \
@@ -159,10 +144,10 @@ test_##PREFIX##_lookup_fill_remove(void) \
     if (fc_##PREFIX##_cache_remove_idx(&fc, results[3].entry_idx)) \
         FAIL("remove_idx should fail on removed entry"); \
 \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, &keys[3], 1u, 30u, \
-                                                   &results[3], miss_idx); \
-    if (miss_count != 1u || results[3].entry_idx != 0u) \
-        FAIL("removed key should miss"); \
+    /* Removed key: lookup auto-fills it again */ \
+    fc_##PREFIX##_cache_lookup_batch(&fc, &keys[3], 1u, 30u, &results[3]); \
+    if (results[3].entry_idx == 0u) \
+        FAIL("removed key should be auto-filled"); \
 } \
 \
 static void \
@@ -175,51 +160,37 @@ test_##PREFIX##_pressure_relief(void) \
     CONFIG_T cfg = { .timeout_tsc = 10u, .pressure_empty_slots = 15u }; \
     KEY_T keys[FILL]; \
     RESULT_T results[FILL]; \
-    uint16_t miss_idx[FILL]; \
     KEY_T newcomer; \
     RESULT_T newcomer_result; \
-    uint16_t newcomer_miss_idx; \
-    unsigned miss_count; \
 \
     printf("[T] fc " #PREFIX " pressure relief on fill_miss\n"); \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(i); \
 \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
-                                                   results, miss_idx); \
-    if (miss_count != FILL) \
-        FAILF("pressure test initial miss_count=%u expected %u", miss_count, FILL); \
-    if (fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, miss_count, \
-                                             100u, results) != FILL) \
-        FAIL("pressure test initial fill failed"); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
     if (fc_##PREFIX##_cache_nb_entries(&fc) != FILL) \
         FAILF("pressure test initial fill entries=%u expected %u", \
               fc_##PREFIX##_cache_nb_entries(&fc), FILL); \
 \
+    /* Newcomer: lookup auto-fills via relief eviction */ \
     newcomer = MAKE_KEY(1000u); \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, &newcomer, 1u, 1000u, \
-                                                   &newcomer_result, \
-                                                   &newcomer_miss_idx); \
-    if (miss_count != 1u || newcomer_result.entry_idx != 0u) \
-        FAIL("newcomer should miss before fill"); \
-\
-    if (fc_##PREFIX##_cache_fill_miss_batch(&fc, &newcomer, &newcomer_miss_idx, 1u, \
-                                             1000u, &newcomer_result) != 1u) \
-        FAIL("pressure relief did not free one slot for newcomer"); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, &newcomer, 1u, 1000u, \
+                                      &newcomer_result); \
     if (newcomer_result.entry_idx == 0u) \
         FAIL("newcomer_result.entry_idx should be non-zero"); \
     if (fc_##PREFIX##_cache_nb_entries(&fc) != FILL) \
         FAILF("pressure test final entries=%u expected %u", \
               fc_##PREFIX##_cache_nb_entries(&fc), FILL); \
 \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, &newcomer, 1u, 1001u, \
-                                                   &newcomer_result, \
-                                                   &newcomer_miss_idx); \
-    if (miss_count != 0u || newcomer_result.entry_idx == 0u) \
+    /* Newcomer re-lookup: should hit */ \
+    fc_##PREFIX##_cache_lookup_batch(&fc, &newcomer, 1u, 1001u, \
+                                      &newcomer_result); \
+    if (newcomer_result.entry_idx == 0u) \
         FAIL("newcomer should hit after pressure-relief fill"); \
 \
-    (void)fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 1002u, results, miss_idx); \
+    /* One old entry was evicted */ \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 1002u, results); \
     if (COUNT_HITS(RESULT_T, results, FILL) != FILL - 1u) \
         FAILF("expected exactly one old entry to be evicted, hits=%u", \
               COUNT_HITS(RESULT_T, results, FILL)); \
@@ -235,33 +206,19 @@ test_##PREFIX##_fill_miss_full_without_relief(void) \
     CONFIG_T cfg = { .timeout_tsc = UINT64_C(1) << 40, .pressure_empty_slots = 15u }; \
     KEY_T keys[FILL]; \
     RESULT_T results[FILL]; \
-    uint16_t miss_idx[FILL]; \
     KEY_T newcomer; \
     RESULT_T newcomer_result; \
-    uint16_t newcomer_miss_idx; \
-    unsigned miss_count; \
 \
     printf("[T] fc " #PREFIX " no relief when entries are fresh\n"); \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(2000u + i); \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
-                                                   results, miss_idx); \
-    if (miss_count != FILL) \
-        FAIL("fresh-fill initial miss count mismatch"); \
-    if (fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, miss_count, \
-                                             100u, results) != FILL) \
-        FAIL("fresh-fill initial insert failed"); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
 \
+    /* Newcomer: entries are fresh, relief won't evict -> stays 0 */ \
     newcomer = MAKE_KEY(3000u); \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, &newcomer, 1u, 101u, \
-                                                   &newcomer_result, \
-                                                   &newcomer_miss_idx); \
-    if (miss_count != 1u) \
-        FAIL("fresh-fill newcomer miss expected"); \
-    if (fc_##PREFIX##_cache_fill_miss_batch(&fc, &newcomer, &newcomer_miss_idx, 1u, \
-                                             101u, &newcomer_result) != 0u) \
-        FAIL("fresh-fill should not insert newcomer without relief"); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, &newcomer, 1u, 101u, \
+                                      &newcomer_result); \
     if (newcomer_result.entry_idx != 0u) \
         FAILF("fresh-fill newcomer_result.entry_idx=%u expected 0", \
               newcomer_result.entry_idx); \
@@ -276,22 +233,13 @@ test_##PREFIX##_duplicate_miss_batch(void) \
     CACHE_T fc; \
     KEY_T keys[NB_KEYS]; \
     RESULT_T results[NB_KEYS]; \
-    uint16_t miss_idx[NB_KEYS]; \
-    unsigned miss_count; \
 \
     printf("[T] fc " #PREFIX " duplicate miss batch\n"); \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, NULL); \
     keys[0] = MAKE_KEY(4000u); \
     keys[1] = keys[0]; \
 \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, NB_KEYS, 1u, \
-                                                   results, miss_idx); \
-    if (miss_count != NB_KEYS) \
-        FAILF("duplicate batch initial miss_count=%u expected %u", \
-              miss_count, NB_KEYS); \
-    if (fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, miss_count, \
-                                             10u, results) != 1u) \
-        FAIL("duplicate batch should insert exactly one entry"); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, NB_KEYS, 1u, results); \
     if (fc_##PREFIX##_cache_nb_entries(&fc) != 1u) \
         FAILF("duplicate batch nb_entries=%u expected 1", \
               fc_##PREFIX##_cache_nb_entries(&fc)); \
@@ -311,21 +259,13 @@ test_##PREFIX##_flush_and_invalid_remove(void) \
     CACHE_T fc; \
     KEY_T keys[NB_KEYS]; \
     RESULT_T results[NB_KEYS]; \
-    uint16_t miss_idx[NB_KEYS]; \
-    unsigned miss_count; \
 \
     printf("[T] fc " #PREFIX " flush and invalid remove\n"); \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, NULL); \
     for (unsigned i = 0; i < NB_KEYS; i++) \
         keys[i] = MAKE_KEY(5000u + i); \
 \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, NB_KEYS, 1u, \
-                                                   results, miss_idx); \
-    if (miss_count != NB_KEYS) \
-        FAIL("flush test initial miss count mismatch"); \
-    if (fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, miss_count, \
-                                             10u, results) != NB_KEYS) \
-        FAIL("flush test initial fill failed"); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, NB_KEYS, 1u, results); \
 \
     if (fc_##PREFIX##_cache_remove_idx(&fc, 0u)) \
         FAIL("remove_idx(0) should fail"); \
@@ -336,14 +276,11 @@ test_##PREFIX##_flush_and_invalid_remove(void) \
     if (fc_##PREFIX##_cache_nb_entries(&fc) != 0u) \
         FAILF("flush left nb_entries=%u expected 0", \
               fc_##PREFIX##_cache_nb_entries(&fc)); \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, NB_KEYS, 20u, \
-                                                   results, miss_idx); \
-    if (miss_count != NB_KEYS) \
-        FAILF("post-flush miss_count=%u expected %u", miss_count, NB_KEYS); \
-    for (unsigned i = 0; i < NB_KEYS; i++) \
-        if (results[i].entry_idx != 0u) \
-            FAILF("post-flush result[%u].entry_idx=%u expected 0", \
-                  i, results[i].entry_idx); \
+    /* Post-flush lookup auto-fills again */ \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, NB_KEYS, 20u, results); \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != NB_KEYS) \
+        FAILF("post-flush nb_entries=%u expected %u", \
+              fc_##PREFIX##_cache_nb_entries(&fc), NB_KEYS); \
 } \
 \
 static void \
@@ -356,9 +293,7 @@ test_##PREFIX##_maintenance(void) \
     CONFIG_T cfg = { .timeout_tsc = 10u, .pressure_empty_slots = 1u }; \
     KEY_T keys[FILL]; \
     RESULT_T results[FILL]; \
-    uint16_t miss_idx[FILL]; \
     STATS_T stats; \
-    unsigned miss_count; \
     unsigned before_entries; \
     unsigned evicted; \
 \
@@ -367,13 +302,7 @@ test_##PREFIX##_maintenance(void) \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(6000u + i); \
 \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
-                                                   results, miss_idx); \
-    if (miss_count != FILL) \
-        FAIL("maintenance initial miss count mismatch"); \
-    if (fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, miss_count, \
-                                             100u, results) != FILL) \
-        FAIL("maintenance initial fill failed"); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
 \
     before_entries = fc_##PREFIX##_cache_nb_entries(&fc); \
     evicted = fc_##PREFIX##_cache_maintain(&fc, 0u, NB_BK, 1000u); \
@@ -404,15 +333,13 @@ test_##PREFIX##_timeout_boundary(void) \
     CONFIG_T cfg = { .timeout_tsc = 100u, .pressure_empty_slots = 1u }; \
     KEY_T keys[2]; \
     RESULT_T results[2]; \
-    uint16_t miss_idx[2]; \
 \
     printf("[T] fc " #PREFIX " timeout boundary\n"); \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     keys[0] = MAKE_KEY(7000u); \
     keys[1] = MAKE_KEY(7001u); \
 \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, 2u, 1000u, results, miss_idx); \
-    fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, 2u, 1000u, results); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, 2u, 1000u, results); \
 \
     if (fc_##PREFIX##_cache_maintain(&fc, 0u, NB_BK, 1099u) != 0u) \
         FAIL("should not evict before timeout boundary"); \
@@ -433,9 +360,8 @@ test_##PREFIX##_maintain_step(void) \
     CONFIG_T cfg; \
     KEY_T keys[FILL]; \
     RESULT_T results[FILL]; \
-    uint16_t miss_idx[FILL]; \
     STATS_T stats; \
-    unsigned miss_count, filled; \
+    unsigned filled; \
     unsigned total_evicted; \
 \
     printf("[T] fc " #PREFIX " maintain_step\n"); \
@@ -448,12 +374,8 @@ test_##PREFIX##_maintain_step(void) \
         keys[i] = MAKE_KEY(8000u + i); \
 \
     /* Fill entries at ts=100 */ \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
-                                                   results, miss_idx); \
-    if (miss_count != FILL) \
-        FAIL("maintain_step initial miss count mismatch"); \
-    filled = fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
-                                                  miss_count, 100u, results); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
+    filled = fc_##PREFIX##_cache_nb_entries(&fc); \
     if (filled < FILL / 2u) \
         FAILF("maintain_step initial fill too low: %u/%u", filled, \
               (unsigned)FILL); \
@@ -493,10 +415,8 @@ test_##PREFIX##_maintain_step(void) \
     /* Idle=true test: full sweep regardless of throttle */ \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(9000u + i); \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 2000u, \
-                                                   results, miss_idx); \
-    filled = fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
-                                                  miss_count, 2000u, results); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 2000u, results); \
+    filled = fc_##PREFIX##_cache_nb_entries(&fc); \
     total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, 3000u, 1); \
     remaining = fc_##PREFIX##_cache_nb_entries(&fc); \
     if (total_evicted == 0u) \
@@ -515,10 +435,7 @@ test_##PREFIX##_maintain_step(void) \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(10000u + i); \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
-                                                   results, miss_idx); \
-    (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
-                                               miss_count, 100u, results); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
     /* First call: elapsed is large (100 - 0 = 100 >= interval... */ \
     /* actually last_maint_tsc=0, so elapsed=500, scale=0 since 500/1000=0 */ \
     /* -> skip!  Force first run with idle=1 */ \
@@ -542,10 +459,7 @@ test_##PREFIX##_maintain_step(void) \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(11000u + i); \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
-                                                   results, miss_idx); \
-    (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
-                                               miss_count, 100u, results); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
     /* fills=48, threshold=10 -> entry_scale=4, time_scale=0 -> sweep=4*4=16=NB_BK */ \
     fc.last_maint_tsc = 100u; /* reset so time won't trigger */ \
     fc.last_maint_fills = 0u; /* 48 fills since last maint */ \
@@ -562,10 +476,7 @@ test_##PREFIX##_maintain_step(void) \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(12000u + i); \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
-                                                   results, miss_idx); \
-    (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
-                                               miss_count, 100u, results); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
     fc.last_maint_tsc = 500u; \
     /* elapsed=500, scale=5, sweep=5*2=10 */ \
     total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, 1000u, 0); \
@@ -592,10 +503,7 @@ test_##PREFIX##_maintain_step(void) \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(13000u + i); \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
-                                                   results, miss_idx); \
-    (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
-                                               miss_count, 100u, results); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
     { \
         unsigned filled_d = fc_##PREFIX##_cache_nb_entries(&fc); \
         total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, 1000u, 1); \
@@ -616,10 +524,7 @@ test_##PREFIX##_maintain_step(void) \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(14000u + i); \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
-                                                   results, miss_idx); \
-    (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
-                                               miss_count, 100u, results); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
     total_evicted = 0u; \
     for (unsigned s = 0; s < 4u; s++) \
         total_evicted += fc_##PREFIX##_cache_maintain_step( \
@@ -637,10 +542,7 @@ test_##PREFIX##_maintain_step(void) \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(15000u + i); \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
-                                                   results, miss_idx); \
-    (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
-                                               miss_count, 100u, results); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
     (void)fc_##PREFIX##_cache_maintain_step_ex(&fc, 4u, 8u, 0u, 1000u); \
     if (fc.last_maint_start_bk != 4u) \
         FAILF("_ex start_bk=%u expected 4", fc.last_maint_start_bk); \
@@ -660,10 +562,7 @@ test_##PREFIX##_maintain_step(void) \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(16000u + i); \
-    miss_count = fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, \
-                                                   results, miss_idx); \
-    (void)fc_##PREFIX##_cache_fill_miss_batch(&fc, keys, miss_idx, \
-                                               miss_count, 100u, results); \
+    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
     fc.last_maint_tsc = 700u; \
     fc.last_maint_fills = 38u; /* added=48-38=10, entry_scale=1 */ \
     /* elapsed=1000-700=300, time_scale=3 > entry_scale=1 -> sweep=3*2=6 */ \
@@ -711,8 +610,6 @@ test_flowu_v4_v6_coexist(void)
     struct fc_flowu_cache fc;
     struct fc_flowu_key keys[NB_V4 + NB_V6];
     struct fc_flowu_result results[NB_V4 + NB_V6];
-    uint16_t miss_idx[NB_V4 + NB_V6];
-    unsigned miss_count;
     unsigned total = NB_V4 + NB_V6;
 
     printf("[T] fc flowu v4/v6 coexistence\n");
@@ -723,22 +620,14 @@ test_flowu_v4_v6_coexist(void)
     for (unsigned i = 0; i < NB_V6; i++)
         keys[NB_V4 + i] = make_keyu_v6(i);
 
-    /* All miss initially */
-    miss_count = fc_flowu_cache_lookup_batch(&fc, keys, total, 1u,
-                                               results, miss_idx);
-    if (miss_count != total)
-        FAILF("coexist initial miss_count=%u expected %u", miss_count, total);
+    /* First lookup auto-fills all */
+    fc_flowu_cache_lookup_batch(&fc, keys, total, 1u, results);
+    if (fc_flowu_cache_nb_entries(&fc) != total)
+        FAILF("coexist nb_entries=%u expected %u",
+              fc_flowu_cache_nb_entries(&fc), total);
 
-    /* Fill all */
-    if (fc_flowu_cache_fill_miss_batch(&fc, keys, miss_idx, miss_count,
-                                         10u, results) != total)
-        FAIL("coexist fill failed");
-
-    /* All hit */
-    miss_count = fc_flowu_cache_lookup_batch(&fc, keys, total, 20u,
-                                               results, miss_idx);
-    if (miss_count != 0u)
-        FAILF("coexist post-fill miss_count=%u expected 0", miss_count);
+    /* Re-lookup: all hit */
+    fc_flowu_cache_lookup_batch(&fc, keys, total, 20u, results);
 
     /* Verify v4 and v6 got distinct entries */
     for (unsigned i = 0; i < total; i++) {
@@ -754,10 +643,12 @@ test_flowu_v4_v6_coexist(void)
     /* Remove a v4 entry; v6 entries should still hit */
     if (!fc_flowu_cache_remove_idx(&fc, results[0].entry_idx))
         FAIL("coexist remove v4 entry failed");
-    miss_count = fc_flowu_cache_lookup_batch(&fc, &keys[NB_V4], NB_V6, 30u,
-                                               &results[NB_V4], miss_idx);
-    if (miss_count != 0u)
-        FAIL("coexist v6 entries should still hit after v4 remove");
+    fc_flowu_cache_lookup_batch(&fc, &keys[NB_V4], NB_V6, 30u,
+                                  &results[NB_V4]);
+    for (unsigned i = NB_V4; i < total; i++) {
+        if (results[i].entry_idx == 0u)
+            FAIL("coexist v6 entries should still hit after v4 remove");
+    }
 }
 
 /*===========================================================================

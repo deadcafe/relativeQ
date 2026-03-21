@@ -4,44 +4,39 @@
  * Copyright (c) 2026 deadcafe.beef@gmail.com
  * All rights reserved.
  *
- * fc_ops.h - Architecture-dispatch ops table for fcache variants.
+ * fc_ops.h - Internal architecture-dispatch ops table for fcache.
  *
- * Each variant (flow4, flow6, flowu) has an ops table with function
- * pointers to the datapath-hot functions.  The init function selects
- * the best available implementation based on CPU features.
+ * Private header (not part of the public API).  Each variant has an
+ * ops table with function pointers for all generated functions.
+ * fc_dispatch.c uses these tables to forward public API calls to
+ * the best available SIMD implementation.
  */
 
 #ifndef _FC_OPS_H_
 #define _FC_OPS_H_
 
-#include "flow4_cache.h"
-#include "flow6_cache.h"
-#include "flowu_cache.h"
-
-/*===========================================================================
- * Arch enable flags (mirrors rix_hash_arch.h convention)
- *===========================================================================*/
-#define FC_ARCH_GEN     0u
-#define FC_ARCH_SSE     (1u << 0)
-#define FC_ARCH_AVX2    (1u << 1)
-#define FC_ARCH_AVX512  (1u << 2)
-#define FC_ARCH_AUTO    (FC_ARCH_SSE | FC_ARCH_AVX2 | FC_ARCH_AVX512)
+#include "flow_cache.h"
 
 /*===========================================================================
  * Ops table macro: generates struct fc_<prefix>_ops
  *===========================================================================*/
 #define FC_OPS_DEFINE(prefix)                                                  \
 struct fc_##prefix##_ops {                                                     \
-    unsigned (*lookup_batch)(struct fc_##prefix##_cache *fc,                    \
-                             const struct fc_##prefix##_key *keys,              \
-                             unsigned nb_keys, uint64_t now,                    \
-                             struct fc_##prefix##_result *results,              \
-                             uint16_t *miss_idx);                              \
-    unsigned (*fill_miss_batch)(struct fc_##prefix##_cache *fc,                 \
-                                const struct fc_##prefix##_key *keys,           \
-                                const uint16_t *miss_idx,                      \
-                                unsigned miss_count, uint64_t now,              \
-                                struct fc_##prefix##_result *results);          \
+    /* cold-path */                                                            \
+    void (*init)(struct fc_##prefix##_cache *fc,                               \
+                 struct rix_hash_bucket_s *buckets, unsigned nb_bk,            \
+                 struct fc_##prefix##_entry *pool, unsigned max_entries,        \
+                 const struct fc_##prefix##_config *cfg);                      \
+    void (*flush)(struct fc_##prefix##_cache *fc);                             \
+    unsigned (*nb_entries)(const struct fc_##prefix##_cache *fc);               \
+    int (*remove_idx)(struct fc_##prefix##_cache *fc, uint32_t entry_idx);     \
+    void (*stats)(const struct fc_##prefix##_cache *fc,                        \
+                  struct fc_##prefix##_stats *out);                            \
+    /* hot-path */                                                             \
+    void (*lookup_batch)(struct fc_##prefix##_cache *fc,                        \
+                         const struct fc_##prefix##_key *keys,                  \
+                         unsigned nb_keys, uint64_t now,                        \
+                         struct fc_##prefix##_result *results);                 \
     unsigned (*maintain)(struct fc_##prefix##_cache *fc,                        \
                          unsigned start_bk, unsigned bucket_count,              \
                          uint64_t now);                                         \
@@ -81,40 +76,6 @@ FC_OPS_DECLARE(flowu, _avx2);
 FC_OPS_DECLARE(flow4, _avx512);
 FC_OPS_DECLARE(flow6, _avx512);
 FC_OPS_DECLARE(flowu, _avx512);
-
-/*===========================================================================
- * Cold-path function declarations (non-SIMD, _gen only)
- *===========================================================================*/
-#define FC_COLD_DECLARE(prefix)                                                \
-    extern void                                                                \
-    fc_##prefix##_cache_init_gen(struct fc_##prefix##_cache *fc,               \
-                                 struct rix_hash_bucket_s *buckets,            \
-                                 unsigned nb_bk,                               \
-                                 struct fc_##prefix##_entry *pool,             \
-                                 unsigned max_entries,                          \
-                                 const struct fc_##prefix##_config *cfg);      \
-    extern void                                                                \
-    fc_##prefix##_cache_flush_gen(struct fc_##prefix##_cache *fc);             \
-    extern unsigned                                                            \
-    fc_##prefix##_cache_nb_entries_gen(                                        \
-        const struct fc_##prefix##_cache *fc);                                 \
-    extern int                                                                 \
-    fc_##prefix##_cache_remove_idx_gen(struct fc_##prefix##_cache *fc,         \
-                                       uint32_t entry_idx);                    \
-    extern void                                                                \
-    fc_##prefix##_cache_stats_gen(const struct fc_##prefix##_cache *fc,        \
-                                  struct fc_##prefix##_stats *out)
-
-#ifndef FC_ARCH_SUFFIX
-FC_COLD_DECLARE(flow4);
-FC_COLD_DECLARE(flow6);
-FC_COLD_DECLARE(flowu);
-
-/*===========================================================================
- * fc_arch_init -- call once at startup
- *===========================================================================*/
-void fc_arch_init(unsigned arch_enable);
-#endif
 
 /*===========================================================================
  * Runtime selection helper

@@ -728,9 +728,9 @@ make CC=clang OPTLEVEL=3
 The current tree is expected to build with both GCC and Clang in this mode.
 
 For `samples/fcache`, the lookup pipeline constants default to
-`FLOW_CACHE_LOOKUP_STEP_KEYS=16`,
-`FLOW_CACHE_LOOKUP_AHEAD_STEPS=8`, and
-`FLOW_CACHE_LOOKUP_AHEAD_KEYS=128`.
+`FLOW_CACHE_LOOKUP_STEP_KEYS=8`,
+`FLOW_CACHE_LOOKUP_AHEAD_STEPS=4`, and
+`FLOW_CACHE_LOOKUP_AHEAD_KEYS=32`.
 `AHEAD_KEYS` is the software-pipeline stage distance, not a count of
 hardware prefetch requests.
 You can override them for tuning runs via `EXTRA_CFLAGS`:

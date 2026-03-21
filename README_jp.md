@@ -726,9 +726,9 @@ make CC=clang OPTLEVEL=3
 現状ツリーはこの条件で GCC / Clang の両方でビルドできる前提です。
 
 `samples/fcache` の lookup pipeline 定数の既定値は
-`FLOW_CACHE_LOOKUP_STEP_KEYS=16`,
-`FLOW_CACHE_LOOKUP_AHEAD_STEPS=8`,
-`FLOW_CACHE_LOOKUP_AHEAD_KEYS=128` です。
+`FLOW_CACHE_LOOKUP_STEP_KEYS=8`,
+`FLOW_CACHE_LOOKUP_AHEAD_STEPS=4`,
+`FLOW_CACHE_LOOKUP_AHEAD_KEYS=32` です。
 `AHEAD_KEYS` は hardware prefetch 回数ではなく、
 software pipeline の段間距離です。
 tuning 比較では `EXTRA_CFLAGS` で上書きできます:

@@ -51,16 +51,7 @@
 #define FC_CMP_FN      FC_INT(cmp)
 #define FC_HASH_FN     FC_INT(hash_fn)
 
-#ifndef FLOW_CACHE_LOOKUP_STEP_KEYS
-#define FLOW_CACHE_LOOKUP_STEP_KEYS   16u
-#endif
-#ifndef FLOW_CACHE_LOOKUP_AHEAD_STEPS
-#define FLOW_CACHE_LOOKUP_AHEAD_STEPS 8u
-#endif
-#ifndef FLOW_CACHE_LOOKUP_AHEAD_KEYS
-#define FLOW_CACHE_LOOKUP_AHEAD_KEYS \
-    (FLOW_CACHE_LOOKUP_STEP_KEYS * FLOW_CACHE_LOOKUP_AHEAD_STEPS)
-#endif
+/* Pipeline geometry: defined once in fc_cache_generate.h */
 
 enum {
     FC_RELIEF_STAGE_SLOTS = 4u
@@ -100,10 +91,10 @@ FC_INT(prefetch_insert_hash)(const FC_CACHE_T *fc,
     uint32_t fp;
     unsigned mask = fc->ht_head.rhh_mask;
 
-    _rix_hash_buckets(h, mask, &bk0, &bk1, &fp);
+    rix_hash_buckets(h, mask, &bk0, &bk1, &fp);
     (void)fp;
-    _rix_hash_prefetch_bucket(fc->buckets + bk0);
-    _rix_hash_prefetch_bucket(fc->buckets + bk1);
+    rix_hash_prefetch_bucket(fc->buckets + bk0);
+    rix_hash_prefetch_bucket(fc->buckets + bk1);
 }
 
 static inline void
@@ -361,13 +352,13 @@ FC_INT(maintain_grouped)(FC_CACHE_T *fc,
     expire_before = (now_tsc > fc->eff_timeout_tsc) ?
         (now_tsc - fc->eff_timeout_tsc) : 0u;
     next_bk = start_bk & mask;
-    _rix_hash_prefetch_bucket_idx(&fc->buckets[next_bk]);
+    rix_hash_prefetch_bucket_idx(&fc->buckets[next_bk]);
     while (bucket_count-- != 0u) {
         unsigned reclaimed;
 
         cur_bk = next_bk;
         next_bk = (next_bk + 1u) & mask;
-        _rix_hash_prefetch_bucket_idx(&fc->buckets[next_bk]);
+        rix_hash_prefetch_bucket_idx(&fc->buckets[next_bk]);
         fc->stats.maint_bucket_checks++;
         reclaimed = FC_INT(reclaim_bucket_all)(fc, cur_bk, expire_before);
         fc->stats.maint_evictions += reclaimed;
@@ -417,13 +408,13 @@ FC_INT(maintain_step_filter_reclaim)(
     /* Pass 2 - reclaim: process only candidate buckets with N-ahead */
     /* prefetch.  Prefetch distance is stable (no skip branches). */
     for (unsigned j = 0; j < PF_AHEAD && j < work_count; j++)
-        _rix_hash_prefetch_bucket(&fc->buckets[work[j]]);
+        rix_hash_prefetch_bucket(&fc->buckets[work[j]]);
 
     for (unsigned i = 0; i < work_count; i++) {
         unsigned reclaimed;
 
         if (i + PF_AHEAD < work_count)
-            _rix_hash_prefetch_bucket(&fc->buckets[work[i + PF_AHEAD]]);
+            rix_hash_prefetch_bucket(&fc->buckets[work[i + PF_AHEAD]]);
         reclaimed = FC_INT(reclaim_bucket_all)(fc, work[i], expire_before);
         fc->stats.maint_evictions += reclaimed;
         evicted += reclaimed;
@@ -493,7 +484,7 @@ FC_INT(insert_relief_hashed)(FC_CACHE_T *fc,
     FC_INT(update_eff_timeout)(fc);
     expire_before = (now_tsc > fc->eff_timeout_tsc) ?
         (now_tsc - fc->eff_timeout_tsc) : 0u;
-    _rix_hash_buckets(h, fc->ht_head.rhh_mask, &bk0, &bk1, &fp);
+    rix_hash_buckets(h, fc->ht_head.rhh_mask, &bk0, &bk1, &fp);
     pressure_empty_slots = FC_INT(relief_empty_slots)(fc);
     fc->stats.relief_bucket_checks++;
     rix_hash_arch->find_u32x16_2(fc->buckets[bk0].hash, fp, 0u,
@@ -580,23 +571,25 @@ FC_API(nb_entries)(const FC_CACHE_T *fc)
 }
 
 /*===========================================================================
- * Public API: lookup_batch
+ * Public API: lookup_batch (unified lookup + miss insert)
  *===========================================================================*/
-unsigned
+void
 FC_API(lookup_batch)(FC_CACHE_T *fc,
                       const FC_KEY_T *keys,
                       unsigned nb_keys,
                       uint64_t now,
-                      FC_RESULT_T *results,
-                      uint16_t *miss_idx)
+                      FC_RESULT_T *results)
 {
+    enum { FC_FILL_PLAN_KEYS = 64 };
     struct rix_hash_find_ctx_s ctx[nb_keys];
+    uint16_t miss_buf[nb_keys];
     unsigned miss_count = 0u;
     uint64_t hit_count = 0u;
     const unsigned ahead_keys = FLOW_CACHE_LOOKUP_AHEAD_KEYS;
     const unsigned step_keys = FLOW_CACHE_LOOKUP_STEP_KEYS;
     const unsigned total = nb_keys + 3u * ahead_keys;
 
+    /* Phase 1: 4-stage N-ahead pipeline lookup */
     for (unsigned i = 0; i < total; i += step_keys) {
         if (i < nb_keys) {
             unsigned n = (i + step_keys <= nb_keys) ? step_keys : (nb_keys - i);
@@ -634,9 +627,7 @@ FC_API(lookup_batch)(FC_CACHE_T *fc,
                 entry = FC_HT(cmp_key)(&ctx[idx], fc->pool);
 
                 if (RIX_UNLIKELY(entry == NULL)) {
-                    FC_INT(result_set_miss)(&results[idx]);
-                    if (miss_idx != NULL)
-                        miss_idx[miss_count] = (uint16_t)idx;
+                    miss_buf[miss_count] = (uint16_t)idx;
                     miss_count++;
                     continue;
                 }
@@ -650,44 +641,28 @@ FC_API(lookup_batch)(FC_CACHE_T *fc,
 
     fc->stats.lookups += nb_keys;
     fc->stats.hits += hit_count;
-    fc->stats.misses += nb_keys - hit_count;
-    return miss_count;
-}
+    fc->stats.misses += miss_count;
 
-/*===========================================================================
- * Public API: fill_miss_batch
- *===========================================================================*/
-unsigned
-FC_API(fill_miss_batch)(FC_CACHE_T *fc,
-                         const FC_KEY_T *keys,
-                         const uint16_t *miss_idx,
-                         unsigned miss_count,
-                         uint64_t now,
-                         FC_RESULT_T *results)
-{
-    enum { FC_FILL_PLAN_KEYS = 64 };
-    unsigned inserted = 0u;
-
+    /* Phase 2: insert misses using ctx[].hash (no rehash) */
     for (unsigned base = 0; base < miss_count; base += FC_FILL_PLAN_KEYS) {
-        union rix_hash_hash_u hashes[FC_FILL_PLAN_KEYS];
         unsigned n = miss_count - base;
 
         if (n > FC_FILL_PLAN_KEYS)
             n = FC_FILL_PLAN_KEYS;
 
+        /* Prefetch insert buckets using saved hashes */
         for (unsigned i = 0; i < n; i++) {
-            unsigned key_idx = miss_idx[base + i];
+            unsigned key_idx = miss_buf[base + i];
 
-            hashes[i] = FC_HASH_FN(&keys[key_idx], fc->ht_head.rhh_mask);
-            FC_INT(prefetch_insert_hash)(fc, hashes[i]);
+            FC_INT(prefetch_insert_hash)(fc, ctx[key_idx].hash);
         }
 
         for (unsigned i = 0; i < n; i++) {
-            unsigned key_idx = miss_idx[base + i];
+            unsigned key_idx = miss_buf[base + i];
             FC_ENTRY_T *entry;
             FC_ENTRY_T *ret;
 
-            FC_INT(insert_relief_hashed)(fc, hashes[i], now);
+            FC_INT(insert_relief_hashed)(fc, ctx[key_idx].hash, now);
             entry = FC_INT(alloc_entry)(fc);
             if (RIX_UNLIKELY(entry == NULL)) {
                 fc->stats.fill_full++;
@@ -698,12 +673,11 @@ FC_API(fill_miss_batch)(FC_CACHE_T *fc,
             entry->key = keys[key_idx];
             entry->last_ts = now;
             ret = FC_HT(insert_hashed)(&fc->ht_head, fc->buckets,
-                                        fc->pool, entry, hashes[i]);
+                                        fc->pool, entry, ctx[key_idx].hash);
             if (RIX_LIKELY(ret == NULL)) {
                 fc->stats.fills++;
                 FC_INT(result_set_filled)(&results[key_idx],
                                            RIX_IDX_FROM_PTR(fc->pool, entry));
-                inserted++;
                 continue;
             }
             FC_INT(free_entry)(fc, entry);
@@ -715,10 +689,8 @@ FC_API(fill_miss_batch)(FC_CACHE_T *fc,
             }
             fc->stats.fill_full++;
             FC_INT(result_set_miss)(&results[key_idx]);
-            continue;
         }
     }
-    return inserted;
 }
 
 /*===========================================================================

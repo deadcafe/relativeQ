@@ -4,22 +4,17 @@
  *
  * A high-performance, fixed-size flow cache for IPv4 5-tuple lookups.
  * Internally backed by a rix_hash cuckoo hash table with 4-stage
- * N-ahead pipelined batch lookup (hash_key -> scan_bk -> prefetch_node
- * -> cmp_key) to hide DRAM latency.
+ * N-ahead pipelined batch lookup (hash_key_2bk -> scan_bk_empties ->
+ * prefetch_node -> cmp_key_empties) to hide DRAM latency.  Misses are
+ * inserted inline during cmp_key (no separate batch-insert phase).
  *
  * Typical datapath usage:
  * @code
- *   // 1. Batch lookup
- *   uint16_t miss_idx[BATCH];
- *   unsigned misses = fc_flow4_cache_lookup_batch(
- *       &fc, keys, BATCH, now_tsc, results, miss_idx);
+ *   // 1. Batch lookup + auto-fill misses
+ *   fc_flow4_cache_lookup_batch(&fc, keys, BATCH, now_tsc, results);
  *
- *   // 2. Process hits  (results[i].entry_idx != 0)
- *   // 3. Fill misses   (allocate new entries for cache misses)
- *   fc_flow4_cache_fill_miss_batch(
- *       &fc, keys, miss_idx, misses, now_tsc, results);
- *
- *   // 4. Periodic maintenance  (expire stale entries, cursor-managed)
+ *   // 2. Process results (results[i].entry_idx != 0 for all unless full)
+ *   // 3. Periodic maintenance  (expire stale entries, cursor-managed)
  *   fc_flow4_cache_maintain_step(&fc, now_tsc);
  * @endcode
  *
@@ -50,28 +45,15 @@
 #define FC_FLOW4_DEFAULT_PRESSURE_EMPTY_SLOTS 1u
 #endif
 
-/** @name Pipeline geometry (compile-time tuning)
+/* Pipeline geometry defined in fc_cache_generate.h (single source of truth).
  *
- *  Control the N-ahead pipeline depth used by lookup_batch.
- *  - @c FLOW_CACHE_LOOKUP_STEP_KEYS  keys processed per pipeline stage.
- *  - @c FLOW_CACHE_LOOKUP_AHEAD_STEPS  number of stages ahead to prefetch.
- *  - @c FLOW_CACHE_LOOKUP_AHEAD_KEYS  total look-ahead window (derived).
+ *  FLOW_CACHE_LOOKUP_STEP_KEYS   keys processed per pipeline stage.
+ *  FLOW_CACHE_LOOKUP_AHEAD_STEPS number of step iterations between stages.
+ *  FLOW_CACHE_LOOKUP_AHEAD_KEYS  total look-ahead window (derived).
  *
- *  Larger values improve throughput on high-latency memory but increase
- *  stack usage.  The defaults (16 x 8 = 128 keys) work well for typical
- *  DDR4/DDR5 latencies.
- * @{ */
-#ifndef FLOW_CACHE_LOOKUP_STEP_KEYS
-#define FLOW_CACHE_LOOKUP_STEP_KEYS   16u
-#endif
-#ifndef FLOW_CACHE_LOOKUP_AHEAD_STEPS
-#define FLOW_CACHE_LOOKUP_AHEAD_STEPS 8u
-#endif
-#ifndef FLOW_CACHE_LOOKUP_AHEAD_KEYS
-#define FLOW_CACHE_LOOKUP_AHEAD_KEYS \
-    (FLOW_CACHE_LOOKUP_STEP_KEYS * FLOW_CACHE_LOOKUP_AHEAD_STEPS)
-#endif
-/** @} */
+ *  Defaults: 8 x 4 = 32 keys.  Sized for hyper-threaded cores sharing
+ *  L1/L2 prefetch queues.
+ */
 
 /**
  * @brief IPv4 5-tuple lookup key (24 bytes).
@@ -244,52 +226,30 @@ void fc_flow4_cache_flush(struct fc_flow4_cache *fc);
 unsigned fc_flow4_cache_nb_entries(const struct fc_flow4_cache *fc);
 
 /**
- * @brief Pipelined batch lookup.
+ * @brief Pipelined batch lookup with automatic miss insertion.
  *
  * Looks up @p nb_keys keys using a 4-stage N-ahead pipeline to hide
- * memory latency.  For each hit the corresponding entry's @c last_ts
- * is updated to @p now.
+ * memory latency.  Hits update the entry's @c last_ts to @p now.
+ * Misses are inserted inline during the cmp_key stage using the hash
+ * already computed in the pipeline (no rehash, buckets warm in L1).
+ * The free list head is prefetched ahead of time so the first miss
+ * insert hits warm cache.  Stale entries are evicted via
+ * insert-relief when buckets are under pressure.
+ *
+ * On return, @c results[i].entry_idx is non-zero for every key
+ * unless the cache is completely full.
  *
  * @param[in,out] fc        Cache instance.
  * @param[in]     keys      Array of @p nb_keys lookup keys.
  * @param[in]     nb_keys   Number of keys (may exceed the pipeline window).
  * @param[in]     now       Current TSC timestamp.
- * @param[out]    results   Per-key results (@c entry_idx != 0 on hit).
- * @param[out]    miss_idx  Indices into @p keys for missed keys (may be NULL
- *                          if the caller does not need miss positions).
- * @return Number of misses (length of @p miss_idx).
+ * @param[out]    results   Per-key results (@c entry_idx != 0 on success).
  */
-unsigned fc_flow4_cache_lookup_batch(struct fc_flow4_cache *fc,
-                                      const struct fc_flow4_key *keys,
-                                      unsigned nb_keys,
-                                      uint64_t now,
-                                      struct fc_flow4_result *results,
-                                      uint16_t *miss_idx);
-
-/**
- * @brief Insert entries for previously missed keys.
- *
- * Call after lookup_batch with the returned @p miss_idx array.
- * For each miss, allocates an entry from the free list and inserts it.
- * If the target buckets are under pressure, stale entries are evicted
- * first (insert-relief).  Duplicate keys that were inserted by a
- * concurrent miss are detected and deduplicated.
- *
- * @param[in,out] fc          Cache instance.
- * @param[in]     keys        Same key array passed to lookup_batch.
- * @param[in]     miss_idx    Miss indices returned by lookup_batch.
- * @param[in]     miss_count  Length of @p miss_idx.
- * @param[in]     now         Current TSC timestamp.
- * @param[in,out] results     Same results array; updated for filled keys
- *                            (@c entry_idx set on success, 0 if full).
- * @return Number of entries actually inserted.
- */
-unsigned fc_flow4_cache_fill_miss_batch(struct fc_flow4_cache *fc,
-                                         const struct fc_flow4_key *keys,
-                                         const uint16_t *miss_idx,
-                                         unsigned miss_count,
-                                         uint64_t now,
-                                         struct fc_flow4_result *results);
+void fc_flow4_cache_lookup_batch(struct fc_flow4_cache *fc,
+                                  const struct fc_flow4_key *keys,
+                                  unsigned nb_keys,
+                                  uint64_t now,
+                                  struct fc_flow4_result *results);
 
 /**
  * @brief Expire stale entries from a range of buckets.

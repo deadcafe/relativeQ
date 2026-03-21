@@ -167,6 +167,83 @@ name##_cmp_key(struct rix_hash_find_ctx_s *ctx,                               \
 }                                                                             \
                                                                               \
 /* ================================================================== */      \
+/* Lookup pipeline variants that also collect empty-slot bitmasks.     */      \
+/* Use when miss -> insert is the expected follow-up path.             */      \
+/* ================================================================== */      \
+                                                                              \
+/* Stage 1: like hash_key but prefetches both bk_0 and bk_1.         */      \
+static RIX_UNUSED RIX_FORCE_INLINE void                                       \
+name##_hash_key_2bk(struct rix_hash_find_ctx_s *ctx,                          \
+                    struct name *head,                                        \
+                    struct rix_hash_bucket_s *buckets,                        \
+                    const _RIX_HASH_KEY_TYPE(type, key_field) *key)           \
+{                                                                             \
+    unsigned mask = head->rhh_mask;                                           \
+    union rix_hash_hash_u _h =                                                \
+        hash_fn(key, mask);                                                   \
+    unsigned _bk0, _bk1;                                                      \
+    u32 _fp;                                                             \
+    _rix_hash_buckets(_h, mask, &_bk0, &_bk1, &_fp);                          \
+    ctx->hash  = _h;                                                          \
+    ctx->fp    = _fp;                                                         \
+    ctx->key   = (const void *)key;                                           \
+    ctx->bk[0] = buckets + _bk0;                                              \
+    ctx->bk[1] = buckets + _bk1;                                              \
+    _rix_hash_prefetch_bucket(ctx->bk[0]);                                    \
+    _rix_hash_prefetch_bucket(ctx->bk[1]);                                    \
+}                                                                             \
+                                                                              \
+/* Stage 2: scan bk_0 for fp matches AND empty slots in one pass.     */      \
+static RIX_UNUSED RIX_FORCE_INLINE void                                       \
+name##_scan_bk_empties(struct rix_hash_find_ctx_s *ctx,                       \
+                       struct name *head __attribute__((unused)),             \
+                       struct rix_hash_bucket_s *buckets                      \
+                           __attribute__((unused)))                           \
+{                                                                             \
+    _RIX_HASH_FIND_U32X16_2(ctx->bk[0]->hash, ctx->fp, 0u,                    \
+                              &ctx->fp_hits[0], &ctx->empties[0]);              \
+    ctx->fp_hits[1] = 0u;                                                      \
+    ctx->empties[1] = 0u;                                                      \
+}                                                                             \
+                                                                              \
+/* Stage 4: like cmp_key but also produces empties[1] on bk_1 scan.  */      \
+/* bk_1 is already warm (prefetched by hash_key_2bk).                 */      \
+static RIX_UNUSED RIX_FORCE_INLINE struct type *                              \
+name##_cmp_key_empties(struct rix_hash_find_ctx_s *ctx,                       \
+                       struct type *base)                                     \
+{                                                                             \
+    /* Fast path: bk_0 */                                                     \
+    u32 _hits = ctx->fp_hits[0];                                         \
+    while (_hits) {                                                           \
+        unsigned      _bit  = (unsigned)__builtin_ctz(_hits);                 \
+        _hits &= _hits - 1u;                                                  \
+        unsigned      _nidx = ctx->bk[0]->idx[_bit];                          \
+        if (_nidx == (unsigned)RIX_NIL) continue;                             \
+        struct type  *_node = name##_hptr(base, _nidx);                       \
+        if (cmp_fn((const _RIX_HASH_KEY_TYPE(type, key_field) *)ctx->key,    \
+                   &_node->key_field) == 0)                                   \
+            return _node;                                                     \
+    }                                                                         \
+    /* bk_1: warm from hash_key_2bk; collect fp_hits[1] + empties[1]. */       \
+    {                                                                         \
+        _RIX_HASH_FIND_U32X16_2(ctx->bk[1]->hash, ctx->fp, 0u,               \
+                                  &ctx->fp_hits[1], &ctx->empties[1]);          \
+        _hits = ctx->fp_hits[1];                                               \
+        while (_hits) {                                                       \
+            unsigned      _bit  = (unsigned)__builtin_ctz(_hits);             \
+            _hits &= _hits - 1u;                                              \
+            unsigned      _nidx = ctx->bk[1]->idx[_bit];                      \
+            if (_nidx == (unsigned)RIX_NIL) continue;                         \
+            struct type  *_node = name##_hptr(base, _nidx);                   \
+            if (cmp_fn((const _RIX_HASH_KEY_TYPE(type, key_field) *)ctx->key, \
+                       &_node->key_field) == 0)                               \
+                return _node;                                                 \
+        }                                                                     \
+    }                                                                         \
+    return NULL;                                                              \
+}                                                                             \
+                                                                              \
+/* ================================================================== */      \
 /* Staged find - xN bulk                                              */      \
 /* FORCE_INLINE + constant n -> compiler unrolls identically to xN.   */      \
 /* ================================================================== */      \

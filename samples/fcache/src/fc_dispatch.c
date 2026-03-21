@@ -49,32 +49,32 @@ fc_flow4_cache_init(struct fc_flow4_cache *fc,
                     unsigned max_entries,
                     const struct fc_flow4_config *cfg)
 {
-    fc_flow4_cache_init_gen(fc, buckets, nb_bk, pool, max_entries, cfg);
+    fc_flow4_ops_gen.init(fc, buckets, nb_bk, pool, max_entries, cfg);
 }
 
 void
 fc_flow4_cache_flush(struct fc_flow4_cache *fc)
 {
-    fc_flow4_cache_flush_gen(fc);
+    fc_flow4_ops_gen.flush(fc);
 }
 
 unsigned
 fc_flow4_cache_nb_entries(const struct fc_flow4_cache *fc)
 {
-    return fc_flow4_cache_nb_entries_gen(fc);
+    return fc_flow4_ops_gen.nb_entries(fc);
 }
 
 int
 fc_flow4_cache_remove_idx(struct fc_flow4_cache *fc, uint32_t entry_idx)
 {
-    return fc_flow4_cache_remove_idx_gen(fc, entry_idx);
+    return fc_flow4_ops_gen.remove_idx(fc, entry_idx);
 }
 
 void
 fc_flow4_cache_stats(const struct fc_flow4_cache *fc,
                      struct fc_flow4_stats *out)
 {
-    fc_flow4_cache_stats_gen(fc, out);
+    fc_flow4_ops_gen.stats(fc, out);
 }
 
 /* flow6 cold-path */
@@ -86,32 +86,32 @@ fc_flow6_cache_init(struct fc_flow6_cache *fc,
                     unsigned max_entries,
                     const struct fc_flow6_config *cfg)
 {
-    fc_flow6_cache_init_gen(fc, buckets, nb_bk, pool, max_entries, cfg);
+    fc_flow6_ops_gen.init(fc, buckets, nb_bk, pool, max_entries, cfg);
 }
 
 void
 fc_flow6_cache_flush(struct fc_flow6_cache *fc)
 {
-    fc_flow6_cache_flush_gen(fc);
+    fc_flow6_ops_gen.flush(fc);
 }
 
 unsigned
 fc_flow6_cache_nb_entries(const struct fc_flow6_cache *fc)
 {
-    return fc_flow6_cache_nb_entries_gen(fc);
+    return fc_flow6_ops_gen.nb_entries(fc);
 }
 
 int
 fc_flow6_cache_remove_idx(struct fc_flow6_cache *fc, uint32_t entry_idx)
 {
-    return fc_flow6_cache_remove_idx_gen(fc, entry_idx);
+    return fc_flow6_ops_gen.remove_idx(fc, entry_idx);
 }
 
 void
 fc_flow6_cache_stats(const struct fc_flow6_cache *fc,
                      struct fc_flow6_stats *out)
 {
-    fc_flow6_cache_stats_gen(fc, out);
+    fc_flow6_ops_gen.stats(fc, out);
 }
 
 /* flowu cold-path */
@@ -123,32 +123,32 @@ fc_flowu_cache_init(struct fc_flowu_cache *fc,
                     unsigned max_entries,
                     const struct fc_flowu_config *cfg)
 {
-    fc_flowu_cache_init_gen(fc, buckets, nb_bk, pool, max_entries, cfg);
+    fc_flowu_ops_gen.init(fc, buckets, nb_bk, pool, max_entries, cfg);
 }
 
 void
 fc_flowu_cache_flush(struct fc_flowu_cache *fc)
 {
-    fc_flowu_cache_flush_gen(fc);
+    fc_flowu_ops_gen.flush(fc);
 }
 
 unsigned
 fc_flowu_cache_nb_entries(const struct fc_flowu_cache *fc)
 {
-    return fc_flowu_cache_nb_entries_gen(fc);
+    return fc_flowu_ops_gen.nb_entries(fc);
 }
 
 int
 fc_flowu_cache_remove_idx(struct fc_flowu_cache *fc, uint32_t entry_idx)
 {
-    return fc_flowu_cache_remove_idx_gen(fc, entry_idx);
+    return fc_flowu_ops_gen.remove_idx(fc, entry_idx);
 }
 
 void
 fc_flowu_cache_stats(const struct fc_flowu_cache *fc,
                      struct fc_flowu_stats *out)
 {
-    fc_flowu_cache_stats_gen(fc, out);
+    fc_flowu_ops_gen.stats(fc, out);
 }
 
 /*===========================================================================
@@ -156,26 +156,13 @@ fc_flowu_cache_stats(const struct fc_flowu_cache *fc,
  *===========================================================================*/
 
 /* flow4 hot-path */
-unsigned
+void
 fc_flow4_cache_lookup_batch(struct fc_flow4_cache *fc,
                             const struct fc_flow4_key *keys,
                             unsigned nb_keys, uint64_t now,
-                            struct fc_flow4_result *results,
-                            uint16_t *miss_idx)
+                            struct fc_flow4_result *results)
 {
-    return _fc_flow4_active->lookup_batch(fc, keys, nb_keys, now,
-                                          results, miss_idx);
-}
-
-unsigned
-fc_flow4_cache_fill_miss_batch(struct fc_flow4_cache *fc,
-                               const struct fc_flow4_key *keys,
-                               const uint16_t *miss_idx,
-                               unsigned miss_count, uint64_t now,
-                               struct fc_flow4_result *results)
-{
-    return _fc_flow4_active->fill_miss_batch(fc, keys, miss_idx,
-                                              miss_count, now, results);
+    _fc_flow4_active->lookup_batch(fc, keys, nb_keys, now, results);
 }
 
 unsigned
@@ -203,26 +190,13 @@ fc_flow4_cache_maintain_step(struct fc_flow4_cache *fc,
 }
 
 /* flow6 hot-path */
-unsigned
+void
 fc_flow6_cache_lookup_batch(struct fc_flow6_cache *fc,
                             const struct fc_flow6_key *keys,
                             unsigned nb_keys, uint64_t now,
-                            struct fc_flow6_result *results,
-                            uint16_t *miss_idx)
+                            struct fc_flow6_result *results)
 {
-    return _fc_flow6_active->lookup_batch(fc, keys, nb_keys, now,
-                                          results, miss_idx);
-}
-
-unsigned
-fc_flow6_cache_fill_miss_batch(struct fc_flow6_cache *fc,
-                               const struct fc_flow6_key *keys,
-                               const uint16_t *miss_idx,
-                               unsigned miss_count, uint64_t now,
-                               struct fc_flow6_result *results)
-{
-    return _fc_flow6_active->fill_miss_batch(fc, keys, miss_idx,
-                                              miss_count, now, results);
+    _fc_flow6_active->lookup_batch(fc, keys, nb_keys, now, results);
 }
 
 unsigned
@@ -250,26 +224,13 @@ fc_flow6_cache_maintain_step(struct fc_flow6_cache *fc,
 }
 
 /* flowu hot-path */
-unsigned
+void
 fc_flowu_cache_lookup_batch(struct fc_flowu_cache *fc,
                             const struct fc_flowu_key *keys,
                             unsigned nb_keys, uint64_t now,
-                            struct fc_flowu_result *results,
-                            uint16_t *miss_idx)
+                            struct fc_flowu_result *results)
 {
-    return _fc_flowu_active->lookup_batch(fc, keys, nb_keys, now,
-                                          results, miss_idx);
-}
-
-unsigned
-fc_flowu_cache_fill_miss_batch(struct fc_flowu_cache *fc,
-                               const struct fc_flowu_key *keys,
-                               const uint16_t *miss_idx,
-                               unsigned miss_count, uint64_t now,
-                               struct fc_flowu_result *results)
-{
-    return _fc_flowu_active->fill_miss_batch(fc, keys, miss_idx,
-                                              miss_count, now, results);
+    _fc_flowu_active->lookup_batch(fc, keys, nb_keys, now, results);
 }
 
 unsigned
