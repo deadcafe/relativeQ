@@ -8,10 +8,11 @@
  * @code
  *   #include "flow_cache.h"
  *
- *   fc_arch_init(FC_ARCH_AUTO);           // once at startup
- *   fc_flow4_cache_init(&fc, ...);        // per-cache init
- *   fc_flow4_cache_lookup_batch(&fc, ...);// datapath
- *   fc_flow4_cache_maintain_step(&fc, ...);// periodic GC
+ *   fc_arch_init(FC_ARCH_AUTO);              // once at startup
+ *   fc_flow4_cache_init(&fc, ...);           // per-cache init
+ *   fc_flow4_cache_findadd_bulk(&fc, ...);   // datapath (search + insert)
+ *   fc_flow4_cache_find_bulk(&fc, ...);      // datapath (search only)
+ *   fc_flow4_cache_maintain_step(&fc, ...);  // periodic GC
  * @endcode
  */
 

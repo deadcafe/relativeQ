@@ -11,12 +11,19 @@
  * Typical datapath usage:
  * @code
  *   // 1. Batch lookup + auto-fill misses
- *   fc_flow4_cache_lookup_batch(&fc, keys, BATCH, now_tsc, results);
+ *   fc_flow4_cache_findadd_bulk(&fc, keys, BATCH, now_tsc, results);
  *
  *   // 2. Process results (results[i].entry_idx != 0 for all unless full)
  *   // 3. Periodic maintenance  (expire stale entries, cursor-managed)
- *   fc_flow4_cache_maintain_step(&fc, now_tsc);
+ *   fc_flow4_cache_maintain_step(&fc, now_tsc, 0);
  * @endcode
+ *
+ * Orthogonal API:
+ *   find     / find_bulk     -- search only (no insert)
+ *   findadd  / findadd_bulk  -- search + insert on miss
+ *   add      / add_bulk      -- insert only (no search)
+ *   del      / del_bulk      -- remove by key
+ *   del_idx  / del_idx_bulk  -- remove by pool index
  *
  * Entries are 64-byte cache-line aligned.  The cache uses TSC-based
  * timestamps for expiration with adaptive timeout scaling based on
@@ -133,9 +140,9 @@ struct fc_flow4_config {
  * atomically per call (single-writer assumed).
  */
 struct fc_flow4_stats {
-    uint64_t lookups;               /**< Keys submitted to lookup_batch. */
-    uint64_t hits;                  /**< Keys found in lookup_batch. */
-    uint64_t misses;                /**< Keys not found in lookup_batch. */
+    uint64_t lookups;               /**< Keys submitted to find/findadd. */
+    uint64_t hits;                  /**< Keys found (find/findadd hit). */
+    uint64_t misses;                /**< Keys not found (find/findadd miss). */
     uint64_t fills;                 /**< Entries inserted by fill_miss_batch. */
     uint64_t fill_full;             /**< Inserts failed (cache full). */
     uint64_t relief_calls;          /**< Times insert-relief was invoked. */
@@ -225,31 +232,114 @@ void fc_flow4_cache_flush(struct fc_flow4_cache *fc);
  */
 unsigned fc_flow4_cache_nb_entries(const struct fc_flow4_cache *fc);
 
+/*===========================================================================
+ * Bulk operations (pipeline-optimized, dispatched through ops table)
+ *===========================================================================*/
+
 /**
- * @brief Pipelined batch lookup with automatic miss insertion.
+ * @brief Pipelined batch lookup (search only, no insert).
  *
- * Looks up @p nb_keys keys using a 4-stage N-ahead pipeline to hide
- * memory latency.  Hits update the entry's @c last_ts to @p now.
- * Misses are inserted inline during the cmp_key stage using the hash
- * already computed in the pipeline (no rehash, buckets warm in L1).
- * The free list head is prefetched ahead of time so the first miss
- * insert hits warm cache.  Stale entries are evicted via
- * insert-relief when buckets are under pressure.
- *
- * On return, @c results[i].entry_idx is non-zero for every key
- * unless the cache is completely full.
+ * 4-stage N-ahead pipeline.  Hits update @c last_ts to @p now
+ * (pass @c now=0 to suppress timestamp update).  Misses set
+ * @c entry_idx=0.
  *
  * @param[in,out] fc        Cache instance.
  * @param[in]     keys      Array of @p nb_keys lookup keys.
- * @param[in]     nb_keys   Number of keys (may exceed the pipeline window).
- * @param[in]     now       Current TSC timestamp.
- * @param[out]    results   Per-key results (@c entry_idx != 0 on success).
+ * @param[in]     nb_keys   Number of keys.
+ * @param[in]     now       Current TSC; 0 = no timestamp update.
+ * @param[out]    results   Per-key results.
  */
-void fc_flow4_cache_lookup_batch(struct fc_flow4_cache *fc,
+void fc_flow4_cache_find_bulk(struct fc_flow4_cache *fc,
+                               const struct fc_flow4_key *keys,
+                               unsigned nb_keys, uint64_t now,
+                               struct fc_flow4_result *results);
+
+/**
+ * @brief Pipelined batch lookup + automatic miss insertion.
+ *
+ * 4-stage N-ahead pipeline.  Hits update @c last_ts.  Misses are
+ * inserted inline (hash reused, no rehash).  On return,
+ * @c results[i].entry_idx is non-zero unless the cache is full.
+ *
+ * @param[in,out] fc        Cache instance.
+ * @param[in]     keys      Array of @p nb_keys lookup keys.
+ * @param[in]     nb_keys   Number of keys.
+ * @param[in]     now       Current TSC timestamp.
+ * @param[out]    results   Per-key results.
+ */
+void fc_flow4_cache_findadd_bulk(struct fc_flow4_cache *fc,
                                   const struct fc_flow4_key *keys,
-                                  unsigned nb_keys,
-                                  uint64_t now,
+                                  unsigned nb_keys, uint64_t now,
                                   struct fc_flow4_result *results);
+
+/**
+ * @brief Pipelined batch insert (no duplicate check).
+ *
+ * 2-stage pipeline (hash+prefetch → alloc+insert).  Always inserts
+ * a new entry; caller must ensure no duplicate exists.
+ *
+ * @param[in,out] fc        Cache instance.
+ * @param[in]     keys      Array of @p nb_keys keys to insert.
+ * @param[in]     nb_keys   Number of keys.
+ * @param[in]     now       Current TSC timestamp.
+ * @param[out]    results   Per-key results (entry_idx of new entries).
+ */
+void fc_flow4_cache_add_bulk(struct fc_flow4_cache *fc,
+                              const struct fc_flow4_key *keys,
+                              unsigned nb_keys, uint64_t now,
+                              struct fc_flow4_result *results);
+
+/**
+ * @brief Pipelined batch delete by key.
+ *
+ * 4-stage pipeline (hash → scan → prefetch → match+remove).
+ *
+ * @param[in,out] fc        Cache instance.
+ * @param[in]     keys      Array of @p nb_keys keys to remove.
+ * @param[in]     nb_keys   Number of keys.
+ */
+void fc_flow4_cache_del_bulk(struct fc_flow4_cache *fc,
+                              const struct fc_flow4_key *keys,
+                              unsigned nb_keys);
+
+/**
+ * @brief Pipelined batch delete by pool index.
+ *
+ * 2-stage pipeline (prefetch → validate+remove).
+ *
+ * @param[in,out] fc     Cache instance.
+ * @param[in]     idxs   Array of 1-origin pool indices.
+ * @param[in]     nb_idxs Number of indices.
+ */
+void fc_flow4_cache_del_idx_bulk(struct fc_flow4_cache *fc,
+                                  const uint32_t *idxs,
+                                  unsigned nb_idxs);
+
+/*===========================================================================
+ * Single-key convenience wrappers (call bulk with n=1)
+ *===========================================================================*/
+
+/** @brief Find a single key.  Returns 1-origin entry_idx or 0. */
+uint32_t fc_flow4_cache_find(struct fc_flow4_cache *fc,
+                              const struct fc_flow4_key *key,
+                              uint64_t now);
+
+/** @brief Find or insert a single key.  Returns entry_idx or 0 if full. */
+uint32_t fc_flow4_cache_findadd(struct fc_flow4_cache *fc,
+                                 const struct fc_flow4_key *key,
+                                 uint64_t now);
+
+/** @brief Insert a single key.  Returns entry_idx or 0 if full. */
+uint32_t fc_flow4_cache_add(struct fc_flow4_cache *fc,
+                             const struct fc_flow4_key *key,
+                             uint64_t now);
+
+/** @brief Remove a single entry by key. */
+void fc_flow4_cache_del(struct fc_flow4_cache *fc,
+                         const struct fc_flow4_key *key);
+
+/** @brief Remove a single entry by pool index.  Returns 1 if removed. */
+int fc_flow4_cache_del_idx(struct fc_flow4_cache *fc, uint32_t entry_idx);
 
 /**
  * @brief Expire stale entries from a range of buckets.
@@ -325,15 +415,6 @@ unsigned fc_flow4_cache_maintain_step(struct fc_flow4_cache *fc,
                                        uint64_t now,
                                        int idle);
 
-/**
- * @brief Remove a single entry by pool index.
- *
- * @param[in,out] fc         Cache instance.
- * @param[in]     entry_idx  1-origin pool index (as returned in
- *                           fc_flow4_result::entry_idx).
- * @return 1 if the entry was found and removed, 0 otherwise.
- */
-int fc_flow4_cache_remove_idx(struct fc_flow4_cache *fc, uint32_t entry_idx);
 
 /**
  * @brief Snapshot cumulative statistics.
@@ -346,6 +427,23 @@ int fc_flow4_cache_remove_idx(struct fc_flow4_cache *fc, uint32_t entry_idx);
  */
 void fc_flow4_cache_stats(const struct fc_flow4_cache *fc,
                            struct fc_flow4_stats *out);
+
+/**
+ * @brief Iterate all live entries, calling @p cb for each.
+ *
+ * Walks the pool sequentially.  For each entry with @c last_ts != 0,
+ * invokes @p cb(entry_idx, arg) where @c entry_idx is 1-origin.
+ * If @p cb returns 0 the walk continues; if it returns a negative
+ * value the walk aborts and that value is returned.
+ *
+ * @param[in,out] fc   Cache instance.
+ * @param[in]     cb   Callback; return 0 to continue, <0 to abort.
+ * @param[in]     arg  Opaque argument forwarded to @p cb.
+ * @return 0 if all entries visited, or the negative value from @p cb.
+ */
+int fc_flow4_cache_walk(struct fc_flow4_cache *fc,
+                         int (*cb)(uint32_t entry_idx, void *arg),
+                         void *arg);
 
 #endif /* _FLOW4_CACHE_H_ */
 

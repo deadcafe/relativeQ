@@ -167,14 +167,39 @@ void fc_flowu_cache_init(struct fc_flowu_cache *fc,
                           const struct fc_flowu_config *cfg);
 void fc_flowu_cache_flush(struct fc_flowu_cache *fc);
 unsigned fc_flowu_cache_nb_entries(const struct fc_flowu_cache *fc);
-void fc_flowu_cache_lookup_batch(struct fc_flowu_cache *fc,
+/* bulk operations */
+void fc_flowu_cache_find_bulk(struct fc_flowu_cache *fc,
+                               const struct fc_flowu_key *keys,
+                               unsigned nb_keys, uint64_t now,
+                               struct fc_flowu_result *results);
+void fc_flowu_cache_findadd_bulk(struct fc_flowu_cache *fc,
                                   const struct fc_flowu_key *keys,
-                                  unsigned nb_keys,
-                                  uint64_t now,
+                                  unsigned nb_keys, uint64_t now,
                                   struct fc_flowu_result *results);
+void fc_flowu_cache_add_bulk(struct fc_flowu_cache *fc,
+                              const struct fc_flowu_key *keys,
+                              unsigned nb_keys, uint64_t now,
+                              struct fc_flowu_result *results);
+void fc_flowu_cache_del_bulk(struct fc_flowu_cache *fc,
+                              const struct fc_flowu_key *keys,
+                              unsigned nb_keys);
+void fc_flowu_cache_del_idx_bulk(struct fc_flowu_cache *fc,
+                                  const uint32_t *idxs, unsigned nb_idxs);
+
+/* single-key convenience */
+uint32_t fc_flowu_cache_find(struct fc_flowu_cache *fc,
+                              const struct fc_flowu_key *key, uint64_t now);
+uint32_t fc_flowu_cache_findadd(struct fc_flowu_cache *fc,
+                                 const struct fc_flowu_key *key, uint64_t now);
+uint32_t fc_flowu_cache_add(struct fc_flowu_cache *fc,
+                             const struct fc_flowu_key *key, uint64_t now);
+void fc_flowu_cache_del(struct fc_flowu_cache *fc,
+                         const struct fc_flowu_key *key);
+int fc_flowu_cache_del_idx(struct fc_flowu_cache *fc, uint32_t entry_idx);
+
+/* maintenance */
 unsigned fc_flowu_cache_maintain(struct fc_flowu_cache *fc,
-                                  unsigned start_bk,
-                                  unsigned bucket_count,
+                                  unsigned start_bk, unsigned bucket_count,
                                   uint64_t now);
 unsigned fc_flowu_cache_maintain_step_ex(struct fc_flowu_cache *fc,
                                           unsigned start_bk,
@@ -182,11 +207,15 @@ unsigned fc_flowu_cache_maintain_step_ex(struct fc_flowu_cache *fc,
                                           unsigned skip_threshold,
                                           uint64_t now);
 unsigned fc_flowu_cache_maintain_step(struct fc_flowu_cache *fc,
-                                       uint64_t now,
-                                       int idle);
-int fc_flowu_cache_remove_idx(struct fc_flowu_cache *fc, uint32_t entry_idx);
+                                       uint64_t now, int idle);
+
+/* query */
 void fc_flowu_cache_stats(const struct fc_flowu_cache *fc,
                            struct fc_flowu_stats *out);
+
+int fc_flowu_cache_walk(struct fc_flowu_cache *fc,
+                         int (*cb)(uint32_t entry_idx, void *arg),
+                         void *arg);
 
 #endif /* _FLOWU_CACHE_H_ */
 

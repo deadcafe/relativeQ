@@ -167,7 +167,7 @@ FCB_FN(prefill)(struct FCB_FN(ctx) *ctx, const FCB_KEY_T *keys,
 
         if (chunk > FCB_QUERY)
             chunk = FCB_QUERY;
-        FCB_API(lookup_batch)(&ctx->fc, keys + offset, chunk,
+        FCB_API(findadd_bulk)(&ctx->fc, keys + offset, chunk,
                                now, results);
         offset += chunk;
     }
@@ -198,17 +198,94 @@ FCB_FN(bench_hit)(struct FCB_FN(ctx) *ctx, const FCB_KEY_T *keys,
     uint64_t t0, t1;
 
     for (unsigned w = 0; w < 20u; w++)
-        FCB_API(lookup_batch)(&ctx->fc, keys, n,
+        FCB_API(findadd_bulk)(&ctx->fc, keys, n,
                                (uint64_t)w + 1u, results);
     t0 = fcb_rdtsc();
     for (unsigned r = 0; r < repeat; r++) {
         uint64_t now = (uint64_t)r + 100u;
-        FCB_API(lookup_batch)(&ctx->fc, keys, n, now, results);
+        FCB_API(findadd_bulk)(&ctx->fc, keys, n, now, results);
     }
     t1 = fcb_rdtsc();
 
     free(results);
     return (double)(t1 - t0) / (double)(n * repeat);
+}
+
+/*===========================================================================
+ * Pure datapath: find_bulk hit (search only, no insert path)
+ *===========================================================================*/
+static double
+FCB_FN(bench_find_hit)(struct FCB_FN(ctx) *ctx, const FCB_KEY_T *keys,
+                        unsigned n, unsigned repeat)
+{
+    FCB_RESULT_T *results = fcb_alloc((size_t)n * sizeof(*results));
+    uint64_t t0, t1;
+
+    /* warm up */
+    for (unsigned w = 0; w < 20u; w++)
+        FCB_API(find_bulk)(&ctx->fc, keys, n,
+                             (uint64_t)w + 1u, results);
+    t0 = fcb_rdtsc();
+    for (unsigned r = 0; r < repeat; r++) {
+        uint64_t now = (uint64_t)r + 100u;
+        FCB_API(find_bulk)(&ctx->fc, keys, n, now, results);
+    }
+    t1 = fcb_rdtsc();
+
+    free(results);
+    return (double)(t1 - t0) / (double)(n * repeat);
+}
+
+/*===========================================================================
+ * Pure datapath: add_bulk + del_bulk cycle
+ *===========================================================================*/
+static double
+FCB_FN(bench_add_del)(struct FCB_FN(ctx) *ctx, const FCB_KEY_T *keys,
+                       unsigned n, unsigned repeat)
+{
+    FCB_RESULT_T *results = fcb_alloc((size_t)n * sizeof(*results));
+    uint64_t total = 0u;
+
+    for (unsigned r = 0; r < repeat; r++) {
+        uint64_t now = (uint64_t)r + 1000u;
+        uint64_t t0, t1;
+
+        FCB_FN(ctx_reset)(ctx);
+        t0 = fcb_rdtsc();
+        FCB_API(add_bulk)(&ctx->fc, keys, n, now, results);
+        FCB_API(del_bulk)(&ctx->fc, keys, n);
+        t1 = fcb_rdtsc();
+        total += t1 - t0;
+    }
+
+    free(results);
+    return (double)total / (double)(n * repeat);
+}
+
+/*===========================================================================
+ * Pure datapath: del_bulk (delete pre-filled entries)
+ *===========================================================================*/
+static double
+FCB_FN(bench_del_bulk)(struct FCB_FN(ctx) *ctx, const FCB_KEY_T *keys,
+                        unsigned n, unsigned repeat)
+{
+    uint64_t total = 0u;
+    FCB_RESULT_T *results = fcb_alloc((size_t)n * sizeof(*results));
+
+    for (unsigned r = 0; r < repeat; r++) {
+        uint64_t now = (uint64_t)r + 1000u;
+        uint64_t t0, t1;
+
+        FCB_FN(ctx_reset)(ctx);
+        FCB_API(add_bulk)(&ctx->fc, keys, n, now, results);
+        t0 = fcb_rdtsc();
+        FCB_API(del_bulk)(&ctx->fc, keys, n);
+        t1 = fcb_rdtsc();
+        total += t1 - t0;
+    }
+
+    free(results);
+    return (double)total / (double)(n * repeat);
 }
 
 /*===========================================================================
@@ -227,7 +304,7 @@ FCB_FN(bench_miss_fill)(struct FCB_FN(ctx) *ctx, const FCB_KEY_T *keys,
 
         FCB_FN(ctx_reset)(ctx);
         t0 = fcb_rdtsc();
-        FCB_API(lookup_batch)(&ctx->fc, keys, n, now, results);
+        FCB_API(findadd_bulk)(&ctx->fc, keys, n, now, results);
         t1 = fcb_rdtsc();
         total += t1 - t0;
     }
@@ -256,7 +333,7 @@ FCB_FN(bench_mixed)(struct FCB_FN(ctx) *ctx,
         (void)FCB_FN(prefill)(ctx, prefill_keys, prefill_n, now);
 
         t0 = fcb_rdtsc();
-        FCB_API(lookup_batch)(&ctx->fc, query_keys, query_n,
+        FCB_API(findadd_bulk)(&ctx->fc, query_keys, query_n,
                                now, results);
         t1 = fcb_rdtsc();
         total += t1 - t0;
@@ -331,7 +408,7 @@ FCB_FN(rate_fc_only)(unsigned desired_entries, unsigned nb_bk,
             }
         }
         t0 = fcb_rdtsc();
-        FCB_API(lookup_batch)(&ctx.fc, query, FCB_QUERY, now, results);
+        FCB_API(findadd_bulk)(&ctx.fc, query, FCB_QUERY, now, results);
         t1 = fcb_rdtsc();
         total_cycles += t1 - t0;
         active = FCB_FN(active_scan)(&ctx);
@@ -449,7 +526,7 @@ FCB_FN(rate_trace_custom)(unsigned desired_entries, unsigned nb_bk,
         }
 
         t0 = fcb_rdtsc();
-        FCB_API(lookup_batch)(&ctx.fc, query, FCB_QUERY, now, results);
+        FCB_API(findadd_bulk)(&ctx.fc, query, FCB_QUERY, now, results);
 
         if (ctx.fc.total_slots != 0u)
             fill_pct = (unsigned)((ctx.fc.ht_head.rhh_nb * 100u) / ctx.fc.total_slots);

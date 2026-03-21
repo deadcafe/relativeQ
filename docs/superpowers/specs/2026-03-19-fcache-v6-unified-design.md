@@ -106,11 +106,29 @@ Each variant uses prefix `fc_{flow4,flow6,flowu}_`:
 cache_init(cache, buckets, nb_bk, pool, max_entries, config)
 cache_flush(cache)
 cache_nb_entries(cache)
-cache_lookup_batch(cache, keys, nb_keys, now, results, miss_idx)
-cache_fill_miss_batch(cache, keys, miss_idx, miss_count, now, results)
-cache_maintain(cache, start_bk, bucket_count, now)
-cache_remove_idx(cache, entry_idx)
 cache_stats(cache, out)
+
+/* bulk (hot-path, pipelined) */
+cache_find_bulk(cache, keys, nb_keys, now, results)
+cache_findadd_bulk(cache, keys, nb_keys, now, results)
+cache_add_bulk(cache, keys, nb_keys, now, results)
+cache_del_bulk(cache, keys, nb_keys)
+cache_del_idx_bulk(cache, idxs, nb_idxs)
+
+/* single-key (convenience, calls bulk with n=1) */
+cache_find(cache, key, now)       → entry_idx
+cache_findadd(cache, key, now)    → entry_idx
+cache_add(cache, key, now)        → entry_idx
+cache_del(cache, key)
+cache_del_idx(cache, entry_idx)   → 0/1
+
+/* maintenance */
+cache_maintain(cache, start_bk, bucket_count, now)
+cache_maintain_step_ex(cache, start_bk, bucket_count, skip_threshold, now)
+cache_maintain_step(cache, now, idle)
+
+/* query (cold-path) */
+cache_walk(cache, cb, arg)
 ```
 
 ## Variant-Specific Details

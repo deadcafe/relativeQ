@@ -64,17 +64,18 @@ fc_flow4_cache_nb_entries(const struct fc_flow4_cache *fc)
     return fc_flow4_ops_gen.nb_entries(fc);
 }
 
-int
-fc_flow4_cache_remove_idx(struct fc_flow4_cache *fc, uint32_t entry_idx)
-{
-    return fc_flow4_ops_gen.remove_idx(fc, entry_idx);
-}
-
 void
 fc_flow4_cache_stats(const struct fc_flow4_cache *fc,
                      struct fc_flow4_stats *out)
 {
     fc_flow4_ops_gen.stats(fc, out);
+}
+
+int
+fc_flow4_cache_walk(struct fc_flow4_cache *fc,
+                     int (*cb)(uint32_t entry_idx, void *arg), void *arg)
+{
+    return fc_flow4_ops_gen.walk(fc, cb, arg);
 }
 
 /* flow6 cold-path */
@@ -101,17 +102,18 @@ fc_flow6_cache_nb_entries(const struct fc_flow6_cache *fc)
     return fc_flow6_ops_gen.nb_entries(fc);
 }
 
-int
-fc_flow6_cache_remove_idx(struct fc_flow6_cache *fc, uint32_t entry_idx)
-{
-    return fc_flow6_ops_gen.remove_idx(fc, entry_idx);
-}
-
 void
 fc_flow6_cache_stats(const struct fc_flow6_cache *fc,
                      struct fc_flow6_stats *out)
 {
     fc_flow6_ops_gen.stats(fc, out);
+}
+
+int
+fc_flow6_cache_walk(struct fc_flow6_cache *fc,
+                     int (*cb)(uint32_t entry_idx, void *arg), void *arg)
+{
+    return fc_flow6_ops_gen.walk(fc, cb, arg);
 }
 
 /* flowu cold-path */
@@ -138,12 +140,6 @@ fc_flowu_cache_nb_entries(const struct fc_flowu_cache *fc)
     return fc_flowu_ops_gen.nb_entries(fc);
 }
 
-int
-fc_flowu_cache_remove_idx(struct fc_flowu_cache *fc, uint32_t entry_idx)
-{
-    return fc_flowu_ops_gen.remove_idx(fc, entry_idx);
-}
-
 void
 fc_flowu_cache_stats(const struct fc_flowu_cache *fc,
                      struct fc_flowu_stats *out)
@@ -151,18 +147,58 @@ fc_flowu_cache_stats(const struct fc_flowu_cache *fc,
     fc_flowu_ops_gen.stats(fc, out);
 }
 
+int
+fc_flowu_cache_walk(struct fc_flowu_cache *fc,
+                     int (*cb)(uint32_t entry_idx, void *arg), void *arg)
+{
+    return fc_flowu_ops_gen.walk(fc, cb, arg);
+}
+
 /*===========================================================================
- * Hot-path wrappers -- dispatch through selected ops table
+ * Hot-path bulk wrappers -- dispatch through selected ops table
  *===========================================================================*/
 
-/* flow4 hot-path */
+/*--- flow4 bulk ---*/
 void
-fc_flow4_cache_lookup_batch(struct fc_flow4_cache *fc,
-                            const struct fc_flow4_key *keys,
-                            unsigned nb_keys, uint64_t now,
-                            struct fc_flow4_result *results)
+fc_flow4_cache_find_bulk(struct fc_flow4_cache *fc,
+                          const struct fc_flow4_key *keys,
+                          unsigned nb_keys, uint64_t now,
+                          struct fc_flow4_result *results)
 {
-    _fc_flow4_active->lookup_batch(fc, keys, nb_keys, now, results);
+    _fc_flow4_active->find_bulk(fc, keys, nb_keys, now, results);
+}
+
+void
+fc_flow4_cache_findadd_bulk(struct fc_flow4_cache *fc,
+                             const struct fc_flow4_key *keys,
+                             unsigned nb_keys, uint64_t now,
+                             struct fc_flow4_result *results)
+{
+    _fc_flow4_active->findadd_bulk(fc, keys, nb_keys, now, results);
+}
+
+void
+fc_flow4_cache_add_bulk(struct fc_flow4_cache *fc,
+                         const struct fc_flow4_key *keys,
+                         unsigned nb_keys, uint64_t now,
+                         struct fc_flow4_result *results)
+{
+    _fc_flow4_active->add_bulk(fc, keys, nb_keys, now, results);
+}
+
+void
+fc_flow4_cache_del_bulk(struct fc_flow4_cache *fc,
+                         const struct fc_flow4_key *keys,
+                         unsigned nb_keys)
+{
+    _fc_flow4_active->del_bulk(fc, keys, nb_keys);
+}
+
+void
+fc_flow4_cache_del_idx_bulk(struct fc_flow4_cache *fc,
+                             const uint32_t *idxs, unsigned nb_idxs)
+{
+    _fc_flow4_active->del_idx_bulk(fc, idxs, nb_idxs);
 }
 
 unsigned
@@ -189,14 +225,47 @@ fc_flow4_cache_maintain_step(struct fc_flow4_cache *fc,
     return _fc_flow4_active->maintain_step(fc, now, idle);
 }
 
-/* flow6 hot-path */
+/*--- flow6 bulk ---*/
 void
-fc_flow6_cache_lookup_batch(struct fc_flow6_cache *fc,
-                            const struct fc_flow6_key *keys,
-                            unsigned nb_keys, uint64_t now,
-                            struct fc_flow6_result *results)
+fc_flow6_cache_find_bulk(struct fc_flow6_cache *fc,
+                          const struct fc_flow6_key *keys,
+                          unsigned nb_keys, uint64_t now,
+                          struct fc_flow6_result *results)
 {
-    _fc_flow6_active->lookup_batch(fc, keys, nb_keys, now, results);
+    _fc_flow6_active->find_bulk(fc, keys, nb_keys, now, results);
+}
+
+void
+fc_flow6_cache_findadd_bulk(struct fc_flow6_cache *fc,
+                             const struct fc_flow6_key *keys,
+                             unsigned nb_keys, uint64_t now,
+                             struct fc_flow6_result *results)
+{
+    _fc_flow6_active->findadd_bulk(fc, keys, nb_keys, now, results);
+}
+
+void
+fc_flow6_cache_add_bulk(struct fc_flow6_cache *fc,
+                         const struct fc_flow6_key *keys,
+                         unsigned nb_keys, uint64_t now,
+                         struct fc_flow6_result *results)
+{
+    _fc_flow6_active->add_bulk(fc, keys, nb_keys, now, results);
+}
+
+void
+fc_flow6_cache_del_bulk(struct fc_flow6_cache *fc,
+                         const struct fc_flow6_key *keys,
+                         unsigned nb_keys)
+{
+    _fc_flow6_active->del_bulk(fc, keys, nb_keys);
+}
+
+void
+fc_flow6_cache_del_idx_bulk(struct fc_flow6_cache *fc,
+                             const uint32_t *idxs, unsigned nb_idxs)
+{
+    _fc_flow6_active->del_idx_bulk(fc, idxs, nb_idxs);
 }
 
 unsigned
@@ -223,14 +292,47 @@ fc_flow6_cache_maintain_step(struct fc_flow6_cache *fc,
     return _fc_flow6_active->maintain_step(fc, now, idle);
 }
 
-/* flowu hot-path */
+/*--- flowu bulk ---*/
 void
-fc_flowu_cache_lookup_batch(struct fc_flowu_cache *fc,
-                            const struct fc_flowu_key *keys,
-                            unsigned nb_keys, uint64_t now,
-                            struct fc_flowu_result *results)
+fc_flowu_cache_find_bulk(struct fc_flowu_cache *fc,
+                          const struct fc_flowu_key *keys,
+                          unsigned nb_keys, uint64_t now,
+                          struct fc_flowu_result *results)
 {
-    _fc_flowu_active->lookup_batch(fc, keys, nb_keys, now, results);
+    _fc_flowu_active->find_bulk(fc, keys, nb_keys, now, results);
+}
+
+void
+fc_flowu_cache_findadd_bulk(struct fc_flowu_cache *fc,
+                             const struct fc_flowu_key *keys,
+                             unsigned nb_keys, uint64_t now,
+                             struct fc_flowu_result *results)
+{
+    _fc_flowu_active->findadd_bulk(fc, keys, nb_keys, now, results);
+}
+
+void
+fc_flowu_cache_add_bulk(struct fc_flowu_cache *fc,
+                         const struct fc_flowu_key *keys,
+                         unsigned nb_keys, uint64_t now,
+                         struct fc_flowu_result *results)
+{
+    _fc_flowu_active->add_bulk(fc, keys, nb_keys, now, results);
+}
+
+void
+fc_flowu_cache_del_bulk(struct fc_flowu_cache *fc,
+                         const struct fc_flowu_key *keys,
+                         unsigned nb_keys)
+{
+    _fc_flowu_active->del_bulk(fc, keys, nb_keys);
+}
+
+void
+fc_flowu_cache_del_idx_bulk(struct fc_flowu_cache *fc,
+                             const uint32_t *idxs, unsigned nb_idxs)
+{
+    _fc_flowu_active->del_idx_bulk(fc, idxs, nb_idxs);
 }
 
 unsigned
@@ -255,6 +357,133 @@ fc_flowu_cache_maintain_step(struct fc_flowu_cache *fc,
                              uint64_t now, int idle)
 {
     return _fc_flowu_active->maintain_step(fc, now, idle);
+}
+
+/*===========================================================================
+ * Single-key convenience wrappers -- call bulk(n=1)
+ *===========================================================================*/
+
+/*--- flow4 single ---*/
+uint32_t
+fc_flow4_cache_find(struct fc_flow4_cache *fc,
+                     const struct fc_flow4_key *key, uint64_t now)
+{
+    struct fc_flow4_result r;
+    _fc_flow4_active->find_bulk(fc, key, 1, now, &r);
+    return r.entry_idx;
+}
+
+uint32_t
+fc_flow4_cache_findadd(struct fc_flow4_cache *fc,
+                        const struct fc_flow4_key *key, uint64_t now)
+{
+    struct fc_flow4_result r;
+    _fc_flow4_active->findadd_bulk(fc, key, 1, now, &r);
+    return r.entry_idx;
+}
+
+uint32_t
+fc_flow4_cache_add(struct fc_flow4_cache *fc,
+                    const struct fc_flow4_key *key, uint64_t now)
+{
+    struct fc_flow4_result r;
+    _fc_flow4_active->add_bulk(fc, key, 1, now, &r);
+    return r.entry_idx;
+}
+
+void
+fc_flow4_cache_del(struct fc_flow4_cache *fc,
+                    const struct fc_flow4_key *key)
+{
+    _fc_flow4_active->del_bulk(fc, key, 1);
+}
+
+int
+fc_flow4_cache_del_idx(struct fc_flow4_cache *fc, uint32_t entry_idx)
+{
+    return fc_flow4_ops_gen.remove_idx(fc, entry_idx);
+}
+
+/*--- flow6 single ---*/
+uint32_t
+fc_flow6_cache_find(struct fc_flow6_cache *fc,
+                     const struct fc_flow6_key *key, uint64_t now)
+{
+    struct fc_flow6_result r;
+    _fc_flow6_active->find_bulk(fc, key, 1, now, &r);
+    return r.entry_idx;
+}
+
+uint32_t
+fc_flow6_cache_findadd(struct fc_flow6_cache *fc,
+                        const struct fc_flow6_key *key, uint64_t now)
+{
+    struct fc_flow6_result r;
+    _fc_flow6_active->findadd_bulk(fc, key, 1, now, &r);
+    return r.entry_idx;
+}
+
+uint32_t
+fc_flow6_cache_add(struct fc_flow6_cache *fc,
+                    const struct fc_flow6_key *key, uint64_t now)
+{
+    struct fc_flow6_result r;
+    _fc_flow6_active->add_bulk(fc, key, 1, now, &r);
+    return r.entry_idx;
+}
+
+void
+fc_flow6_cache_del(struct fc_flow6_cache *fc,
+                    const struct fc_flow6_key *key)
+{
+    _fc_flow6_active->del_bulk(fc, key, 1);
+}
+
+int
+fc_flow6_cache_del_idx(struct fc_flow6_cache *fc, uint32_t entry_idx)
+{
+    return fc_flow6_ops_gen.remove_idx(fc, entry_idx);
+}
+
+/*--- flowu single ---*/
+uint32_t
+fc_flowu_cache_find(struct fc_flowu_cache *fc,
+                     const struct fc_flowu_key *key, uint64_t now)
+{
+    struct fc_flowu_result r;
+    _fc_flowu_active->find_bulk(fc, key, 1, now, &r);
+    return r.entry_idx;
+}
+
+uint32_t
+fc_flowu_cache_findadd(struct fc_flowu_cache *fc,
+                        const struct fc_flowu_key *key, uint64_t now)
+{
+    struct fc_flowu_result r;
+    _fc_flowu_active->findadd_bulk(fc, key, 1, now, &r);
+    return r.entry_idx;
+}
+
+uint32_t
+fc_flowu_cache_add(struct fc_flowu_cache *fc,
+                    const struct fc_flowu_key *key, uint64_t now)
+{
+    struct fc_flowu_result r;
+    _fc_flowu_active->add_bulk(fc, key, 1, now, &r);
+    return r.entry_idx;
+}
+
+void
+fc_flowu_cache_del(struct fc_flowu_cache *fc,
+                    const struct fc_flowu_key *key)
+{
+    _fc_flowu_active->del_bulk(fc, key, 1);
+}
+
+int
+fc_flowu_cache_del_idx(struct fc_flowu_cache *fc, uint32_t entry_idx)
+{
+    return fc_flowu_ops_gen.remove_idx(fc, entry_idx);
 }
 
 /*

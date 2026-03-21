@@ -327,12 +327,26 @@ Each variant exposes the same function set (substitute `flow4` / `flow6` /
 |---|---|
 | `fc_PREFIX_cache_init()` | Initialize cache with buckets, pool, config |
 | `fc_PREFIX_cache_flush()` | Return all entries to free list |
-| `fc_PREFIX_cache_lookup_batch()` | Pipelined batch lookup, returns miss count |
-| `fc_PREFIX_cache_fill_miss_batch()` | Insert missed keys with pressure relief |
-| `fc_PREFIX_cache_maintain()` | Bucket-budgeted idle/background reclaim |
-| `fc_PREFIX_cache_remove_idx()` | Remove a single entry by index |
 | `fc_PREFIX_cache_nb_entries()` | Current entry count |
 | `fc_PREFIX_cache_stats()` | Snapshot counters |
+| **Bulk (hot-path, pipelined)** | |
+| `fc_PREFIX_cache_find_bulk()` | Pipelined batch lookup (no insert on miss) |
+| `fc_PREFIX_cache_findadd_bulk()` | Pipelined batch lookup + insert on miss |
+| `fc_PREFIX_cache_add_bulk()` | Batch insert (no duplicate check) |
+| `fc_PREFIX_cache_del_bulk()` | Batch delete by key |
+| `fc_PREFIX_cache_del_idx_bulk()` | Batch delete by entry index |
+| **Single-key (convenience)** | |
+| `fc_PREFIX_cache_find()` | Single-key lookup (calls find_bulk with n=1) |
+| `fc_PREFIX_cache_findadd()` | Single-key lookup+insert (calls findadd_bulk with n=1) |
+| `fc_PREFIX_cache_add()` | Single-key insert (calls add_bulk with n=1) |
+| `fc_PREFIX_cache_del()` | Single-key delete by key |
+| `fc_PREFIX_cache_del_idx()` | Single-key delete by entry index |
+| **Maintenance** | |
+| `fc_PREFIX_cache_maintain()` | Bucket-range reclaim |
+| `fc_PREFIX_cache_maintain_step_ex()` | Partial sweep with skip threshold |
+| `fc_PREFIX_cache_maintain_step()` | Adaptive single-step maintenance |
+| **Query (cold-path)** | |
+| `fc_PREFIX_cache_walk()` | Iterate all active entries via callback |
 
 #### 4.4.4 Implementation details
 
@@ -1208,8 +1222,8 @@ Each variant fills 50% (16384 active entries) before measurement.
 
 | Operation | flow4 | flow6 | flowu | 6/4 | u/4 |
 |-----------|------:|------:|------:|----:|----:|
-| hit_lookup | **37** | 51 | 53 | +36% | +42% |
-| miss_fill | **110** | 139 | 142 | +26% | +29% |
+| findadd_hit | **37** | 51 | 53 | +36% | +42% |
+| findadd_miss | **110** | 139 | 142 | +26% | +29% |
 | mixed 90/10 | **47** | 61 | 65 | +28% | +38% |
 
 flow4 uses inline CRC32C (`__builtin_ia32_crc32di` x3) and XOR-based 24B key
@@ -1217,7 +1231,7 @@ comparison, bypassing the `rix_hash_arch->hash_bytes` function-pointer dispatch
 and `memcmp`.  The 26-42% advantage over flow6/flowu comes primarily from
 **function-pointer elimination**, not key-size difference.
 
-hit_lookup at 37 cy (L1-hot) translates to ~80 Mpps at 3 GHz.
+findadd_hit at 37 cy (L1-hot) translates to ~80 Mpps at 3 GHz.
 
 ### 16.2 Maintenance: Full-Table Sweep (fill=75%, all expired)
 
@@ -1253,9 +1267,9 @@ between packet batches.
 
 | Metric | Value | Note |
 |--------|-------|------|
-| flow4 hit lookup | 37 cy | ~80 Mpps @3 GHz |
+| flow4 findadd hit | 37 cy | ~80 Mpps @3 GHz |
 | flow4 mixed 90/10 | 47 cy | Realistic workload |
-| flow4 miss fill | 110 cy | Including hash + insert |
+| flow4 findadd miss | 110 cy | Including hash + insert |
 | Maintenance (L2) | 16-20 cy/entry | Variant-independent |
 | Maintenance (DRAM) | 60-66 cy/entry | Memory-latency bound |
 | Partial sweep overhead | <15% | Step-size independent |
@@ -1289,7 +1303,7 @@ without hand-written SIMD in the application code.
 │  - rix_hash_arch_init() for this TU             │
 │  - FC_OPS_SELECT() per variant                  │
 │  - unsuffixed API wrappers                      │
-│    hot-path  → _fc_flow4_active->lookup_batch() │
+│    hot-path  → _fc_flow4_active->findadd_bulk() │
 │    cold-path → fc_flow4_ops_gen.init()          │
 └────────────────────┬────────────────────────────┘
                      │ selects ops table
@@ -1302,11 +1316,11 @@ without hand-written SIMD in the application code.
 **Key points**:
 
 - The public API uses **unsuffixed** function names
-  (`fc_flow4_cache_lookup_batch`, etc.).  These are thin wrappers
+  (`fc_flow4_cache_findadd_bulk`, etc.).  These are thin wrappers
   in `fc_dispatch.c` that forward to the selected ops table.
-- **Hot-path** functions (lookup, maintain) dispatch through the
+- **Hot-path** functions (find/findadd/add/del bulk, maintain) dispatch through the
   runtime-selected ops pointer.  **Cold-path** functions (init,
-  flush, stats, remove, nb_entries) forward through `ops_gen`.
+  flush, stats, remove, nb_entries, walk) forward through `ops_gen`.
 - All generated functions (`_FCG_API`) are **static** — visible
   only within their arch-specific TU.  The ops table takes their
   addresses for cross-TU dispatch.
@@ -1360,7 +1374,7 @@ $(LIBDIR)/fc_dispatch.o: $(SRCDIR)/fc_dispatch.c
 Total objects: 3 variants x 4 tiers + 1 dispatch = **13 objects**.
 
 `FC_ARCH_SUFFIX` causes `FC_CACHE_GENERATE` to append the suffix to
-all generated function names (e.g. `fc_flow4_cache_lookup_batch_avx2`).
+all generated function names (e.g. `fc_flow4_cache_findadd_bulk_avx2`).
 Without the macro, original unsuffixed names are generated.
 
 ### 17.4 Hash Function Strategy
@@ -1410,11 +1424,26 @@ struct fc_flow4_ops {
     int (*remove_idx)(struct fc_flow4_cache *fc, uint32_t entry_idx);
     void (*stats)(const struct fc_flow4_cache *fc,
                   struct fc_flow4_stats *out);
+    int (*walk)(struct fc_flow4_cache *fc,
+                int (*cb)(uint32_t entry_idx, void *arg), void *arg);
     /* hot-path */
-    void (*lookup_batch)(struct fc_flow4_cache *fc,
+    void (*find_bulk)(struct fc_flow4_cache *fc,
+                      const struct fc_flow4_key *keys,
+                      unsigned nb_keys, uint64_t now,
+                      struct fc_flow4_result *results);
+    void (*findadd_bulk)(struct fc_flow4_cache *fc,
                          const struct fc_flow4_key *keys,
                          unsigned nb_keys, uint64_t now,
                          struct fc_flow4_result *results);
+    void (*add_bulk)(struct fc_flow4_cache *fc,
+                     const struct fc_flow4_key *keys,
+                     unsigned nb_keys, uint64_t now,
+                     struct fc_flow4_result *results);
+    void (*del_bulk)(struct fc_flow4_cache *fc,
+                     const struct fc_flow4_key *keys,
+                     unsigned nb_keys);
+    void (*del_idx_bulk)(struct fc_flow4_cache *fc,
+                         const uint32_t *idxs, unsigned nb_idxs);
     unsigned (*maintain)(struct fc_flow4_cache *fc,
                          unsigned start_bk, unsigned bucket_count,
                          uint64_t now);
@@ -1453,12 +1482,12 @@ fc_arch_init(unsigned arch_enable)
 
 /* Hot-path wrapper — dispatch through runtime-selected ops */
 void
-fc_flow4_cache_lookup_batch(struct fc_flow4_cache *fc,
-                            const struct fc_flow4_key *keys,
-                            unsigned nb_keys, uint64_t now,
-                            struct fc_flow4_result *results)
+fc_flow4_cache_findadd_bulk(struct fc_flow4_cache *fc,
+                             const struct fc_flow4_key *keys,
+                             unsigned nb_keys, uint64_t now,
+                             struct fc_flow4_result *results)
 {
-    _fc_flow4_active->lookup_batch(fc, keys, nb_keys, now, results);
+    _fc_flow4_active->findadd_bulk(fc, keys, nb_keys, now, results);
 }
 
 /* Cold-path wrapper — always through ops_gen */
@@ -1479,7 +1508,7 @@ and per-variant ops selection:
 ```c
 int main(void) {
     fc_arch_init(FC_ARCH_AUTO);   /* does everything */
-    /* ... use fc_flow4_cache_init(), fc_flow4_cache_lookup_batch(), etc. */
+    /* ... use fc_flow4_cache_init(), fc_flow4_cache_findadd_bulk(), etc. */
 }
 ```
 

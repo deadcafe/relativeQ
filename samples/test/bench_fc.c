@@ -180,10 +180,22 @@ bench_datapath_one(unsigned desired)
                fcb_flow4_bench_hit(&ctx4, h4, FCB_QUERY, FCB_HIT_REPEAT),
                fcb_flow6_bench_hit(&ctx6, h6, FCB_QUERY, FCB_HIT_REPEAT),
                fcb_flowu_bench_hit(&ctxu, hu, FCB_QUERY, FCB_HIT_REPEAT));
+    fcb_emit3("find_hit",
+               fcb_flow4_bench_find_hit(&ctx4, h4, FCB_QUERY, FCB_HIT_REPEAT),
+               fcb_flow6_bench_find_hit(&ctx6, h6, FCB_QUERY, FCB_HIT_REPEAT),
+               fcb_flowu_bench_find_hit(&ctxu, hu, FCB_QUERY, FCB_HIT_REPEAT));
     fcb_emit3("miss_fill",
                fcb_flow4_bench_miss_fill(&ctx4, m4, FCB_QUERY, FCB_MISS_REPEAT),
                fcb_flow6_bench_miss_fill(&ctx6, m6, FCB_QUERY, FCB_MISS_REPEAT),
                fcb_flowu_bench_miss_fill(&ctxu, mu, FCB_QUERY, FCB_MISS_REPEAT));
+    fcb_emit3("add+del",
+               fcb_flow4_bench_add_del(&ctx4, m4, FCB_QUERY, FCB_MISS_REPEAT),
+               fcb_flow6_bench_add_del(&ctx6, m6, FCB_QUERY, FCB_MISS_REPEAT),
+               fcb_flowu_bench_add_del(&ctxu, mu, FCB_QUERY, FCB_MISS_REPEAT));
+    fcb_emit3("del_bulk",
+               fcb_flow4_bench_del_bulk(&ctx4, m4, FCB_QUERY, FCB_MISS_REPEAT),
+               fcb_flow6_bench_del_bulk(&ctx6, m6, FCB_QUERY, FCB_MISS_REPEAT),
+               fcb_flowu_bench_del_bulk(&ctxu, mu, FCB_QUERY, FCB_MISS_REPEAT));
 
     /* re-prefill for mixed */
     fcb_flow4_ctx_reset(&ctx4);
@@ -294,6 +306,83 @@ bench_maint_partial(void)
 }
 
 /*===========================================================================
+ * perf_findadd: tight findadd_bulk loop for perf profiling
+ *
+ * Pre-fills to the specified fill%, then runs findadd_bulk in a tight
+ * loop with 90% hit keys for ~10 seconds.  No active_scan or other
+ * overhead — pure findadd_bulk cost.
+ *===========================================================================*/
+static void __attribute__((noinline))
+perf_findadd_flow4(struct fcb_flow4_ctx *ctx,
+                    struct fc_flow4_key *keys,
+                    struct fc_flow4_result *results,
+                    unsigned n, unsigned rounds)
+{
+    for (unsigned r = 0; r < rounds; r++) {
+        uint64_t now = (uint64_t)r + 1000u;
+        fc_flow4_cache_findadd_bulk(&ctx->fc, keys, n, now, results);
+    }
+}
+
+static void
+bench_perf_findadd(unsigned desired, unsigned fill_pct)
+{
+    unsigned max_entries = fcb_pool_count(desired);
+    unsigned nb_bk = fcb_nb_bk_hint(max_entries);
+    unsigned total_slots = nb_bk * RIX_HASH_BUCKET_ENTRY_SZ;
+    unsigned fill_n = (unsigned)(((uint64_t)total_slots * fill_pct) / 100u);
+    unsigned hit_n = (FCB_QUERY * 90u) / 100u;
+    unsigned rounds;
+    struct fcb_flow4_ctx ctx;
+    struct fc_flow4_key *prefill_keys;
+    struct fc_flow4_key *query;
+    struct fc_flow4_result *results;
+    uint64_t t0, t1;
+
+    if (fill_n > max_entries)
+        fill_n = max_entries;
+
+    fcb_flow4_ctx_init(&ctx, nb_bk, max_entries, 1000000000ull);
+    prefill_keys = fcb_alloc((size_t)max_entries * sizeof(*prefill_keys));
+    query = fcb_alloc((size_t)FCB_QUERY * sizeof(*query));
+    results = fcb_alloc((size_t)FCB_QUERY * sizeof(*results));
+
+    for (unsigned i = 0; i < max_entries; i++)
+        prefill_keys[i] = fcb_make_key4(i);
+    (void)fcb_flow4_prefill(&ctx, prefill_keys, fill_n, 1u);
+
+    for (unsigned i = 0; i < FCB_QUERY; i++) {
+        if (i < hit_n && fill_n > 0u)
+            query[i] = prefill_keys[i % fill_n];
+        else
+            query[i] = fcb_make_key4(max_entries + i);
+    }
+
+    /* target ~10 seconds */
+    rounds = 200000u;
+
+    printf("perf_findadd: pool=%u nb_bk=%u fill=%u (%.1f%% of slots) "
+           "query=%u rounds=%u\n",
+           max_entries, nb_bk, fill_n,
+           100.0 * (double)fill_n / (double)total_slots,
+           FCB_QUERY, rounds);
+    printf("  running tight loop...\n");
+
+    t0 = fcb_rdtsc();
+    perf_findadd_flow4(&ctx, query, results, FCB_QUERY, rounds);
+    t1 = fcb_rdtsc();
+
+    printf("  cycles/key = %.2f  (%u keys x %u rounds)\n",
+           (double)(t1 - t0) / (double)((uint64_t)FCB_QUERY * rounds),
+           FCB_QUERY, rounds);
+
+    free(results);
+    free(query);
+    free(prefill_keys);
+    fcb_flow4_ctx_free(&ctx);
+}
+
+/*===========================================================================
  * Variant dispatch helpers
  *===========================================================================*/
 typedef void (*rate_fc_only_fn)(unsigned, unsigned, unsigned, unsigned, unsigned);
@@ -332,6 +421,7 @@ usage(const char *prog)
     printf("  %s [--arch gen|sse|avx2|avx512] datapath\n", prog);
     printf("  %s [--arch ...] maint\n", prog);
     printf("  %s [--arch ...] maint_partial\n", prog);
+    printf("  %s [--arch ...] perf_findadd <desired> <fill%%>\n", prog);
     printf("  %s [--arch ...] [flow4|flow6|flowu] rate_fc_only <desired> <start_fill%%> <hit%%> <pps>\n", prog);
     printf("  %s [--arch ...] [flow4|flow6|flowu] rate_trace_custom <desired> <start_fill%%> <hit%%> <pps>"
            " <timeout_ms> <soak_mul> <report_ms>"
@@ -367,6 +457,16 @@ main(int argc, char **argv)
     }
     if (strcmp(argv[1], "maint_partial") == 0) {
         bench_maint_partial();
+        return 0;
+    }
+    if (strcmp(argv[1], "perf_findadd") == 0) {
+        if (argc < 4) {
+            fprintf(stderr, "perf_findadd requires: <desired> <fill%%>\n");
+            return 2;
+        }
+        unsigned desired  = (unsigned)strtoul(argv[2], NULL, 10);
+        unsigned fill_pct = (unsigned)strtoul(argv[3], NULL, 10);
+        bench_perf_findadd(desired, fill_pct);
         return 0;
     }
     if (strcmp(argv[1], "help") == 0 || strcmp(argv[1], "--help") == 0) {

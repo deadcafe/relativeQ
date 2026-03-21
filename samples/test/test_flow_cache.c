@@ -123,7 +123,7 @@ test_##PREFIX##_lookup_fill_remove(void) \
         keys[i] = MAKE_KEY(i); \
 \
     /* First lookup auto-fills all misses */ \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, NB_KEYS, 1u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, NB_KEYS, 1u, results); \
     if (fc_##PREFIX##_cache_nb_entries(&fc) != NB_KEYS) \
         FAILF("nb_entries=%u expected %u", \
               fc_##PREFIX##_cache_nb_entries(&fc), NB_KEYS); \
@@ -133,19 +133,19 @@ test_##PREFIX##_lookup_fill_remove(void) \
     } \
 \
     /* Second lookup: all hit */ \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, NB_KEYS, 20u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, NB_KEYS, 20u, results); \
     for (unsigned i = 0; i < NB_KEYS; i++) { \
         if (results[i].entry_idx == 0u) \
             FAILF("result[%u] entry_idx is 0", i); \
     } \
 \
-    if (!fc_##PREFIX##_cache_remove_idx(&fc, results[3].entry_idx)) \
-        FAIL("remove_idx failed"); \
-    if (fc_##PREFIX##_cache_remove_idx(&fc, results[3].entry_idx)) \
-        FAIL("remove_idx should fail on removed entry"); \
+    if (!fc_##PREFIX##_cache_del_idx(&fc, results[3].entry_idx)) \
+        FAIL("del_idx failed"); \
+    if (fc_##PREFIX##_cache_del_idx(&fc, results[3].entry_idx)) \
+        FAIL("del_idx should fail on removed entry"); \
 \
     /* Removed key: lookup auto-fills it again */ \
-    fc_##PREFIX##_cache_lookup_batch(&fc, &keys[3], 1u, 30u, &results[3]); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, &keys[3], 1u, 30u, &results[3]); \
     if (results[3].entry_idx == 0u) \
         FAIL("removed key should be auto-filled"); \
 } \
@@ -168,14 +168,14 @@ test_##PREFIX##_pressure_relief(void) \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(i); \
 \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, FILL, 100u, results); \
     if (fc_##PREFIX##_cache_nb_entries(&fc) != FILL) \
         FAILF("pressure test initial fill entries=%u expected %u", \
               fc_##PREFIX##_cache_nb_entries(&fc), FILL); \
 \
     /* Newcomer: lookup auto-fills via relief eviction */ \
     newcomer = MAKE_KEY(1000u); \
-    fc_##PREFIX##_cache_lookup_batch(&fc, &newcomer, 1u, 1000u, \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, &newcomer, 1u, 1000u, \
                                       &newcomer_result); \
     if (newcomer_result.entry_idx == 0u) \
         FAIL("newcomer_result.entry_idx should be non-zero"); \
@@ -184,13 +184,13 @@ test_##PREFIX##_pressure_relief(void) \
               fc_##PREFIX##_cache_nb_entries(&fc), FILL); \
 \
     /* Newcomer re-lookup: should hit */ \
-    fc_##PREFIX##_cache_lookup_batch(&fc, &newcomer, 1u, 1001u, \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, &newcomer, 1u, 1001u, \
                                       &newcomer_result); \
     if (newcomer_result.entry_idx == 0u) \
         FAIL("newcomer should hit after pressure-relief fill"); \
 \
     /* One old entry was evicted */ \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 1002u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, FILL, 1002u, results); \
     if (COUNT_HITS(RESULT_T, results, FILL) != FILL - 1u) \
         FAILF("expected exactly one old entry to be evicted, hits=%u", \
               COUNT_HITS(RESULT_T, results, FILL)); \
@@ -213,11 +213,11 @@ test_##PREFIX##_fill_miss_full_without_relief(void) \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(2000u + i); \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, FILL, 100u, results); \
 \
     /* Newcomer: entries are fresh, relief won't evict -> stays 0 */ \
     newcomer = MAKE_KEY(3000u); \
-    fc_##PREFIX##_cache_lookup_batch(&fc, &newcomer, 1u, 101u, \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, &newcomer, 1u, 101u, \
                                       &newcomer_result); \
     if (newcomer_result.entry_idx != 0u) \
         FAILF("fresh-fill newcomer_result.entry_idx=%u expected 0", \
@@ -239,7 +239,7 @@ test_##PREFIX##_duplicate_miss_batch(void) \
     keys[0] = MAKE_KEY(4000u); \
     keys[1] = keys[0]; \
 \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, NB_KEYS, 1u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, NB_KEYS, 1u, results); \
     if (fc_##PREFIX##_cache_nb_entries(&fc) != 1u) \
         FAILF("duplicate batch nb_entries=%u expected 1", \
               fc_##PREFIX##_cache_nb_entries(&fc)); \
@@ -265,19 +265,19 @@ test_##PREFIX##_flush_and_invalid_remove(void) \
     for (unsigned i = 0; i < NB_KEYS; i++) \
         keys[i] = MAKE_KEY(5000u + i); \
 \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, NB_KEYS, 1u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, NB_KEYS, 1u, results); \
 \
-    if (fc_##PREFIX##_cache_remove_idx(&fc, 0u)) \
-        FAIL("remove_idx(0) should fail"); \
-    if (fc_##PREFIX##_cache_remove_idx(&fc, MAX_ENTRIES + 1u)) \
-        FAIL("remove_idx(out-of-range) should fail"); \
+    if (fc_##PREFIX##_cache_del_idx(&fc, 0u)) \
+        FAIL("del_idx(0) should fail"); \
+    if (fc_##PREFIX##_cache_del_idx(&fc, MAX_ENTRIES + 1u)) \
+        FAIL("del_idx(out-of-range) should fail"); \
 \
     fc_##PREFIX##_cache_flush(&fc); \
     if (fc_##PREFIX##_cache_nb_entries(&fc) != 0u) \
         FAILF("flush left nb_entries=%u expected 0", \
               fc_##PREFIX##_cache_nb_entries(&fc)); \
     /* Post-flush lookup auto-fills again */ \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, NB_KEYS, 20u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, NB_KEYS, 20u, results); \
     if (fc_##PREFIX##_cache_nb_entries(&fc) != NB_KEYS) \
         FAILF("post-flush nb_entries=%u expected %u", \
               fc_##PREFIX##_cache_nb_entries(&fc), NB_KEYS); \
@@ -302,7 +302,7 @@ test_##PREFIX##_maintenance(void) \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(6000u + i); \
 \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, FILL, 100u, results); \
 \
     before_entries = fc_##PREFIX##_cache_nb_entries(&fc); \
     evicted = fc_##PREFIX##_cache_maintain(&fc, 0u, NB_BK, 1000u); \
@@ -339,7 +339,7 @@ test_##PREFIX##_timeout_boundary(void) \
     keys[0] = MAKE_KEY(7000u); \
     keys[1] = MAKE_KEY(7001u); \
 \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, 2u, 1000u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, 2u, 1000u, results); \
 \
     if (fc_##PREFIX##_cache_maintain(&fc, 0u, NB_BK, 1099u) != 0u) \
         FAIL("should not evict before timeout boundary"); \
@@ -374,7 +374,7 @@ test_##PREFIX##_maintain_step(void) \
         keys[i] = MAKE_KEY(8000u + i); \
 \
     /* Fill entries at ts=100 */ \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, FILL, 100u, results); \
     filled = fc_##PREFIX##_cache_nb_entries(&fc); \
     if (filled < FILL / 2u) \
         FAILF("maintain_step initial fill too low: %u/%u", filled, \
@@ -415,7 +415,7 @@ test_##PREFIX##_maintain_step(void) \
     /* Idle=true test: full sweep regardless of throttle */ \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(9000u + i); \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 2000u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, FILL, 2000u, results); \
     filled = fc_##PREFIX##_cache_nb_entries(&fc); \
     total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, 3000u, 1); \
     remaining = fc_##PREFIX##_cache_nb_entries(&fc); \
@@ -435,7 +435,7 @@ test_##PREFIX##_maintain_step(void) \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(10000u + i); \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, FILL, 100u, results); \
     /* First call: elapsed is large (100 - 0 = 100 >= interval... */ \
     /* actually last_maint_tsc=0, so elapsed=500, scale=0 since 500/1000=0 */ \
     /* -> skip!  Force first run with idle=1 */ \
@@ -459,7 +459,7 @@ test_##PREFIX##_maintain_step(void) \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(11000u + i); \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, FILL, 100u, results); \
     /* fills=48, threshold=10 -> entry_scale=4, time_scale=0 -> sweep=4*4=16=NB_BK */ \
     fc.last_maint_tsc = 100u; /* reset so time won't trigger */ \
     fc.last_maint_fills = 0u; /* 48 fills since last maint */ \
@@ -476,7 +476,7 @@ test_##PREFIX##_maintain_step(void) \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(12000u + i); \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, FILL, 100u, results); \
     fc.last_maint_tsc = 500u; \
     /* elapsed=500, scale=5, sweep=5*2=10 */ \
     total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, 1000u, 0); \
@@ -503,7 +503,7 @@ test_##PREFIX##_maintain_step(void) \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(13000u + i); \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, FILL, 100u, results); \
     { \
         unsigned filled_d = fc_##PREFIX##_cache_nb_entries(&fc); \
         total_evicted = fc_##PREFIX##_cache_maintain_step(&fc, 1000u, 1); \
@@ -524,7 +524,7 @@ test_##PREFIX##_maintain_step(void) \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(14000u + i); \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, FILL, 100u, results); \
     total_evicted = 0u; \
     for (unsigned s = 0; s < 4u; s++) \
         total_evicted += fc_##PREFIX##_cache_maintain_step( \
@@ -542,7 +542,7 @@ test_##PREFIX##_maintain_step(void) \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(15000u + i); \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, FILL, 100u, results); \
     (void)fc_##PREFIX##_cache_maintain_step_ex(&fc, 4u, 8u, 0u, 1000u); \
     if (fc.last_maint_start_bk != 4u) \
         FAILF("_ex start_bk=%u expected 4", fc.last_maint_start_bk); \
@@ -562,7 +562,7 @@ test_##PREFIX##_maintain_step(void) \
     fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, &cfg); \
     for (unsigned i = 0; i < FILL; i++) \
         keys[i] = MAKE_KEY(16000u + i); \
-    fc_##PREFIX##_cache_lookup_batch(&fc, keys, FILL, 100u, results); \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, FILL, 100u, results); \
     fc.last_maint_tsc = 700u; \
     fc.last_maint_fills = 38u; /* added=48-38=10, entry_scale=1 */ \
     /* elapsed=1000-700=300, time_scale=3 > entry_scale=1 -> sweep=3*2=6 */ \
@@ -578,6 +578,374 @@ test_##PREFIX##_maintain_step(void) \
     (void)fc_##PREFIX##_cache_maintain_step(&fc, 1010u, 0); \
     if (fc.last_maint_sweep_bk != 6u) \
         FAILF("entry trigger: sweep_bk=%u expected 6", fc.last_maint_sweep_bk); \
+} \
+\
+/*--- find_bulk / find ---*/ \
+static void \
+test_##PREFIX##_find_bulk(void) \
+{ \
+    enum { NB_BK = 8u, MAX_ENTRIES = 32u, NB_KEYS = 8u }; \
+    struct rix_hash_bucket_s buckets[NB_BK]; \
+    ENTRY_T pool[MAX_ENTRIES]; \
+    CACHE_T fc; \
+    KEY_T keys[NB_KEYS]; \
+    RESULT_T results[NB_KEYS]; \
+\
+    printf("[T] fc " #PREFIX " find_bulk\n"); \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, NULL); \
+    for (unsigned i = 0; i < NB_KEYS; i++) \
+        keys[i] = MAKE_KEY(20000u + i); \
+\
+    /* find on empty cache: all miss, no insert */ \
+    fc_##PREFIX##_cache_find_bulk(&fc, keys, NB_KEYS, 1u, results); \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != 0u) \
+        FAIL("find_bulk should not insert"); \
+    for (unsigned i = 0; i < NB_KEYS; i++) { \
+        if (results[i].entry_idx != 0u) \
+            FAILF("find_bulk miss: result[%u] should be 0", i); \
+    } \
+\
+    /* Pre-fill, then find: all hit */ \
+    fc_##PREFIX##_cache_findadd_bulk(&fc, keys, NB_KEYS, 100u, results); \
+    fc_##PREFIX##_cache_find_bulk(&fc, keys, NB_KEYS, 200u, results); \
+    for (unsigned i = 0; i < NB_KEYS; i++) { \
+        if (results[i].entry_idx == 0u) \
+            FAILF("find_bulk hit: result[%u] should be non-zero", i); \
+    } \
+\
+    /* Verify last_ts updated to 200 */ \
+    for (unsigned i = 0; i < NB_KEYS; i++) { \
+        if (pool[results[i].entry_idx - 1u].last_ts != 200u) \
+            FAILF("find_bulk touch: last_ts=%" PRIu64 " expected 200", \
+                  pool[results[i].entry_idx - 1u].last_ts); \
+    } \
+\
+    /* now=0: no last_ts update */ \
+    fc_##PREFIX##_cache_find_bulk(&fc, keys, NB_KEYS, 0u, results); \
+    for (unsigned i = 0; i < NB_KEYS; i++) { \
+        if (pool[results[i].entry_idx - 1u].last_ts != 200u) \
+            FAILF("find_bulk now=0: last_ts=%" PRIu64 " should stay 200", \
+                  pool[results[i].entry_idx - 1u].last_ts); \
+    } \
+} \
+\
+static void \
+test_##PREFIX##_find_single(void) \
+{ \
+    enum { NB_BK = 8u, MAX_ENTRIES = 16u }; \
+    struct rix_hash_bucket_s buckets[NB_BK]; \
+    ENTRY_T pool[MAX_ENTRIES]; \
+    CACHE_T fc; \
+    KEY_T key; \
+    uint32_t idx; \
+\
+    printf("[T] fc " #PREFIX " find (single)\n"); \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, NULL); \
+    key = MAKE_KEY(21000u); \
+\
+    /* miss */ \
+    idx = fc_##PREFIX##_cache_find(&fc, &key, 1u); \
+    if (idx != 0u) \
+        FAIL("find single miss should return 0"); \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != 0u) \
+        FAIL("find single should not insert"); \
+\
+    /* insert, then find */ \
+    idx = fc_##PREFIX##_cache_findadd(&fc, &key, 100u); \
+    if (idx == 0u) \
+        FAIL("findadd single should return non-zero"); \
+    { \
+        uint32_t found = fc_##PREFIX##_cache_find(&fc, &key, 200u); \
+        if (found != idx) \
+            FAILF("find single hit: idx=%u expected %u", found, idx); \
+    } \
+} \
+\
+/*--- add_bulk / add ---*/ \
+static void \
+test_##PREFIX##_add_bulk(void) \
+{ \
+    enum { NB_BK = 8u, MAX_ENTRIES = 32u, NB_KEYS = 8u }; \
+    struct rix_hash_bucket_s buckets[NB_BK]; \
+    ENTRY_T pool[MAX_ENTRIES]; \
+    CACHE_T fc; \
+    KEY_T keys[NB_KEYS]; \
+    RESULT_T results[NB_KEYS]; \
+\
+    printf("[T] fc " #PREFIX " add_bulk\n"); \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, NULL); \
+    for (unsigned i = 0; i < NB_KEYS; i++) \
+        keys[i] = MAKE_KEY(22000u + i); \
+\
+    /* add into empty cache */ \
+    fc_##PREFIX##_cache_add_bulk(&fc, keys, NB_KEYS, 100u, results); \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != NB_KEYS) \
+        FAILF("add_bulk nb_entries=%u expected %u", \
+              fc_##PREFIX##_cache_nb_entries(&fc), NB_KEYS); \
+    for (unsigned i = 0; i < NB_KEYS; i++) { \
+        if (results[i].entry_idx == 0u) \
+            FAILF("add_bulk result[%u] should be non-zero", i); \
+    } \
+\
+    /* verify added entries are findable */ \
+    fc_##PREFIX##_cache_find_bulk(&fc, keys, NB_KEYS, 200u, results); \
+    for (unsigned i = 0; i < NB_KEYS; i++) { \
+        if (results[i].entry_idx == 0u) \
+            FAILF("add_bulk: find after add result[%u] should hit", i); \
+    } \
+} \
+\
+static void \
+test_##PREFIX##_add_single(void) \
+{ \
+    enum { NB_BK = 8u, MAX_ENTRIES = 16u }; \
+    struct rix_hash_bucket_s buckets[NB_BK]; \
+    ENTRY_T pool[MAX_ENTRIES]; \
+    CACHE_T fc; \
+    KEY_T key; \
+    uint32_t idx; \
+\
+    printf("[T] fc " #PREFIX " add (single)\n"); \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, NULL); \
+    key = MAKE_KEY(23000u); \
+\
+    idx = fc_##PREFIX##_cache_add(&fc, &key, 100u); \
+    if (idx == 0u) \
+        FAIL("add single should return non-zero"); \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != 1u) \
+        FAIL("add single nb_entries should be 1"); \
+\
+    /* findable */ \
+    { \
+        uint32_t found = fc_##PREFIX##_cache_find(&fc, &key, 200u); \
+        if (found != idx) \
+            FAILF("add single: find idx=%u expected %u", found, idx); \
+    } \
+} \
+\
+static void \
+test_##PREFIX##_add_bulk_full(void) \
+{ \
+    enum { NB_BK = 4u, MAX_ENTRIES = 16u, FILL = 16u }; \
+    struct rix_hash_bucket_s buckets[NB_BK]; \
+    ENTRY_T pool[MAX_ENTRIES]; \
+    CACHE_T fc; \
+    KEY_T keys[FILL + 1u]; \
+    RESULT_T results[FILL + 1u]; \
+\
+    printf("[T] fc " #PREFIX " add_bulk full\n"); \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, NULL); \
+    for (unsigned i = 0; i < FILL + 1u; i++) \
+        keys[i] = MAKE_KEY(24000u + i); \
+\
+    /* fill to capacity */ \
+    fc_##PREFIX##_cache_add_bulk(&fc, keys, FILL, 100u, results); \
+\
+    /* one more: should fail (no relief in add) */ \
+    fc_##PREFIX##_cache_add_bulk(&fc, &keys[FILL], 1u, 200u, &results[FILL]); \
+    if (results[FILL].entry_idx != 0u) \
+        FAILF("add_bulk full: extra entry_idx=%u should be 0", \
+              results[FILL].entry_idx); \
+} \
+\
+/*--- del_bulk / del ---*/ \
+static void \
+test_##PREFIX##_del_bulk(void) \
+{ \
+    enum { NB_BK = 8u, MAX_ENTRIES = 32u, NB_KEYS = 8u }; \
+    struct rix_hash_bucket_s buckets[NB_BK]; \
+    ENTRY_T pool[MAX_ENTRIES]; \
+    CACHE_T fc; \
+    KEY_T keys[NB_KEYS]; \
+    RESULT_T results[NB_KEYS]; \
+\
+    printf("[T] fc " #PREFIX " del_bulk\n"); \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, NULL); \
+    for (unsigned i = 0; i < NB_KEYS; i++) \
+        keys[i] = MAKE_KEY(25000u + i); \
+\
+    /* add, then del */ \
+    fc_##PREFIX##_cache_add_bulk(&fc, keys, NB_KEYS, 100u, results); \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != NB_KEYS) \
+        FAIL("del_bulk: pre-fill failed"); \
+\
+    fc_##PREFIX##_cache_del_bulk(&fc, keys, NB_KEYS); \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != 0u) \
+        FAILF("del_bulk: nb_entries=%u expected 0", \
+              fc_##PREFIX##_cache_nb_entries(&fc)); \
+\
+    /* find confirms all gone */ \
+    fc_##PREFIX##_cache_find_bulk(&fc, keys, NB_KEYS, 200u, results); \
+    for (unsigned i = 0; i < NB_KEYS; i++) { \
+        if (results[i].entry_idx != 0u) \
+            FAILF("del_bulk: key[%u] should be gone", i); \
+    } \
+\
+    /* del on empty cache: no crash */ \
+    fc_##PREFIX##_cache_del_bulk(&fc, keys, NB_KEYS); \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != 0u) \
+        FAIL("del_bulk on empty should be no-op"); \
+} \
+\
+static void \
+test_##PREFIX##_del_single(void) \
+{ \
+    enum { NB_BK = 8u, MAX_ENTRIES = 16u }; \
+    struct rix_hash_bucket_s buckets[NB_BK]; \
+    ENTRY_T pool[MAX_ENTRIES]; \
+    CACHE_T fc; \
+    KEY_T key; \
+\
+    printf("[T] fc " #PREFIX " del (single)\n"); \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, NULL); \
+    key = MAKE_KEY(26000u); \
+\
+    /* add then del by key */ \
+    (void)fc_##PREFIX##_cache_add(&fc, &key, 100u); \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != 1u) \
+        FAIL("del single: pre-add failed"); \
+    fc_##PREFIX##_cache_del(&fc, &key); \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != 0u) \
+        FAIL("del single: entry should be removed"); \
+\
+    /* del non-existent: no crash */ \
+    fc_##PREFIX##_cache_del(&fc, &key); \
+} \
+\
+/*--- del_idx_bulk ---*/ \
+static void \
+test_##PREFIX##_del_idx_bulk(void) \
+{ \
+    enum { NB_BK = 8u, MAX_ENTRIES = 32u, NB_KEYS = 8u }; \
+    struct rix_hash_bucket_s buckets[NB_BK]; \
+    ENTRY_T pool[MAX_ENTRIES]; \
+    CACHE_T fc; \
+    KEY_T keys[NB_KEYS]; \
+    RESULT_T results[NB_KEYS]; \
+    uint32_t idxs[NB_KEYS]; \
+\
+    printf("[T] fc " #PREFIX " del_idx_bulk\n"); \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, NULL); \
+    for (unsigned i = 0; i < NB_KEYS; i++) \
+        keys[i] = MAKE_KEY(27000u + i); \
+\
+    fc_##PREFIX##_cache_add_bulk(&fc, keys, NB_KEYS, 100u, results); \
+    for (unsigned i = 0; i < NB_KEYS; i++) \
+        idxs[i] = results[i].entry_idx; \
+\
+    /* bulk remove by idx */ \
+    fc_##PREFIX##_cache_del_idx_bulk(&fc, idxs, NB_KEYS); \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != 0u) \
+        FAILF("del_idx_bulk: nb_entries=%u expected 0", \
+              fc_##PREFIX##_cache_nb_entries(&fc)); \
+\
+    /* verify all gone */ \
+    fc_##PREFIX##_cache_find_bulk(&fc, keys, NB_KEYS, 200u, results); \
+    for (unsigned i = 0; i < NB_KEYS; i++) { \
+        if (results[i].entry_idx != 0u) \
+            FAILF("del_idx_bulk: key[%u] should be gone", i); \
+    } \
+\
+    /* invalid indices: no crash */ \
+    { \
+        uint32_t bad_idxs[] = { 0u, MAX_ENTRIES + 1u }; \
+        fc_##PREFIX##_cache_del_idx_bulk(&fc, bad_idxs, 2u); \
+    } \
+} \
+\
+/*--- walk ---*/ \
+static int \
+test_##PREFIX##_walk_count_cb(uint32_t entry_idx, void *arg) \
+{ \
+    (void)entry_idx; \
+    unsigned *count = (unsigned *)arg; \
+    (*count)++; \
+    return 0; \
+} \
+\
+static int \
+test_##PREFIX##_walk_abort_cb(uint32_t entry_idx, void *arg) \
+{ \
+    (void)entry_idx; \
+    unsigned *count = (unsigned *)arg; \
+    (*count)++; \
+    if (*count >= 3u) \
+        return -42; \
+    return 0; \
+} \
+\
+static void \
+test_##PREFIX##_walk(void) \
+{ \
+    enum { NB_BK = 8u, MAX_ENTRIES = 32u, NB_KEYS = 8u }; \
+    struct rix_hash_bucket_s buckets[NB_BK]; \
+    ENTRY_T pool[MAX_ENTRIES]; \
+    CACHE_T fc; \
+    KEY_T keys[NB_KEYS]; \
+    RESULT_T results[NB_KEYS]; \
+    unsigned count; \
+    int rc; \
+\
+    printf("[T] fc " #PREFIX " walk\n"); \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, NULL); \
+\
+    /* walk on empty cache: cb never called */ \
+    count = 0u; \
+    rc = fc_##PREFIX##_cache_walk(&fc, test_##PREFIX##_walk_count_cb, &count); \
+    if (rc != 0) \
+        FAILF("walk empty: rc=%d expected 0", rc); \
+    if (count != 0u) \
+        FAILF("walk empty: count=%u expected 0", count); \
+\
+    /* add entries, walk all */ \
+    for (unsigned i = 0; i < NB_KEYS; i++) \
+        keys[i] = MAKE_KEY(29000u + i); \
+    fc_##PREFIX##_cache_add_bulk(&fc, keys, NB_KEYS, 100u, results); \
+\
+    count = 0u; \
+    rc = fc_##PREFIX##_cache_walk(&fc, test_##PREFIX##_walk_count_cb, &count); \
+    if (rc != 0) \
+        FAILF("walk full: rc=%d expected 0", rc); \
+    if (count != NB_KEYS) \
+        FAILF("walk full: count=%u expected %u", count, NB_KEYS); \
+\
+    /* walk with early abort */ \
+    count = 0u; \
+    rc = fc_##PREFIX##_cache_walk(&fc, test_##PREFIX##_walk_abort_cb, &count); \
+    if (rc != -42) \
+        FAILF("walk abort: rc=%d expected -42", rc); \
+    if (count != 3u) \
+        FAILF("walk abort: count=%u expected 3", count); \
+} \
+\
+/*--- findadd single ---*/ \
+static void \
+test_##PREFIX##_findadd_single(void) \
+{ \
+    enum { NB_BK = 8u, MAX_ENTRIES = 16u }; \
+    struct rix_hash_bucket_s buckets[NB_BK]; \
+    ENTRY_T pool[MAX_ENTRIES]; \
+    CACHE_T fc; \
+    KEY_T key; \
+    uint32_t idx1, idx2; \
+\
+    printf("[T] fc " #PREFIX " findadd (single)\n"); \
+    fc_##PREFIX##_cache_init(&fc, buckets, NB_BK, pool, MAX_ENTRIES, NULL); \
+    key = MAKE_KEY(28000u); \
+\
+    /* first call: miss → insert */ \
+    idx1 = fc_##PREFIX##_cache_findadd(&fc, &key, 100u); \
+    if (idx1 == 0u) \
+        FAIL("findadd single miss should insert"); \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != 1u) \
+        FAIL("findadd single: nb_entries should be 1"); \
+\
+    /* second call: hit → same idx */ \
+    idx2 = fc_##PREFIX##_cache_findadd(&fc, &key, 200u); \
+    if (idx2 != idx1) \
+        FAILF("findadd single hit: idx=%u expected %u", idx2, idx1); \
+    if (fc_##PREFIX##_cache_nb_entries(&fc) != 1u) \
+        FAIL("findadd single hit: nb_entries should stay 1"); \
 }
 
 /*===========================================================================
@@ -621,13 +989,13 @@ test_flowu_v4_v6_coexist(void)
         keys[NB_V4 + i] = make_keyu_v6(i);
 
     /* First lookup auto-fills all */
-    fc_flowu_cache_lookup_batch(&fc, keys, total, 1u, results);
+    fc_flowu_cache_findadd_bulk(&fc, keys, total, 1u, results);
     if (fc_flowu_cache_nb_entries(&fc) != total)
         FAILF("coexist nb_entries=%u expected %u",
               fc_flowu_cache_nb_entries(&fc), total);
 
     /* Re-lookup: all hit */
-    fc_flowu_cache_lookup_batch(&fc, keys, total, 20u, results);
+    fc_flowu_cache_findadd_bulk(&fc, keys, total, 20u, results);
 
     /* Verify v4 and v6 got distinct entries */
     for (unsigned i = 0; i < total; i++) {
@@ -641,9 +1009,9 @@ test_flowu_v4_v6_coexist(void)
     }
 
     /* Remove a v4 entry; v6 entries should still hit */
-    if (!fc_flowu_cache_remove_idx(&fc, results[0].entry_idx))
-        FAIL("coexist remove v4 entry failed");
-    fc_flowu_cache_lookup_batch(&fc, &keys[NB_V4], NB_V6, 30u,
+    if (!fc_flowu_cache_del_idx(&fc, results[0].entry_idx))
+        FAIL("coexist del_idx v4 entry failed");
+    fc_flowu_cache_findadd_bulk(&fc, &keys[NB_V4], NB_V6, 30u,
                                   &results[NB_V4]);
     for (unsigned i = NB_V4; i < total; i++) {
         if (results[i].entry_idx == 0u)
@@ -662,7 +1030,17 @@ test_flowu_v4_v6_coexist(void)
     test_##PREFIX##_flush_and_invalid_remove(); \
     test_##PREFIX##_maintenance(); \
     test_##PREFIX##_timeout_boundary(); \
-    test_##PREFIX##_maintain_step()
+    test_##PREFIX##_maintain_step(); \
+    test_##PREFIX##_find_bulk(); \
+    test_##PREFIX##_find_single(); \
+    test_##PREFIX##_add_bulk(); \
+    test_##PREFIX##_add_single(); \
+    test_##PREFIX##_add_bulk_full(); \
+    test_##PREFIX##_del_bulk(); \
+    test_##PREFIX##_del_single(); \
+    test_##PREFIX##_del_idx_bulk(); \
+    test_##PREFIX##_walk(); \
+    test_##PREFIX##_findadd_single()
 
 static unsigned
 parse_arch_opt(int *argc_p, char ***argv_p)

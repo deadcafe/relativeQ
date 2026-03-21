@@ -501,9 +501,19 @@ static void _FCG_API(p, init)(_FCG_CACHE_T(p) *,                         \
                         const _FCG_CONFIG_T(p) *);                        \
 static void _FCG_API(p, flush)(_FCG_CACHE_T(p) *);                       \
 static unsigned _FCG_API(p, nb_entries)(const _FCG_CACHE_T(p) *);         \
-static void _FCG_API(p, lookup_batch)(_FCG_CACHE_T(p) *,                 \
+static void _FCG_API(p, find_bulk)(_FCG_CACHE_T(p) *,                    \
     const _FCG_KEY_T(p) *, unsigned, uint64_t,                             \
     _FCG_RESULT_T(p) *);                                                  \
+static void _FCG_API(p, findadd_bulk)(_FCG_CACHE_T(p) *,                 \
+    const _FCG_KEY_T(p) *, unsigned, uint64_t,                             \
+    _FCG_RESULT_T(p) *);                                                  \
+static void _FCG_API(p, add_bulk)(_FCG_CACHE_T(p) *,                     \
+    const _FCG_KEY_T(p) *, unsigned, uint64_t,                             \
+    _FCG_RESULT_T(p) *);                                                  \
+static void _FCG_API(p, del_bulk)(_FCG_CACHE_T(p) *,                     \
+    const _FCG_KEY_T(p) *, unsigned);                                      \
+static void _FCG_API(p, del_idx_bulk)(_FCG_CACHE_T(p) *,                 \
+    const uint32_t *, unsigned);                                           \
 static unsigned _FCG_API(p, maintain)(_FCG_CACHE_T(p) *,                  \
     unsigned, unsigned, uint64_t);                                         \
 static unsigned _FCG_API(p, maintain_step_ex)(_FCG_CACHE_T(p) *,          \
@@ -511,7 +521,9 @@ static unsigned _FCG_API(p, maintain_step_ex)(_FCG_CACHE_T(p) *,          \
 static unsigned _FCG_API(p, maintain_step)(_FCG_CACHE_T(p) *,             \
     uint64_t, int);                                                        \
 static int _FCG_API(p, remove_idx)(_FCG_CACHE_T(p) *, uint32_t);         \
-static void _FCG_API(p, stats)(const _FCG_CACHE_T(p) *, _FCG_STATS_T(p) *);
+static void _FCG_API(p, stats)(const _FCG_CACHE_T(p) *, _FCG_STATS_T(p) *); \
+static int _FCG_API(p, walk)(_FCG_CACHE_T(p) *,                          \
+    int (*)(uint32_t, void *), void *);
 #else
 #define _FC_GENERATE_API_DECLS(p) /* prototypes in variant header */
 #endif
@@ -580,8 +592,79 @@ _FCG_API(p, nb_entries)(const _FCG_CACHE_T(p) *fc)                      \
     return fc->ht_head.rhh_nb;                                             \
 }                                                                          \
                                                                            \
+/* ----- find_bulk: search only, no insert ----------------------------- */\
 static void                                                                \
-_FCG_API(p, lookup_batch)(_FCG_CACHE_T(p) *fc,                          \
+_FCG_API(p, find_bulk)(_FCG_CACHE_T(p) *fc,                              \
+                        const _FCG_KEY_T(p) *keys,                        \
+                        unsigned nb_keys,                                  \
+                        uint64_t now,                                      \
+                        _FCG_RESULT_T(p) *results)                        \
+{                                                                          \
+    struct rix_hash_find_ctx_s ctx[nb_keys];                               \
+    uint64_t hit_count = 0u;                                               \
+    uint64_t miss_count = 0u;                                              \
+    const unsigned ahead_keys = FLOW_CACHE_LOOKUP_AHEAD_KEYS;              \
+    const unsigned step_keys = FLOW_CACHE_LOOKUP_STEP_KEYS;                \
+    const unsigned total = nb_keys + 3u * ahead_keys;                      \
+    for (unsigned i = 0; i < total; i += step_keys) {                      \
+        /* Stage 1: hash_key_2bk */                                        \
+        if (i < nb_keys) {                                                 \
+            unsigned n = (i + step_keys <= nb_keys) ?                      \
+                step_keys : (nb_keys - i);                                 \
+            for (unsigned j = 0; j < n; j++)                               \
+                _FCG_HT(p, hash_key_2bk)(&ctx[i + j], &fc->ht_head,     \
+                                           fc->buckets, &keys[i + j]);    \
+        }                                                                  \
+        /* Stage 2: scan_bk_empties */                                     \
+        if (i >= ahead_keys && i - ahead_keys < nb_keys) {                \
+            unsigned base = i - ahead_keys;                                \
+            unsigned n = (base + step_keys <= nb_keys) ?                   \
+                step_keys : (nb_keys - base);                              \
+            for (unsigned j = 0; j < n; j++)                               \
+                _FCG_HT(p, scan_bk_empties)(&ctx[base + j],              \
+                                              &fc->ht_head, fc->buckets); \
+        }                                                                  \
+        /* Stage 3: prefetch_node */                                       \
+        if (i >= 2u * ahead_keys &&                                        \
+            i - 2u * ahead_keys < nb_keys) {                               \
+            unsigned base = i - 2u * ahead_keys;                           \
+            unsigned n = (base + step_keys <= nb_keys) ?                   \
+                step_keys : (nb_keys - base);                              \
+            for (unsigned j = 0; j < n; j++)                               \
+                _FCG_HT(p, prefetch_node)(&ctx[base + j], fc->pool);     \
+        }                                                                  \
+        /* Stage 4: cmp_key_empties — hit or miss, no insert */            \
+        if (i >= 3u * ahead_keys &&                                        \
+            i - 3u * ahead_keys < nb_keys) {                               \
+            unsigned base = i - 3u * ahead_keys;                           \
+            unsigned n = (base + step_keys <= nb_keys) ?                   \
+                step_keys : (nb_keys - base);                              \
+            for (unsigned j = 0; j < n; j++) {                             \
+                unsigned idx = base + j;                                   \
+                _FCG_ENTRY_T(p) *entry;                                   \
+                entry = _FCG_HT(p, cmp_key_empties)(&ctx[idx],           \
+                                                      fc->pool);          \
+                if (RIX_LIKELY(entry != NULL)) {                           \
+                    if (now)                                                \
+                        entry->last_ts = now;                              \
+                    _FCG_INT(p, result_set_hit)(&results[idx],            \
+                        RIX_IDX_FROM_PTR(fc->pool, entry));                \
+                    hit_count++;                                           \
+                } else {                                                   \
+                    _FCG_INT(p, result_set_miss)(&results[idx]);          \
+                    miss_count++;                                          \
+                }                                                          \
+            }                                                              \
+        }                                                                  \
+    }                                                                      \
+    fc->stats.lookups += nb_keys;                                          \
+    fc->stats.hits += hit_count;                                           \
+    fc->stats.misses += miss_count;                                        \
+}                                                                          \
+                                                                           \
+/* ----- findadd_bulk: search + insert on miss ------------------------- */\
+static void                                                                \
+_FCG_API(p, findadd_bulk)(_FCG_CACHE_T(p) *fc,                          \
                            const _FCG_KEY_T(p) *keys,                     \
                            unsigned nb_keys,                               \
                            uint64_t now,                                   \
@@ -818,6 +901,210 @@ static void                                                                \
 _FCG_API(p, stats)(const _FCG_CACHE_T(p) *fc, _FCG_STATS_T(p) *out)   \
 {                                                                          \
     *out = fc->stats;                                                      \
+}                                                                          \
+                                                                           \
+/* ----- walk: iterate all live entries -------------------------------- */\
+static int                                                                 \
+_FCG_API(p, walk)(_FCG_CACHE_T(p) *fc,                                  \
+                   int (*cb)(uint32_t entry_idx, void *arg), void *arg)    \
+{                                                                          \
+    for (unsigned i = 0; i < fc->max_entries; i++) {                       \
+        if (fc->pool[i].last_ts != 0u) {                                  \
+            int rc = cb(i + 1u, arg);                                      \
+            if (rc < 0)                                                    \
+                return rc;                                                 \
+        }                                                                  \
+    }                                                                      \
+    return 0;                                                              \
+}                                                                          \
+                                                                           \
+/* ----- add_bulk: insert only (no prior search) ----------------------- */\
+static void                                                                \
+_FCG_API(p, add_bulk)(_FCG_CACHE_T(p) *fc,                              \
+                       const _FCG_KEY_T(p) *keys,                         \
+                       unsigned nb_keys,                                   \
+                       uint64_t now,                                       \
+                       _FCG_RESULT_T(p) *results)                         \
+{                                                                          \
+    const unsigned ahead_keys = FLOW_CACHE_LOOKUP_AHEAD_KEYS;              \
+    const unsigned step_keys = FLOW_CACHE_LOOKUP_STEP_KEYS;                \
+    const unsigned total = nb_keys + ahead_keys;                           \
+    union rix_hash_hash_u hashes[nb_keys];                                 \
+    /* Prefetch free list head */                                          \
+    {                                                                      \
+        _FCG_ENTRY_T(p) *_fh =                                           \
+            RIX_SLIST_FIRST(&fc->free_head, fc->pool);                    \
+        if (_fh != NULL)                                                   \
+            rix_hash_prefetch_entry(_fh);                                 \
+    }                                                                      \
+    /* 2-stage pipeline: hash+prefetch bk, then alloc+insert */            \
+    for (unsigned i = 0; i < total; i += step_keys) {                      \
+        /* Stage 1: hash + prefetch buckets */                             \
+        if (i < nb_keys) {                                                 \
+            unsigned n = (i + step_keys <= nb_keys) ?                      \
+                step_keys : (nb_keys - i);                                 \
+            for (unsigned j = 0; j < n; j++) {                             \
+                unsigned idx = i + j;                                      \
+                hashes[idx] = hash_fn(&keys[idx],                          \
+                    fc->ht_head.rhh_mask);                                 \
+                {                                                          \
+                    unsigned _bk0 = hashes[idx].val32[0] &                \
+                        fc->ht_head.rhh_mask;                              \
+                    rix_hash_prefetch_bucket(&fc->buckets[_bk0]);         \
+                }                                                          \
+            }                                                              \
+        }                                                                  \
+        /* Stage 2: alloc + insert */                                      \
+        if (i >= ahead_keys && i - ahead_keys < nb_keys) {                \
+            unsigned base = i - ahead_keys;                                \
+            unsigned n = (base + step_keys <= nb_keys) ?                   \
+                step_keys : (nb_keys - base);                              \
+            for (unsigned j = 0; j < n; j++) {                             \
+                unsigned idx = base + j;                                   \
+                _FCG_ENTRY_T(p) *entry =                                  \
+                    _FCG_INT(p, alloc_entry)(fc);                          \
+                if (RIX_UNLIKELY(entry == NULL)) {                         \
+                    fc->stats.fill_full++;                                 \
+                    _FCG_INT(p, result_set_miss)(&results[idx]);          \
+                    continue;                                              \
+                }                                                          \
+                entry->key = keys[idx];                                    \
+                entry->last_ts = now;                                      \
+                {                                                          \
+                    _FCG_ENTRY_T(p) *_ret;                                \
+                    _ret = _FCG_HT(p, insert_hashed)(                     \
+                        &fc->ht_head, fc->buckets, fc->pool,              \
+                        entry, hashes[idx]);                               \
+                    if (RIX_LIKELY(_ret == NULL)) {                        \
+                        fc->stats.fills++;                                 \
+                        _FCG_INT(p, result_set_filled)(&results[idx],     \
+                            RIX_IDX_FROM_PTR(fc->pool, entry));            \
+                    } else {                                               \
+                        _FCG_INT(p, free_entry)(fc, entry);               \
+                        if (_ret != entry) {                               \
+                            _ret->last_ts = now;                           \
+                            _FCG_INT(p, result_set_filled)(               \
+                                &results[idx],                              \
+                                RIX_IDX_FROM_PTR(fc->pool, _ret));         \
+                        } else {                                           \
+                            fc->stats.fill_full++;                         \
+                            _FCG_INT(p, result_set_miss)(                 \
+                                &results[idx]);                             \
+                        }                                                  \
+                    }                                                      \
+                }                                                          \
+                /* Prefetch next free list head */                         \
+                {                                                          \
+                    _FCG_ENTRY_T(p) *_nf =                                \
+                        RIX_SLIST_FIRST(&fc->free_head, fc->pool);        \
+                    if (_nf != NULL)                                       \
+                        rix_hash_prefetch_entry(_nf);                     \
+                }                                                          \
+            }                                                              \
+        }                                                                  \
+    }                                                                      \
+}                                                                          \
+                                                                           \
+/* ----- del_bulk: remove by key --------------------------------------- */\
+static void                                                                \
+_FCG_API(p, del_bulk)(_FCG_CACHE_T(p) *fc,                              \
+                       const _FCG_KEY_T(p) *keys,                         \
+                       unsigned nb_keys)                                   \
+{                                                                          \
+    struct rix_hash_find_ctx_s ctx[nb_keys];                               \
+    const unsigned ahead_keys = FLOW_CACHE_LOOKUP_AHEAD_KEYS;              \
+    const unsigned step_keys = FLOW_CACHE_LOOKUP_STEP_KEYS;                \
+    const unsigned total = nb_keys + 3u * ahead_keys;                      \
+    /* 4-stage pipeline: hash → scan → prefetch → cmp+remove */           \
+    for (unsigned i = 0; i < total; i += step_keys) {                      \
+        /* Stage 1: hash_key_2bk */                                        \
+        if (i < nb_keys) {                                                 \
+            unsigned n = (i + step_keys <= nb_keys) ?                      \
+                step_keys : (nb_keys - i);                                 \
+            for (unsigned j = 0; j < n; j++)                               \
+                _FCG_HT(p, hash_key_2bk)(&ctx[i + j], &fc->ht_head,     \
+                                           fc->buckets, &keys[i + j]);    \
+        }                                                                  \
+        /* Stage 2: scan_bk_empties */                                     \
+        if (i >= ahead_keys && i - ahead_keys < nb_keys) {                \
+            unsigned base = i - ahead_keys;                                \
+            unsigned n = (base + step_keys <= nb_keys) ?                   \
+                step_keys : (nb_keys - base);                              \
+            for (unsigned j = 0; j < n; j++)                               \
+                _FCG_HT(p, scan_bk_empties)(&ctx[base + j],              \
+                                              &fc->ht_head, fc->buckets); \
+        }                                                                  \
+        /* Stage 3: prefetch_node */                                       \
+        if (i >= 2u * ahead_keys &&                                        \
+            i - 2u * ahead_keys < nb_keys) {                               \
+            unsigned base = i - 2u * ahead_keys;                           \
+            unsigned n = (base + step_keys <= nb_keys) ?                   \
+                step_keys : (nb_keys - base);                              \
+            for (unsigned j = 0; j < n; j++)                               \
+                _FCG_HT(p, prefetch_node)(&ctx[base + j], fc->pool);     \
+        }                                                                  \
+        /* Stage 4: cmp_key + remove on hit */                             \
+        if (i >= 3u * ahead_keys &&                                        \
+            i - 3u * ahead_keys < nb_keys) {                               \
+            unsigned base = i - 3u * ahead_keys;                           \
+            unsigned n = (base + step_keys <= nb_keys) ?                   \
+                step_keys : (nb_keys - base);                              \
+            for (unsigned j = 0; j < n; j++) {                             \
+                unsigned idx = base + j;                                   \
+                _FCG_ENTRY_T(p) *entry;                                   \
+                entry = _FCG_HT(p, cmp_key_empties)(&ctx[idx],           \
+                                                      fc->pool);          \
+                if (entry != NULL) {                                       \
+                    _FCG_HT(p, remove)(&fc->ht_head, fc->buckets,        \
+                                        fc->pool, entry);                  \
+                    _FCG_INT(p, free_entry)(fc, entry);                   \
+                }                                                          \
+            }                                                              \
+        }                                                                  \
+    }                                                                      \
+}                                                                          \
+                                                                           \
+/* ----- del_idx_bulk: remove by pool index ---------------------------- */\
+static void                                                                \
+_FCG_API(p, del_idx_bulk)(_FCG_CACHE_T(p) *fc,                          \
+                           const uint32_t *idxs,                           \
+                           unsigned nb_idxs)                               \
+{                                                                          \
+    const unsigned ahead = FLOW_CACHE_LOOKUP_AHEAD_KEYS;                   \
+    const unsigned step = FLOW_CACHE_LOOKUP_STEP_KEYS;                     \
+    const unsigned total = nb_idxs + ahead;                                \
+    /* 2-stage pipeline: prefetch entry, then remove */                    \
+    for (unsigned i = 0; i < total; i += step) {                           \
+        /* Stage 1: prefetch entry */                                      \
+        if (i < nb_idxs) {                                                 \
+            unsigned n = (i + step <= nb_idxs) ?                           \
+                step : (nb_idxs - i);                                      \
+            for (unsigned j = 0; j < n; j++) {                             \
+                if (idxs[i + j] != 0u &&                                   \
+                    idxs[i + j] <= fc->max_entries)                        \
+                    rix_hash_prefetch_entry(                              \
+                        RIX_PTR_FROM_IDX(fc->pool, idxs[i + j]));         \
+            }                                                              \
+        }                                                                  \
+        /* Stage 2: remove */                                              \
+        if (i >= ahead && i - ahead < nb_idxs) {                           \
+            unsigned base = i - ahead;                                     \
+            unsigned n = (base + step <= nb_idxs) ?                        \
+                step : (nb_idxs - base);                                   \
+            for (unsigned j = 0; j < n; j++) {                             \
+                uint32_t eidx = idxs[base + j];                            \
+                _FCG_ENTRY_T(p) *entry;                                   \
+                if (eidx == 0u || eidx > fc->max_entries)                  \
+                    continue;                                              \
+                entry = RIX_PTR_FROM_IDX(fc->pool, eidx);                  \
+                if (entry == NULL || entry->last_ts == 0u)                 \
+                    continue;                                              \
+                _FCG_HT(p, remove)(&fc->ht_head, fc->buckets,            \
+                                    fc->pool, entry);                      \
+                _FCG_INT(p, free_entry)(fc, entry);                       \
+            }                                                              \
+        }                                                                  \
+    }                                                                      \
 }
 
 /*===========================================================================
@@ -867,15 +1154,20 @@ _FCG_API(p, stats)(const _FCG_CACHE_T(p) *fc, _FCG_STATS_T(p) *out)   \
 
 #define FC_OPS_TABLE(prefix, suffix)                                           \
 const struct fc_##prefix##_ops _FC_OPS_TNAME(prefix, suffix) = {               \
-    .init            = _FC_OPS_FNAME(prefix, init),                            \
-    .flush           = _FC_OPS_FNAME(prefix, flush),                           \
-    .nb_entries      = _FC_OPS_FNAME(prefix, nb_entries),                      \
-    .remove_idx      = _FC_OPS_FNAME(prefix, remove_idx),                      \
-    .stats           = _FC_OPS_FNAME(prefix, stats),                           \
-    .lookup_batch    = _FC_OPS_FNAME(prefix, lookup_batch),                    \
-    .maintain        = _FC_OPS_FNAME(prefix, maintain),                        \
+    .init             = _FC_OPS_FNAME(prefix, init),                           \
+    .flush            = _FC_OPS_FNAME(prefix, flush),                          \
+    .nb_entries       = _FC_OPS_FNAME(prefix, nb_entries),                     \
+    .remove_idx       = _FC_OPS_FNAME(prefix, remove_idx),                     \
+    .stats            = _FC_OPS_FNAME(prefix, stats),                          \
+    .walk             = _FC_OPS_FNAME(prefix, walk),                           \
+    .find_bulk        = _FC_OPS_FNAME(prefix, find_bulk),                      \
+    .findadd_bulk     = _FC_OPS_FNAME(prefix, findadd_bulk),                   \
+    .add_bulk         = _FC_OPS_FNAME(prefix, add_bulk),                       \
+    .del_bulk         = _FC_OPS_FNAME(prefix, del_bulk),                       \
+    .del_idx_bulk     = _FC_OPS_FNAME(prefix, del_idx_bulk),                   \
+    .maintain         = _FC_OPS_FNAME(prefix, maintain),                       \
     .maintain_step_ex = _FC_OPS_FNAME(prefix, maintain_step_ex),               \
-    .maintain_step   = _FC_OPS_FNAME(prefix, maintain_step),                   \
+    .maintain_step    = _FC_OPS_FNAME(prefix, maintain_step),                  \
 }
 
 #endif /* FC_ARCH_SUFFIX */

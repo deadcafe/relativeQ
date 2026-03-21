@@ -32,11 +32,26 @@ struct fc_##prefix##_ops {                                                     \
     int (*remove_idx)(struct fc_##prefix##_cache *fc, uint32_t entry_idx);     \
     void (*stats)(const struct fc_##prefix##_cache *fc,                        \
                   struct fc_##prefix##_stats *out);                            \
+    int (*walk)(struct fc_##prefix##_cache *fc,                                \
+                int (*cb)(uint32_t entry_idx, void *arg), void *arg);          \
     /* hot-path */                                                             \
-    void (*lookup_batch)(struct fc_##prefix##_cache *fc,                        \
+    void (*find_bulk)(struct fc_##prefix##_cache *fc,                           \
+                      const struct fc_##prefix##_key *keys,                     \
+                      unsigned nb_keys, uint64_t now,                           \
+                      struct fc_##prefix##_result *results);                    \
+    void (*findadd_bulk)(struct fc_##prefix##_cache *fc,                        \
                          const struct fc_##prefix##_key *keys,                  \
                          unsigned nb_keys, uint64_t now,                        \
                          struct fc_##prefix##_result *results);                 \
+    void (*add_bulk)(struct fc_##prefix##_cache *fc,                            \
+                     const struct fc_##prefix##_key *keys,                      \
+                     unsigned nb_keys, uint64_t now,                            \
+                     struct fc_##prefix##_result *results);                     \
+    void (*del_bulk)(struct fc_##prefix##_cache *fc,                            \
+                     const struct fc_##prefix##_key *keys,                      \
+                     unsigned nb_keys);                                         \
+    void (*del_idx_bulk)(struct fc_##prefix##_cache *fc,                        \
+                         const uint32_t *idxs, unsigned nb_idxs);              \
     unsigned (*maintain)(struct fc_##prefix##_cache *fc,                        \
                          unsigned start_bk, unsigned bucket_count,              \
                          uint64_t now);                                         \
